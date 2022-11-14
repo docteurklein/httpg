@@ -16,9 +16,10 @@ Because postgREST is painful to work with as soon as you want something else tha
 `httpg` will introspect postgres schema using `pg_catalog` objects and use this to form valid sql queries out of http request.  
 It will then transform the sql execution result in an http response.
 
-It will rely on postgres's own security capabilities to hide stuff you're not able to use, by using http authorization headers and transform that into a `set local role` in the corresponding transaction.
+It will rely on postgres's own security capabilities to hide stuff you're not authorized to use, by using http authorization headers and transform that into a `set local role` in the corresponding transaction.  
+It's up to you to grant correct permissions, be it row-level policies or table and column permissions.
 
-Select queries are ran in read-only transactions (and rollbacked once done, even tho ["it doesn't matter"](https://www.postgresql.org/message-id/flat/07FDEE0ED7455A48AC42AC2070EDFF7C67EBDF%40corpsrv2.tazznetworks.com).
+Select queries are run in read-only transactions (and rollbacked once done, even tho ["it doesn't matter"](https://www.postgresql.org/message-id/flat/07FDEE0ED7455A48AC42AC2070EDFF7C67EBDF%40corpsrv2.tazznetworks.com).
 
 ```
 HTTPG_SCHEMA=public HTTPG_ANON_ROLE=florian cargo run
