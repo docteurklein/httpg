@@ -10,7 +10,7 @@ use std::env;
 use std::cmp::min;
 use std::collections::HashMap;
 use serde::{Deserialize};
-use serde_json::{Value};
+use serde_json::{json, Value};
 use bb8::{Pool};
 use bb8_postgres::PostgresConnectionManager;
 use std::net::SocketAddr;
@@ -63,21 +63,26 @@ async fn main() {
     let schemas: Vec<&str> = env_schema.split(",").collect();
 
     let relation_defs = client.query(r#"
-        select format('%s.%s', n.nspname, c.relname) fqn,
-        format('%I.%I', n.nspname, c.relname) escaped_fqn,
-        format('%I', c.relname || '_') alias,
-        jsonb_object_agg(format('%s.%s', c.relname, a.attname), jsonb_build_object(
+        select format('%s.%s', n.nspname, r.relname) fqn,
+        format('%I.%I', n.nspname, r.relname) escaped_fqn,
+        format('%I', r.relname || '_') alias,
+        jsonb_object_agg(format('%s.%s', r.relname, a.attname), jsonb_build_object(
             'escaped_name', quote_ident(a.attname),
-            'type', t.typname
+            'type', t.typname,
+            'fkey', c.conname,
+            'target', rr.relname
         )) cols
-        from pg_catalog.pg_class c
-        join pg_catalog.pg_namespace n on n.oid = c.relnamespace
-        join pg_catalog.pg_attribute a on a.attrelid = c.oid
+        from pg_catalog.pg_class r
+        left join pg_catalog.pg_constraint c on c.conrelid = r.oid
+        left join pg_catalog.pg_class rr on c.confrelid = rr.oid
+        join pg_catalog.pg_namespace n on n.oid = r.relnamespace
+        join pg_catalog.pg_attribute a on a.attrelid = r.oid
         join pg_catalog.pg_type t on t.oid = a.atttypid
-        where c.relkind = any (array['r', 'v', 'm', 'f', 'p'])
+        where r.relkind = any (array['r', 'v', 'm', 'f', 'p'])
+        and (c.contype = 'f' or c.contype is null)
         and a.attnum > 0
         and n.nspname = any($1)
-        group by n.nspname, c.relname
+        group by n.nspname, r.relname
     "#, &[&schemas]).await.unwrap();
 
     let procedure_defs = client.query(r#"
@@ -121,8 +126,8 @@ async fn main() {
     eprintln!("{:?}", state);
 
     let app = Router::new()
-        .route("/select/:relation", get(select))
-        .route("/procedure/:procedure", post(procedure))
+        .route("/relation/:relation", get(select_rows))//.post(insert_rows).put(upsert_rows).delete(delete_rows))
+        .route("/procedure/:procedure", post(call_procedure))
         .layer(Extension(state))
     ;
 
@@ -135,7 +140,7 @@ async fn main() {
 }
 
 
-async fn select(
+async fn select_rows(
     Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
     headers: HeaderMap,
     Path(relation): Path<String>,
@@ -171,7 +176,13 @@ async fn select(
     let rows = tx.query(
         &sql, params.as_slice()
     ).await.map_err(internal_error)?;
-    let res: Vec<Value> = rows.iter().map(|row| {row.get(0)}).collect();
+    let res: Vec<Value> = rows.iter().map(|row| {
+        let mut r: Value = row.get(0);
+        r["link"] = json!({
+            "href": format!("/relation/{}", "public.comment")
+        });
+        r
+    }).collect();
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
         Ok("text/html") => {
@@ -183,7 +194,7 @@ async fn select(
     }
 }
 
-async fn procedure(
+async fn call_procedure(
     Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
     headers: HeaderMap,
     Path(procedure): Path<String>,
