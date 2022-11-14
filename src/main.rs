@@ -1,6 +1,6 @@
 use axum::{
     extract::{Extension, Path, Query},
-    http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT}},
+    http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
     routing::get,
     Router,
     response::{Json, Html, IntoResponse, Response},
@@ -32,6 +32,7 @@ struct State {
     tables: HashMap<String, Table>,
     max_limit: u16,
     max_offset: u16,
+    anon_role: String,
 }
 
 #[tokio::main]
@@ -79,6 +80,7 @@ async fn main() {
         pool,
         max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
         max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
+        anon_role: env::var("HTTPG_ANON_ROLE").unwrap(),
         tables: table_defs.iter().map(|row| { (row.get("fqn"), Table {
             escaped_fqn: row.get("escaped_fqn"),
             alias: row.get("alias"),
@@ -102,7 +104,7 @@ async fn main() {
 
 
 async fn select(
-    Extension(State {pool, tables, max_limit, max_offset}): Extension<State>,
+    Extension(State {pool, tables, max_limit, max_offset, anon_role}): Extension<State>,
     headers: HeaderMap,
     Path(table): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
@@ -113,11 +115,13 @@ async fn select(
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().read_only(true).start().await.map_err(internal_error)?;
 
-    tx.execute("select set_config('role', $1, true)", &[&"florian".to_string()]).await.map_err(internal_error)?; // @TODO crypto
+    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
+    tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
 
     let table_def = tables.get(&table).unwrap();
-    let where_clause: Vec<String> = query_params.keys().enumerate().map(|(i, col)| {
-        format!("{}.{} = ${}", table_def.alias, table_def.cols.get(col).unwrap()["escaped_name"], i + 1)
+    let where_clause: Vec<String> = query_params.keys().enumerate().map(|(i, col_name)| {
+        let col = table_def.cols.get(col_name).unwrap();
+        format!("{}.{} = ${}::text::{}", table_def.alias, col["escaped_name"], i + 1, col["type"]) // @TODO hacky cast cast?
     }).collect();
 
     let sql = format!("select row_to_json({}) from {} {} {} {} {} {} limit {} offset {}",
@@ -151,6 +155,6 @@ fn internal_error<E>(err: E) -> (StatusCode, String)
 where
     E: std::error::Error,
 {
-    eprintln!("{:?}", err);
-    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+    eprintln!("{}", err);
+    (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
 }
