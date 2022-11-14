@@ -44,7 +44,7 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let (client, connection) = tokio_postgres::connect("host=localhost user=florian password=florian", NoTls).await.unwrap(); // @TODO use pool?
+    let (client, connection) = tokio_postgres::connect(&env::var("HTTPG_CONN").unwrap(), NoTls).await.unwrap(); // @TODO use pool?
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -73,7 +73,7 @@ async fn main() {
         group by n.nspname, c.relname
     "#, &[&schemas]).await.unwrap();
 
-    let manager = PostgresConnectionManager::new_from_stringlike("host=localhost user=florian password=florian", NoTls).unwrap(); // @TOOO env vars
+    let manager = PostgresConnectionManager::new_from_stringlike(&env::var("HTTPG_CONN").unwrap(), NoTls).unwrap(); // @TOOO env vars
     let pool = Pool::builder().build(manager).await.unwrap();
 
     let state = State {
