@@ -27,9 +27,11 @@ HTTPG_ANON_ROLE=florian \
 HTTPG_CONN="host=localhost user=florian password=$PGPASS" \
 cargo run
 
-curl '0:3000/public.spatial_ref_sys?spatial_ref_sys.auth_name=EPSG' \
+curl '0:3000/select/public.spatial_ref_sys?spatial_ref_sys.auth_name=EPSG' \
     -H 'accept: text/html' \
     -H 'template: test' \ # use templates/test.hbs to render result as html
     -H 'limit: 20' \
     -H 'authorization: app'
+
+curl -X POST '0:3000/procedure/public.divide?a=1&b=2' -H 'authorization: app'
 ```

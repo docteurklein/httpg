@@ -1,7 +1,7 @@
 use axum::{
     extract::{Extension, Path, Query},
     http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
-    routing::get,
+    routing::{get, post},
     Router,
     response::{Json, Html, IntoResponse, Response},
 };
@@ -20,16 +20,23 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 
 #[derive(Clone, Debug, Deserialize)]
-struct Table {
+struct Relation {
     escaped_fqn: String,
     alias: String,
     cols: Value,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct Procedure {
+    escaped_fqn: String,
+    arguments: Value,
+}
+
 #[derive(Clone, Debug)]
 struct State {
     pool: Pool<PostgresConnectionManager<NoTls>>,
-    tables: HashMap<String, Table>,
+    relations: HashMap<String, Relation>,
+    procedures: HashMap<String, Procedure>,
     max_limit: u16,
     max_offset: u16,
     anon_role: String,
@@ -55,12 +62,12 @@ async fn main() {
     let env_schema = env::var("HTTPG_SCHEMA").unwrap_or("public".to_string());
     let schemas: Vec<&str> = env_schema.split(",").collect();
 
-    let table_defs = client.query(r#"
+    let relation_defs = client.query(r#"
         select format('%s.%s', n.nspname, c.relname) fqn,
         format('%I.%I', n.nspname, c.relname) escaped_fqn,
         format('%I', c.relname || '_') alias,
         jsonb_object_agg(format('%s.%s', c.relname, a.attname), jsonb_build_object(
-            'escaped_name', format('%I', a.attname),
+            'escaped_name', quote_ident(a.attname),
             'type', t.typname
         )) cols
         from pg_catalog.pg_class c
@@ -73,7 +80,27 @@ async fn main() {
         group by n.nspname, c.relname
     "#, &[&schemas]).await.unwrap();
 
-    let manager = PostgresConnectionManager::new_from_stringlike(&env::var("HTTPG_CONN").unwrap(), NoTls).unwrap(); // @TOOO env vars
+    let procedure_defs = client.query(r#"
+        with proc as (
+            select p.*, n.nspname
+            from pg_catalog.pg_proc p
+            join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+            where p.prokind = any (array['p'])
+            and n.nspname = any($1)
+        )
+        select format('%s.%s', p.nspname, p.proname) fqn,
+        format('%I.%I', p.nspname, p.proname) escaped_fqn,
+        jsonb_object_agg(a.name, jsonb_build_object(
+            'escaped_name', quote_ident(a.name),
+            'type', t.typname
+        )) arguments
+        from proc p,
+        unnest(proargnames, proargtypes, proargmodes) with ordinality as a (name, type, mode, idx)
+        join pg_catalog.pg_type t on t.oid = a.type
+        group by p.nspname, p.proname
+    "#, &[&schemas]).await.unwrap();
+
+    let manager = PostgresConnectionManager::new_from_stringlike(&env::var("HTTPG_CONN").unwrap(), NoTls).unwrap();
     let pool = Pool::builder().build(manager).await.unwrap();
 
     let state = State {
@@ -81,16 +108,21 @@ async fn main() {
         max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
         max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
         anon_role: env::var("HTTPG_ANON_ROLE").unwrap(),
-        tables: table_defs.iter().map(|row| { (row.get("fqn"), Table {
+        relations: relation_defs.iter().map(|row| { (row.get("fqn"), Relation {
             escaped_fqn: row.get("escaped_fqn"),
             alias: row.get("alias"),
             cols: row.get("cols"),
         })}).collect(),
+        procedures: procedure_defs.iter().map(|row| { (row.get("fqn"), Procedure {
+            escaped_fqn: row.get("escaped_fqn"),
+            arguments: row.get("arguments"),
+        })}).collect(),
     };
-    eprintln!("{:?}", state.tables);
+    eprintln!("{:?}", state);
 
     let app = Router::new()
-        .route("/:table", get(select))
+        .route("/select/:relation", get(select))
+        .route("/procedure/:procedure", post(procedure))
         .layer(Extension(state))
     ;
 
@@ -104,13 +136,13 @@ async fn main() {
 
 
 async fn select(
-    Extension(State {pool, tables, max_limit, max_offset, anon_role}): Extension<State>,
+    Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
     headers: HeaderMap,
-    Path(table): Path<String>,
+    Path(relation): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
 ) -> Result<Response, (StatusCode, String)> {
-    if !tables.contains_key(&table) {
-        return Err((StatusCode::NOT_FOUND, format!("{} Not found", table)));
+    if !relations.contains_key(&relation) {
+        return Err((StatusCode::NOT_FOUND, format!("{} Not found", relation)));
     }
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().read_only(true).start().await.map_err(internal_error)?;
@@ -118,20 +150,20 @@ async fn select(
     let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
     tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
 
-    let table_def = tables.get(&table).unwrap();
+    let relation_def = relations.get(&relation).unwrap();
     let where_clause: Vec<String> = query_params.keys().enumerate().map(|(i, col_name)| {
-        let col = table_def.cols.get(col_name).unwrap();
-        format!("{}.{} = ${}::text::{}", table_def.alias, col["escaped_name"], i + 1, col["type"]) // @TODO hacky cast cast?
+        let col = relation_def.cols.get(col_name).unwrap();
+        format!("{}.{} = ${}::text::{}", relation_def.alias, col["escaped_name"], i + 1, col["type"]) // @TODO hacky cast cast?
     }).collect();
 
     let sql = format!("select row_to_json({}) from {} {} {} {} {} {} limit {} offset {}",
-        &table_def.alias,
-        &table_def.escaped_fqn,
-        &table_def.alias,
+        &relation_def.alias,
+        &relation_def.escaped_fqn,
+        &relation_def.alias,
         if where_clause.is_empty() {""} else {"where"},
         where_clause.join(" and "),
         if headers.contains_key("order-by") {"order by"} else {""},
-        "", //headers.get("order-by").unwrap_or(),
+        "", //headers.get("order-by").unwrap_or(), @TODO escape!
         min(max_limit, headers.get("limit").unwrap_or(&HeaderValue::from_static("100")).to_str().map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
         min(max_offset, headers.get("offset").map(|header| {header.to_str()}).unwrap_or(Ok("0")).map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
     );
@@ -141,14 +173,46 @@ async fn select(
     ).await.map_err(internal_error)?;
     let res: Vec<Value> = rows.iter().map(|row| {row.get(0)}).collect();
 
-    match headers.get(ACCEPT).unwrap().to_str() {
+    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
         Ok("text/html") => {
-            let mut handlebars = Handlebars::new();
+            let mut handlebars = Handlebars::new(); // @TODO share instance
             handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
             Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
         },
         _ => Ok(Json(res).into_response()),
     }
+}
+
+async fn procedure(
+    Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
+    headers: HeaderMap,
+    Path(procedure): Path<String>,
+    Query(query_params): Query<HashMap<String, String>>,
+) -> Result<Response, (StatusCode, String)> {
+    if !procedures.contains_key(&procedure) {
+        return Err((StatusCode::NOT_FOUND, format!("{} Not found", procedure)));
+    }
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction().read_only(false).start().await.map_err(internal_error)?;
+
+    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
+    tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
+
+    let procedure_def = procedures.get(&procedure).unwrap();
+    let args: Vec<String> = query_params.keys().enumerate().map(|(i, arg_name)| {
+        let arg = procedure_def.arguments.get(arg_name).unwrap();
+        format!("{} => ${}::text::{}", arg["escaped_name"], i + 1, arg["type"]) // @TODO hacky cast cast?
+    }).collect();
+
+    let sql = format!("call {}({})",
+        &procedure_def.escaped_fqn,
+        args.join(", ")
+    );
+    let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
+    tx.execute(&sql, params.as_slice()).await.map_err(internal_error)?;
+    tx.commit().await.map_err(internal_error)?;
+
+    Ok((StatusCode::NO_CONTENT, "no content").into_response())
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
