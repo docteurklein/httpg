@@ -1,10 +1,13 @@
 use axum::{
-    extract::{Extension, Path, Query, Json},
-    http::{StatusCode},
+    extract::{Extension, Path, Query},
+    http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT}},
     routing::get,
     Router,
+    response::{Json, Html, IntoResponse, Response},
 };
+use handlebars::Handlebars;
 use std::env;
+use std::cmp::min;
 use std::collections::HashMap;
 use serde::{Deserialize};
 use serde_json::{Value};
@@ -12,6 +15,7 @@ use bb8::{Pool};
 use bb8_postgres::PostgresConnectionManager;
 use std::net::SocketAddr;
 use tokio_postgres::NoTls;
+use tokio_postgres::types::ToSql;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 
@@ -26,13 +30,15 @@ struct Table {
 struct State {
     pool: Pool<PostgresConnectionManager<NoTls>>,
     tables: HashMap<String, Table>,
+    max_limit: u16,
+    max_offset: u16,
 }
 
 #[tokio::main]
 async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            env::var("RUST_LOG").unwrap_or_else(|_| "pg_axum=debug".into()),
+            env::var("RUST_LOG").unwrap_or_else(|_| "httpg=debug".into()),
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -45,18 +51,25 @@ async fn main() {
         }
     });
 
-    let schemas = vec![env::var("PG_AXUM_SCHEMA").unwrap()];
+    let env_schema = env::var("HTTPG_SCHEMA").unwrap_or("public".to_string());
+    let schemas: Vec<&str> = env_schema.split(",").collect();
 
-    let rows = client.query(r#"
-        select format('%s.%s', n.nspname, c.relname) fqn, format('%I.%I', n.nspname, c.relname) escaped_fqn, format('%I_alias', c.relname) alias,
-        jsonb_object_agg(format('%s.%s', c.relname, a.attname), format('%I', a.attname)) cols
+    let table_defs = client.query(r#"
+        select format('%s.%s', n.nspname, c.relname) fqn,
+        format('%I.%I', n.nspname, c.relname) escaped_fqn,
+        format('%I', c.relname || '_') alias,
+        jsonb_object_agg(format('%s.%s', c.relname, a.attname), jsonb_build_object(
+            'escaped_name', format('%I', a.attname),
+            'type', t.typname
+        )) cols
         from pg_catalog.pg_class c
         join pg_catalog.pg_namespace n on n.oid = c.relnamespace
         join pg_catalog.pg_attribute a on a.attrelid = c.oid
+        join pg_catalog.pg_type t on t.oid = a.atttypid
         where c.relkind = any (array['r', 'v', 'm', 'f', 'p'])
+        and a.attnum > 0
         and n.nspname = any($1)
         group by n.nspname, c.relname
-
     "#, &[&schemas]).await.unwrap();
 
     let manager = PostgresConnectionManager::new_from_stringlike("host=localhost user=florian password=florian", NoTls).unwrap(); // @TOOO env vars
@@ -64,13 +77,15 @@ async fn main() {
 
     let state = State {
         pool,
-        tables: rows.iter().map(|row| { (row.get(0), Table {
-            escaped_fqn: row.get(1),
+        max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
+        max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
+        tables: table_defs.iter().map(|row| { (row.get("fqn"), Table {
+            escaped_fqn: row.get("escaped_fqn"),
             alias: row.get("alias"),
             cols: row.get("cols"),
         })}).collect(),
     };
-    eprintln!("{:?}", state);
+    eprintln!("{:?}", state.tables);
 
     let app = Router::new()
         .route("/:table", get(select))
@@ -87,32 +102,49 @@ async fn main() {
 
 
 async fn select(
-    Extension(State {pool, tables}): Extension<State>,
+    Extension(State {pool, tables, max_limit, max_offset}): Extension<State>,
+    headers: HeaderMap,
     Path(table): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
-) -> Result<Json<Vec<Value>>, (StatusCode, String)> {
+) -> Result<Response, (StatusCode, String)> {
     if !tables.contains_key(&table) {
         return Err((StatusCode::NOT_FOUND, format!("{} Not found", table)));
     }
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().read_only(true).start().await.map_err(internal_error)?;
 
-    tx.execute("select set_config('role', $1, true)", &[&"florian".to_string()]).await.map_err(internal_error)?;
+    tx.execute("select set_config('role', $1, true)", &[&"florian".to_string()]).await.map_err(internal_error)?; // @TODO crypto
 
     let table_def = tables.get(&table).unwrap();
-    println!("{:?}", table_def);
-    let where_clause: Vec<String> = query_params.keys().map(|col| {
-        eprintln!("{:?}", col);
-        format!("{}.{} = $1", table_def.alias, table_def.cols.get(col).unwrap())
+    let where_clause: Vec<String> = query_params.keys().enumerate().map(|(i, col)| {
+        format!("{}.{} = ${}", table_def.alias, table_def.cols.get(col).unwrap()["escaped_name"], i + 1)
     }).collect();
 
-    let q = format!("select row_to_json({}) from {} {} where {}", &table_def.alias, &table_def.escaped_fqn, &table_def.alias, where_clause.join(" and "));
+    let sql = format!("select row_to_json({}) from {} {} {} {} {} {} limit {} offset {}",
+        &table_def.alias,
+        &table_def.escaped_fqn,
+        &table_def.alias,
+        if where_clause.is_empty() {""} else {"where"},
+        where_clause.join(" and "),
+        if headers.contains_key("order-by") {"order by"} else {""},
+        "", //headers.get("order-by").unwrap_or(),
+        min(max_limit, headers.get("limit").unwrap_or(&HeaderValue::from_static("100")).to_str().map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
+        min(max_offset, headers.get("offset").map(|header| {header.to_str()}).unwrap_or(Ok("0")).map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
+    );
+    let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
     let rows = tx.query(
-        &q, &[&"test"] //&query_params.values().map(|value| {value}).collect()
+        &sql, params.as_slice()
     ).await.map_err(internal_error)?;
     let res: Vec<Value> = rows.iter().map(|row| {row.get(0)}).collect();
 
-    Ok(Json(res))
+    match headers.get(ACCEPT).unwrap().to_str() {
+        Ok("text/html") => {
+            let mut handlebars = Handlebars::new();
+            handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
+            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
+        },
+        _ => Ok(Json(res).into_response()),
+    }
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
