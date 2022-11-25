@@ -24,6 +24,7 @@ struct Relation {
     escaped_fqn: String,
     alias: String,
     cols: Value,
+    links: Value,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -46,12 +47,12 @@ struct State {
 async fn main() {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            env::var("RUST_LOG").unwrap_or_else(|_| "httpg=debug".into()),
+            env::var("RUST_LOG").unwrap_or("httpg=debug".to_string()),
         ))
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let (client, connection) = tokio_postgres::connect(&env::var("HTTPG_CONN").unwrap(), NoTls).await.unwrap(); // @TODO use pool?
+    let (client, connection) = tokio_postgres::connect(&env::var("HTTPG_CONN").expect("HTTPG_CONN"), NoTls).await.unwrap(); // @TODO use pool?
 
     tokio::spawn(async move {
         if let Err(e) = connection.await {
@@ -68,18 +69,22 @@ async fn main() {
         format('%I', r.relname || '_') alias,
         jsonb_object_agg(format('%s.%s', r.relname, a.attname), jsonb_build_object(
             'escaped_name', quote_ident(a.attname),
-            'type', t.typname,
-            'fkey', c.conname,
-            'target', rr.relname
-        )) cols
+            'type', t.typname
+        )) cols,
+        coalesce(jsonb_object_agg(c.conname, jsonb_build_object(
+            'target', format('%I.%I', rn.nspname, rr.relname),
+            'attributes', jsonb_build_object(a.attname, ra.attname)
+        )) filter (where c.conname is not null and rr.relname is not null), '{}') links
         from pg_catalog.pg_class r
-        left join pg_catalog.pg_constraint c on c.conrelid = r.oid
-        left join pg_catalog.pg_class rr on c.confrelid = rr.oid
         join pg_catalog.pg_namespace n on n.oid = r.relnamespace
         join pg_catalog.pg_attribute a on a.attrelid = r.oid
         join pg_catalog.pg_type t on t.oid = a.atttypid
+        left join pg_catalog.pg_constraint c on c.conrelid = r.oid and a.attnum = any(c.conkey)
+        left join pg_catalog.pg_class rr on c.confrelid = rr.oid
+        left join pg_catalog.pg_attribute ra on ra.attnum = any(c.confkey) and ra.attrelid = rr.oid
+        left join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
         where r.relkind = any (array['r', 'v', 'm', 'f', 'p'])
-        and (c.contype = 'f' or c.contype is null)
+        and (c.contype in ('f', 'p') or c.contype is null)
         and a.attnum > 0
         and n.nspname = any($1)
         group by n.nspname, r.relname
@@ -112,18 +117,19 @@ async fn main() {
         pool,
         max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
         max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
-        anon_role: env::var("HTTPG_ANON_ROLE").unwrap(),
+        anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
         relations: relation_defs.iter().map(|row| { (row.get("fqn"), Relation {
             escaped_fqn: row.get("escaped_fqn"),
             alias: row.get("alias"),
             cols: row.get("cols"),
+            links: row.get("links"),
         })}).collect(),
         procedures: procedure_defs.iter().map(|row| { (row.get("fqn"), Procedure {
             escaped_fqn: row.get("escaped_fqn"),
             arguments: row.get("arguments"),
         })}).collect(),
     };
-    eprintln!("{:?}", state);
+    eprintln!("{:#?}", state);
 
     let app = Router::new()
         .route("/relation/:relation", get(select_rows))//.post(insert_rows).put(upsert_rows).delete(delete_rows))
@@ -178,9 +184,7 @@ async fn select_rows(
     ).await.map_err(internal_error)?;
     let res: Vec<Value> = rows.iter().map(|row| {
         let mut r: Value = row.get(0);
-        r["link"] = json!({
-            "href": format!("/relation/{}", "public.comment")
-        });
+        r["links"] = json!(relation_def.links);
         r
     }).collect();
 
