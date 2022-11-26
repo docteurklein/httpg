@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Extension, Path, Query},
+    extract::{State, Path, Query},
     http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
     routing::{get, post},
     Router,
@@ -34,7 +34,7 @@ struct Procedure {
 }
 
 #[derive(Clone, Debug)]
-struct State {
+struct AppState {
     pool: Pool<PostgresConnectionManager<NoTls>>,
     relations: HashMap<String, Relation>,
     procedures: HashMap<String, Procedure>,
@@ -79,11 +79,11 @@ async fn main() {
         join pg_catalog.pg_namespace n on n.oid = r.relnamespace
         join pg_catalog.pg_attribute a on a.attrelid = r.oid
         join pg_catalog.pg_type t on t.oid = a.atttypid
-        left join pg_catalog.pg_constraint c on c.conrelid = r.oid and a.attnum = any(c.conkey)
+        left join pg_catalog.pg_constraint c on (c.conrelid = r.oid and a.attnum = any(c.conkey)) or (c.confrelid = r.oid and a.attnum = any(c.confkey))
         left join pg_catalog.pg_class rr on c.confrelid = rr.oid
         left join pg_catalog.pg_attribute ra on ra.attnum = any(c.confkey) and ra.attrelid = rr.oid
         left join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
-        where r.relkind = any (array['r', 'v', 'm', 'f', 'p'])
+        where r.relkind = any(array['r', 'v', 'm', 'f', 'p'])
         and (c.contype in ('f', 'p') or c.contype is null)
         and a.attnum > 0
         and n.nspname = any($1)
@@ -113,7 +113,7 @@ async fn main() {
     let manager = PostgresConnectionManager::new_from_stringlike(&env::var("HTTPG_CONN").unwrap(), NoTls).unwrap();
     let pool = Pool::builder().build(manager).await.unwrap();
 
-    let state = State {
+    let state = AppState {
         pool,
         max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
         max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
@@ -134,7 +134,7 @@ async fn main() {
     let app = Router::new()
         .route("/relation/:relation", get(select_rows))//.post(insert_rows).put(upsert_rows).delete(delete_rows))
         .route("/procedure/:procedure", post(call_procedure))
-        .layer(Extension(state))
+        .with_state(state)
     ;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -147,7 +147,7 @@ async fn main() {
 
 
 async fn select_rows(
-    Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
+    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
     Path(relation): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
@@ -199,7 +199,7 @@ async fn select_rows(
 }
 
 async fn call_procedure(
-    Extension(State {pool, relations, procedures, max_limit, max_offset, anon_role}): Extension<State>,
+    State(AppState {pool, procedures, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
     Path(procedure): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
