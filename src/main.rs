@@ -1,18 +1,22 @@
 use axum::{
-    extract::{State, Path, Query},
+    extract::{State, Path, Query, Json},
     http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
     routing::{get, post},
     Router,
-    response::{Json, Html, IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
 };
+use quaint::{val, col};
+use quaint::{prelude::*, pooled::{PooledConnection, Quaint}};
+use quaint::ast::*;
+use quaint::visitor::{Visitor, Postgres};
 use handlebars::Handlebars;
+use std::time::Duration;
 use std::env;
+use std::fs;
 use std::cmp::min;
 use std::collections::HashMap;
 use serde::{Deserialize};
 use serde_json::{json, Value};
-use bb8::{Pool};
-use bb8_postgres::PostgresConnectionManager;
 use std::net::SocketAddr;
 use tokio_postgres::NoTls;
 use tokio_postgres::types::ToSql;
@@ -21,10 +25,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone, Debug, Deserialize)]
 struct Relation {
-    escaped_fqn: String,
+    schema: String,
+    name: String,
     alias: String,
     cols: Value,
     links: Value,
+    f_links: Value,
+    p_links: Value,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -33,14 +40,20 @@ struct Procedure {
     arguments: Value,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 struct AppState {
-    pool: Pool<PostgresConnectionManager<NoTls>>,
+    pool: Quaint,
     relations: HashMap<String, Relation>,
     procedures: HashMap<String, Procedure>,
-    max_limit: u16,
-    max_offset: u16,
+    max_limit: usize,
+    max_offset: usize,
     anon_role: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Params {
+    limit: Option<usize>,
+    offset: Option<usize>,
 }
 
 #[tokio::main]
@@ -63,32 +76,10 @@ async fn main() {
     let env_schema = env::var("HTTPG_SCHEMA").unwrap_or("public".to_string());
     let schemas: Vec<&str> = env_schema.split(",").collect();
 
-    let relation_defs = client.query(r#"
-        select format('%s.%s', n.nspname, r.relname) fqn,
-        format('%I.%I', n.nspname, r.relname) escaped_fqn,
-        format('%I', r.relname || '_') alias,
-        jsonb_object_agg(format('%s.%s', r.relname, a.attname), jsonb_build_object(
-            'escaped_name', quote_ident(a.attname),
-            'type', t.typname
-        )) cols,
-        coalesce(jsonb_object_agg(c.conname, jsonb_build_object(
-            'target', format('%I.%I', rn.nspname, rr.relname),
-            'attributes', jsonb_build_object(a.attname, ra.attname)
-        )) filter (where c.conname is not null and rr.relname is not null), '{}') links
-        from pg_catalog.pg_class r
-        join pg_catalog.pg_namespace n on n.oid = r.relnamespace
-        join pg_catalog.pg_attribute a on a.attrelid = r.oid
-        join pg_catalog.pg_type t on t.oid = a.atttypid
-        left join pg_catalog.pg_constraint c on (c.conrelid = r.oid and a.attnum = any(c.conkey)) or (c.confrelid = r.oid and a.attnum = any(c.confkey))
-        left join pg_catalog.pg_class rr on c.confrelid = rr.oid
-        left join pg_catalog.pg_attribute ra on ra.attnum = any(c.confkey) and ra.attrelid = rr.oid
-        left join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
-        where r.relkind = any(array['r', 'v', 'm', 'f', 'p'])
-        and (c.contype in ('f', 'p') or c.contype is null)
-        and a.attnum > 0
-        and n.nspname = any($1)
-        group by n.nspname, r.relname
-    "#, &[&schemas]).await.unwrap();
+
+    //let rel_defs_query = std::include_str!("../sql/relation_defs.sql");
+    let rel_defs_query = fs::read_to_string("./sql/relation_defs.sql").expect("./sql/relation_defs.sql");
+    let rel_defs = client.query(&rel_defs_query, &[&schemas]).await.unwrap();
 
     let procedure_defs = client.query(r#"
         with proc as (
@@ -110,29 +101,37 @@ async fn main() {
         group by p.nspname, p.proname
     "#, &[&schemas]).await.unwrap();
 
-    let manager = PostgresConnectionManager::new_from_stringlike(&env::var("HTTPG_CONN").unwrap(), NoTls).unwrap();
-    let pool = Pool::builder().build(manager).await.unwrap();
+    let mut builder = Quaint::builder(&env::var("HTTPG_CONN").expect("HTTPG_CONN")).unwrap();
+    builder.connection_limit(10);
+    builder.max_idle_lifetime(Duration::from_secs(300));
+    //builder.test_on_check_out(true);
+
+    let pool = builder.build();
 
     let state = AppState {
         pool,
-        max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<u16>().unwrap(),
-        max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<u16>().unwrap(),
+        max_limit: env::var("HTTPG_MAX_LIMIT").unwrap_or("100".to_string()).parse::<usize>().unwrap(),
+        max_offset: env::var("HTTPG_MAX_OFFSET").unwrap_or("0".to_string()).parse::<usize>().unwrap(),
         anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
-        relations: relation_defs.iter().map(|row| { (row.get("fqn"), Relation {
-            escaped_fqn: row.get("escaped_fqn"),
+        relations: rel_defs.iter().map(|row| { (row.get("fqn"), Relation {
+            name: row.get("relname"),
+            schema: row.get("nspname"),
             alias: row.get("alias"),
             cols: row.get("cols"),
             links: row.get("links"),
+            f_links: row.get("f_links"),
+            p_links: row.get("p_links"),
         })}).collect(),
         procedures: procedure_defs.iter().map(|row| { (row.get("fqn"), Procedure {
             escaped_fqn: row.get("escaped_fqn"),
             arguments: row.get("arguments"),
         })}).collect(),
     };
-    eprintln!("{:#?}", state);
+    dbg!(&state.relations);
 
     let app = Router::new()
-        .route("/relation/:relation", get(select_rows))//.post(insert_rows).put(upsert_rows).delete(delete_rows))
+        .route("/query", post(query))
+        .route("/relation/:relation", get(select_rows).post(select_rows)) //.post(insert_rows).put(upsert_rows).delete(delete_rows))
         .route("/procedure/:procedure", post(call_procedure))
         .with_state(state)
     ;
@@ -145,46 +144,29 @@ async fn main() {
         .unwrap();
 }
 
+#[derive(Debug, Deserialize)]
+struct RawQuery {
+    query: String,
+    params: Value,
+}
 
-async fn select_rows(
+async fn query(
     State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
-    Path(relation): Path<String>,
-    Query(query_params): Query<HashMap<String, String>>,
+    Json(body): Json<RawQuery>,
 ) -> Result<Response, (StatusCode, String)> {
-    if !relations.contains_key(&relation) {
-        return Err((StatusCode::NOT_FOUND, format!("{} Not found", relation)));
-    }
-    let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().read_only(true).start().await.map_err(internal_error)?;
+    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
+    let conn = pool.check_out().await.map_err(internal_error)?;
+    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
 
-    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
-    tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
+    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
+    let rows = tx.query_raw(&body.query, &[quaint::Value::from(body.params)]).await.map_err(internal_error)?; // @TODO params
+    tx.commit().await.map_err(internal_error)?;
 
-    let relation_def = relations.get(&relation).unwrap();
-    let where_clause: Vec<String> = query_params.keys().enumerate().map(|(i, col_name)| {
-        let col = relation_def.cols.get(col_name).unwrap();
-        format!("{}.{} = ${}::text::{}", relation_def.alias, col["escaped_name"], i + 1, col["type"]) // @TODO hacky cast cast?
-    }).collect();
-
-    let sql = format!("select row_to_json({}) from {} {} {} {} {} {} limit {} offset {}",
-        &relation_def.alias,
-        &relation_def.escaped_fqn,
-        &relation_def.alias,
-        if where_clause.is_empty() {""} else {"where"},
-        where_clause.join(" and "),
-        if headers.contains_key("order-by") {"order by"} else {""},
-        "", //headers.get("order-by").unwrap_or(), @TODO escape!
-        min(max_limit, headers.get("limit").unwrap_or(&HeaderValue::from_static("100")).to_str().map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
-        min(max_offset, headers.get("offset").map(|header| {header.to_str()}).unwrap_or(Ok("0")).map_err(internal_error)?.parse::<u16>().map_err(internal_error)?),
-    );
-    let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
-    let rows = tx.query(
-        &sql, params.as_slice()
-    ).await.map_err(internal_error)?;
-    let res: Vec<Value> = rows.iter().map(|row| {
-        let mut r: Value = row.get(0);
-        r["links"] = json!(relation_def.links);
+    let res: Vec<Value> = rows.into_iter().map(|row| {
+        dbg!(&row);
+        let mut r: Value = row[0].as_json().unwrap().to_owned();
+        //@TODO add hypermedia links
         r
     }).collect();
 
@@ -194,7 +176,60 @@ async fn select_rows(
             handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
             Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
         },
-        _ => Ok(Json(res).into_response()),
+        _ => Ok(axum::response::Json(res).into_response()),
+    }
+}
+
+async fn select_rows(
+    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
+    headers: HeaderMap,
+    Path(relation): Path<String>,
+    Query(params): Query<Params>,
+    Query(conditions): Query<HashMap<String, String>>,
+    //Json(body): Json<Value>,
+) -> Result<Response, (StatusCode, String)> {
+    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
+    if !relations.contains_key(&relation) {
+        return Err((StatusCode::NOT_FOUND, format!("{} Not found", relation)));
+    }
+    let rel_def = relations.get(&relation).unwrap();
+
+    let query = Select::from_table(Table::from((&rel_def.schema, &rel_def.name)).alias(&rel_def.alias))
+        .value(row_to_json(&rel_def.alias, false))
+        .limit(min(max_limit, params.limit.unwrap_or(100)))
+        .offset(min(max_offset, params.offset.unwrap_or(0)))
+    ;
+
+    //let query = body.as_object().unwrap().into_iter().fold(query, |query, (key, value)| {
+
+    let query = conditions.iter().fold(query, |query, (key, value)| {
+        let col = rel_def.cols.get(key.clone()).unwrap();
+        dbg!(col);
+        query.and_where(Column::from((&rel_def.alias, key.clone())).equals(quaint::Value::from(value.clone())))
+    });
+    //let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
+
+    let conn = pool.check_out().await.map_err(internal_error)?;
+    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
+
+    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
+    tx.raw_cmd("select set_config('transaction_read_only', 'true', true)").await.map_err(internal_error)?;
+
+    let rows = tx.select(query.into()).await.map_err(internal_error)?;
+
+    let res: Vec<Value> = rows.into_iter().map(|row| {
+        let mut r: Value = row[0].as_json().unwrap().to_owned();
+        r["links"] = json!(rel_def.links);
+        r
+    }).collect();
+
+    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
+        Ok("text/html") => {
+            let mut handlebars = Handlebars::new(); // @TODO share instance
+            handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
+            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
+        },
+        _ => Ok(axum::response::Json(res).into_response()),
     }
 }
 
@@ -207,25 +242,25 @@ async fn call_procedure(
     if !procedures.contains_key(&procedure) {
         return Err((StatusCode::NOT_FOUND, format!("{} Not found", procedure)));
     }
-    let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().read_only(false).start().await.map_err(internal_error)?;
+    //let mut conn = pool.get().await.map_err(internal_error)?;
+    //let tx = conn.build_transaction().read_only(false).start().await.map_err(internal_error)?;
 
-    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
-    tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
+    //let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role);
+    //tx.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?; // @TODO crypto
 
-    let procedure_def = procedures.get(&procedure).unwrap();
-    let args: Vec<String> = query_params.keys().enumerate().map(|(i, arg_name)| {
-        let arg = procedure_def.arguments.get(arg_name).unwrap();
-        format!("{} => ${}::text::{}", arg["escaped_name"], i + 1, arg["type"]) // @TODO hacky cast cast?
-    }).collect();
+    //let procedure_def = procedures.get(&procedure).unwrap();
+    //let args: Vec<String> = query_params.keys().enumerate().map(|(i, arg_name)| {
+    //    let arg = procedure_def.arguments.get(arg_name).unwrap();
+    //    format!("{} => ${}::text::{}", arg["escaped_name"], i + 1, arg["type"]) // @TODO hacky cast cast?
+    //}).collect();
 
-    let sql = format!("call {}({})",
-        &procedure_def.escaped_fqn,
-        args.join(", ")
-    );
-    let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
-    tx.execute(&sql, params.as_slice()).await.map_err(internal_error)?;
-    tx.commit().await.map_err(internal_error)?;
+    //let sql = format!("call {}({})",
+    //    &procedure_def.escaped_fqn,
+    //    args.join(", ")
+    //);
+    //let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
+    //tx.execute(&sql, params.as_slice()).await.map_err(internal_error)?;
+    //tx.commit().await.map_err(internal_error)?;
 
     Ok((StatusCode::NO_CONTENT, "no content").into_response())
 }
@@ -237,3 +272,4 @@ where
     eprintln!("{}", err);
     (StatusCode::INTERNAL_SERVER_ERROR, "internal error".to_string())
 }
+
