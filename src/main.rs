@@ -1,14 +1,18 @@
 use axum::{
     extract::{State, Path, Query, Json},
-    http::{StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
+    http::{Method, StatusCode, header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION}},
     routing::{get, post},
     Router,
     response::{Html, IntoResponse, Response},
 };
+use axum_macros::debug_handler;
+use tower::builder::ServiceBuilder;
+use tower_http::cors::{Any, CorsLayer};
 use quaint::{val, col};
 use quaint::{prelude::*, pooled::{PooledConnection, Quaint}};
 use quaint::ast::*;
 use quaint::visitor::{Visitor, Postgres};
+use quaint::serde::from_rows;
 use handlebars::Handlebars;
 use std::time::Duration;
 use std::env;
@@ -19,17 +23,24 @@ use serde::{Deserialize};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tokio_postgres::NoTls;
-use tokio_postgres::types::ToSql;
+use tokio_postgres::types::{FromSql, ToSql};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, FromSql)]
+struct Link {
+    name: String,
+    target: String,
+    attributes: HashMap<String, Option<String>>
+}
+
+#[derive(Clone, Debug, Deserialize, FromSql)]
 struct Relation {
     schema: String,
     name: String,
     alias: String,
     cols: Value,
-    links: Value,
+    links: Vec<Link>,
     f_links: Value,
     p_links: Value,
 }
@@ -119,8 +130,8 @@ async fn main() {
             alias: row.get("alias"),
             cols: row.get("cols"),
             links: row.get("links"),
-            f_links: row.get("f_links"),
-            p_links: row.get("p_links"),
+            f_links: row.get("in_links"),
+            p_links: row.get("out_links"),
         })}).collect(),
         procedures: procedure_defs.iter().map(|row| { (row.get("fqn"), Procedure {
             escaped_fqn: row.get("escaped_fqn"),
@@ -129,11 +140,16 @@ async fn main() {
     };
     dbg!(&state.relations);
 
+    let cors = CorsLayer::new()
+        //.allow_methods([Method::GET, Method::POST])
+        .allow_origin(Any)
+    ;
     let app = Router::new()
-        .route("/query", post(query))
+        //.route("/query", post(query))
         .route("/relation/:relation", get(select_rows).post(select_rows)) //.post(insert_rows).put(upsert_rows).delete(delete_rows))
         .route("/procedure/:procedure", post(call_procedure))
         .with_state(state)
+        .layer(ServiceBuilder::new().layer(cors))
     ;
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
@@ -150,36 +166,37 @@ struct RawQuery {
     params: Value,
 }
 
-async fn query(
-    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
-    headers: HeaderMap,
-    Json(body): Json<RawQuery>,
-) -> Result<Response, (StatusCode, String)> {
-    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
-    let conn = pool.check_out().await.map_err(internal_error)?;
-    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
+//async fn query(
+//    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
+//    headers: HeaderMap,
+//    Json(body): Json<RawQuery>,
+//) -> Result<Response, (StatusCode, String)> {
+//    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
+//    let conn = pool.check_out().await.map_err(internal_error)?;
+//    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
+//
+//    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
+//    let rows = tx.query_raw(&body.query, &[quaint::Value::from(body.params)]).await.map_err(internal_error)?; // @TODO params
+//    tx.commit().await.map_err(internal_error)?;
+//
+//    //let res: Vec<Value> = rows.into_iter().map(|row| {
+//    //    dbg!(&row);
+//    //    let r: Value = row[0].as_json().unwrap().to_owned();
+//    //    //@TODO add hypermedia links
+//    //    r
+//    //}).collect();
+//
+//    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
+//        //Ok("text/html") => {
+//        //    let mut handlebars = Handlebars::new(); // @TODO share instance
+//        //    handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
+//        //    Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
+//        //},
+//        _ => Ok(axum::response::Json(rows).into_response()),
+//    }
+//}
 
-    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
-    let rows = tx.query_raw(&body.query, &[quaint::Value::from(body.params)]).await.map_err(internal_error)?; // @TODO params
-    tx.commit().await.map_err(internal_error)?;
-
-    let res: Vec<Value> = rows.into_iter().map(|row| {
-        dbg!(&row);
-        let mut r: Value = row[0].as_json().unwrap().to_owned();
-        //@TODO add hypermedia links
-        r
-    }).collect();
-
-    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-        Ok("text/html") => {
-            let mut handlebars = Handlebars::new(); // @TODO share instance
-            handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
-            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
-        },
-        _ => Ok(axum::response::Json(res).into_response()),
-    }
-}
-
+#[debug_handler]
 async fn select_rows(
     State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
@@ -215,21 +232,24 @@ async fn select_rows(
     tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
     tx.raw_cmd("select set_config('transaction_read_only', 'true', true)").await.map_err(internal_error)?;
 
-    let rows = tx.select(query.into()).await.map_err(internal_error)?;
+    let rows: Vec<Relation> = from_rows(tx.select(query.into()).await.map_err(internal_error)?).map_err(internal_error)?;
 
-    let res: Vec<Value> = rows.into_iter().map(|row| {
-        let mut r: Value = row[0].as_json().unwrap().to_owned();
-        r["links"] = json!(rel_def.links);
-        r
-    }).collect();
+    //let res: Vec<Value> = rows.into_iter().map(|row| {
+    //let res: Vec<Value> = rows.into_iter().map(|row| {
+    //    let mut r: Value = row[0].as_json().unwrap().to_owned();
+    //    r["links"] = json!(rel_def.links);//.entries().map(|link| {
+    //    //    link
+    //    //}));
+    //    r
+    //}).collect();
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
         Ok("text/html") => {
             let mut handlebars = Handlebars::new(); // @TODO share instance
             handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
-            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
+            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &vec!()).unwrap()).into_response())
         },
-        _ => Ok(axum::response::Json(res).into_response()),
+        _ => Ok(axum::response::Json(&rows).into_response()),
     }
 }
 
