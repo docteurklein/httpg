@@ -9,7 +9,7 @@
       let pkgs = nixpkgs.legacyPackages.${system};
       in {
         devShell = pkgs.mkShell {
-          nativeBuildInputs = with pkgs; [ cargo rustc openssl.dev pkg-config ];
+          nativeBuildInputs = with pkgs; [ cargo rustc rust-analyzer openssl.dev pkg-config ];
         };
       });
 }
