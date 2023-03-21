@@ -8,7 +8,7 @@ use axum::{
 use axum_macros::debug_handler;
 use tower::builder::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
-use quaint::{val, col};
+// use quaint::{val, col, Value};
 use quaint::{prelude::*, pooled::{PooledConnection, Quaint}};
 use quaint::ast::*;
 use quaint::visitor::{Visitor, Postgres};
@@ -92,7 +92,7 @@ async fn main() {
     let conn = pool.check_out().await.unwrap();
     // let tx = conn.start_transaction(Option::None).await.unwrap();
 
-    let rel_defs: HashMap<String, RelationDef> = from_rows(conn.query_raw(&rel_defs_query, &[
+    let rel_defs = from_rows(conn.query_raw(&rel_defs_query, &[
         quaint::ast::Value::array(schemas)
     ]).await.unwrap()).unwrap()
         .into_iter()
@@ -198,6 +198,13 @@ struct RawQuery {
 //    }
 //}
 
+fn cast<'a>(val: &'a str, ty: &'a str) -> quaint::ast::Value<'a> {
+    match ty {
+        "bool" => quaint::ast::Value::from(val.parse::<bool>().unwrap()),
+        _ => quaint::ast::Value::from(val),
+    }
+}
+
 #[debug_handler]
 async fn select_rows(
     State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
@@ -214,30 +221,33 @@ async fn select_rows(
     let rel_def = relations.get(&relation_name).unwrap();
 
     let query = Select::from_table(Table::from((&rel_def.nspname, &rel_def.relname)).alias(&rel_def.alias))
-        .value(row_to_json(&rel_def.alias, false))
+        .value(row_to_json(&rel_def.alias, false).alias(&rel_def.relname))
         .limit(min(max_limit, params.limit.unwrap_or(100)))
         .offset(min(max_offset, params.offset.unwrap_or(0)))
     ;
 
     //let query = body.as_object().unwrap().into_iter().fold(query, |query, (key, value)| {
 
-    let query = conditions.iter().try_fold(query, |query, (key, value)| {
-        let col = rel_def.cols.get(key.clone()).ok_or(internal_error)?;
-        Ok(query.and_where(
+    let query = conditions.iter().fold(query, |query, (key, value)| {
+        let col = &rel_def.cols[key.clone()];
+        query.and_where(
             Column::from((&rel_def.alias, key.clone()))
-            .equals(quaint::Value::from(value.clone()))
-        ))
-    }).map_err(internal_error);
+            .equals(cast(value, &col["type"].as_str().unwrap())) // @TODO cast value to real postgres type!
+        )
+    });//.map_err(internal_error);
     //let params: Vec<&(dyn ToSql + Sync)> = query_params.values().map(|value| {value as &(dyn ToSql + Sync)}).collect();
 
     let conn = pool.check_out().await.map_err(internal_error)?;
-    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
+    // let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?; // @TODO use tx that rollbacks on drop
 
-    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
-    tx.raw_cmd("select set_config('transaction_read_only', 'true', true)").await.map_err(internal_error)?;
+    conn.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
+    conn.raw_cmd("select set_config('transaction_read_only', 'true', true)").await.map_err(internal_error)?;
 
-    let rows: Vec<Value> = from_rows(tx.select(query.into()).await.map_err(internal_error)?).map_err(internal_error)?;
-    tx.rollback().await.map_err(internal_error)?;
+    let rows: Vec<Value> = from_rows(
+        conn.select(query.into()).await.map_err(internal_error)?
+    ).map_err(internal_error)?;
+
+    // tx.rollback().await.map_err(internal_error)?;
 
     //let res: Vec<Value> = rows.into_iter().map(|row| {
     //let res: Vec<Value> = rows.into_iter().map(|row| {
