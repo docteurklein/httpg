@@ -1,3 +1,4 @@
+prepare ps1 as 
 with recursive view_dep ("from", oid, ev_action) as (
     select v.oid, v.oid, rw.ev_action
     from pg_rewrite rw
@@ -9,7 +10,7 @@ with recursive view_dep ("from", oid, ev_action) as (
     and d.classid = 'pg_rewrite'::regclass
     and d.refclassid = 'pg_class'::regclass
     and n.nspname = any($1)
-    -- and n.nspname in('public')
+    -- and n.nspname = any(array['pim', 'public'])
 union all
     select view_dep.from, d.refobjid, rw.ev_action
     from view_dep
@@ -75,7 +76,7 @@ relation as (
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
     and a.attnum > 0
     and n.nspname = any($1)
-    -- and n.nspname in('public')
+    -- and n.nspname = any(array['pim', 'public'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
 ),
 out_link as (
@@ -139,9 +140,8 @@ format('%I', r.relname || '_') alias,
 r.nspname,
 r.relname,
 cols,
-(coalesce(in_links, '{}')) in_links, (coalesce(out_links, '{}')) out_links,
-coalesce(in_links, '{}') || coalesce(out_links, '{}') links
+coalesce(in_links, '{}') in_links,
+coalesce(out_links, '{}') out_links
 from relation r
 left join out_link using (conrelid)
 left join in_link using (conrelid)
--- group by 1, 2, 3, 4, 5, in_links, out_links

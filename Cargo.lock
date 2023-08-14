@@ -190,13 +190,9 @@ dependencies = [
 
 [[package]]
 name = "connection-string"
-version = "0.1.14"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c4ecb0dc8c35d2c626e45ae70bbfcb1050b302f42bcdf025d913cc0c5a0b443"
-dependencies = [
- "js-sys",
- "wasm-bindgen",
-]
+checksum = "510ca239cf13b7f8d16a2b48f263de7b4f8c566f0af58d901031473c76afb1e3"
 
 [[package]]
 name = "core-foundation"
@@ -785,8 +781,9 @@ dependencies = [
 
 [[package]]
 name = "mobc"
-version = "0.7.3"
-source = "git+https://github.com/prisma/mobc?tag=1.0.6#80462c4870a2bf6aab49da15c88c021bae531da8"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc79c4a77e312fee9c7bd4b957c12ad1196db73c4a81e5c0b13f02083c4f7f2f"
 dependencies = [
  "async-trait",
  "futures-channel",
@@ -1058,12 +1055,12 @@ dependencies = [
 [[package]]
 name = "postgres-native-tls"
 version = "0.5.0"
-source = "git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode#064a6a50427542e2c166e870027735aab3b52e77"
+source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#00d4815e58859261bdfca71c75be7dc657303f7d"
 dependencies = [
  "native-tls",
  "tokio",
  "tokio-native-tls",
- "tokio-postgres 0.7.7 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
+ "tokio-postgres 0.7.7 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
 ]
 
 [[package]]
@@ -1087,7 +1084,7 @@ dependencies = [
 [[package]]
 name = "postgres-protocol"
 version = "0.6.4"
-source = "git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode#064a6a50427542e2c166e870027735aab3b52e77"
+source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#00d4815e58859261bdfca71c75be7dc657303f7d"
 dependencies = [
  "base64 0.13.1",
  "byteorder",
@@ -1118,13 +1115,13 @@ dependencies = [
 [[package]]
 name = "postgres-types"
 version = "0.2.4"
-source = "git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode#064a6a50427542e2c166e870027735aab3b52e77"
+source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#00d4815e58859261bdfca71c75be7dc657303f7d"
 dependencies = [
  "bit-vec",
  "bytes",
  "chrono",
  "fallible-iterator",
- "postgres-protocol 0.6.4 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
+ "postgres-protocol 0.6.4 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
  "serde",
  "serde_json",
  "uuid",
@@ -1148,7 +1145,7 @@ dependencies = [
 [[package]]
 name = "quaint"
 version = "0.2.0-alpha.13"
-source = "git+https://github.com/prisma/quaint?branch=main#6532d69b5aec007ad06ac60a331c20af11f293fa"
+source = "git+https://github.com/prisma/prisma-engines?branch=main#4189690eafe0ceb8b47e5ec48c5dded56e043430"
 dependencies = [
  "async-trait",
  "base64 0.12.3",
@@ -1166,12 +1163,12 @@ dependencies = [
  "num_cpus",
  "percent-encoding",
  "postgres-native-tls",
- "postgres-types 0.2.4 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
+ "postgres-types 0.2.4 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
- "tokio-postgres 0.7.7 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
+ "tokio-postgres 0.7.7 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
  "tracing",
  "tracing-core",
  "url",
@@ -1580,8 +1577,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-native-tls"
-version = "0.3.0"
-source = "git+https://github.com/pimeys/tls?branch=vendored-openssl#6d0e6fc7a4bf6f290b1033764b47cb3f26d7fceb"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbae76ab933c85776efabc971569dd6119c580d8f5d448769dec1764bf796ef2"
 dependencies = [
  "native-tls",
  "tokio",
@@ -1614,7 +1612,7 @@ dependencies = [
 [[package]]
 name = "tokio-postgres"
 version = "0.7.7"
-source = "git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode#064a6a50427542e2c166e870027735aab3b52e77"
+source = "git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode#00d4815e58859261bdfca71c75be7dc657303f7d"
 dependencies = [
  "async-trait",
  "byteorder",
@@ -1627,8 +1625,8 @@ dependencies = [
  "percent-encoding",
  "phf",
  "pin-project-lite",
- "postgres-protocol 0.6.4 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
- "postgres-types 0.2.4 (git+https://github.com/pimeys/rust-postgres?branch=pgbouncer-mode)",
+ "postgres-protocol 0.6.4 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
+ "postgres-types 0.2.4 (git+https://github.com/prisma/rust-postgres?branch=pgbouncer-mode)",
  "socket2",
  "tokio",
  "tokio-util",
