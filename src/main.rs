@@ -13,13 +13,6 @@ use tower::builder::ServiceBuilder;
 use tower_http::cors::{Any, CorsLayer};
 // use quaint::{val, col, Value};
 use handlebars::Handlebars;
-use quaint::ast::*;
-use quaint::serde::from_rows;
-use quaint::visitor::{Postgres, Visitor};
-use quaint::{
-    pooled::{PooledConnection, Quaint},
-    prelude::*,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::cmp::min;
@@ -28,7 +21,7 @@ use std::env;
 use std::fs;
 use std::net::SocketAddr;
 use std::time::Duration;
-//use tokio_postgres::NoTls;
+use tokio_postgres::{NoTls, Error, Client};
 use tokio_postgres::types::{FromSql, ToSql};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -57,7 +50,7 @@ struct Procedure {
 
 #[derive(Clone)]
 struct AppState {
-    pool: Quaint,
+    pool: Client,
     relations: HashMap<String, RelationDef>,
     procedures: HashMap<String, Procedure>,
     max_limit: usize,
@@ -83,29 +76,22 @@ async fn main() {
     let env_schema = env::var("HTTPG_SCHEMA").unwrap_or("public".to_string());
     let schemas: Vec<&str> = env_schema.split(",").collect();
 
-    let mut builder = Quaint::builder(&env::var("HTTPG_CONN").expect("HTTPG_CONN")).unwrap();
-    builder.connection_limit(10);
-    builder.max_idle_lifetime(Duration::from_secs(300));
-    //builder.test_on_check_out(true);
+    let (client, connection) =
+        tokio_postgres::connect("host=localhost user=postgres", NoTls).await.unwrap();
 
-    let pool = builder.build();
+    // The connection object performs the actual communication with the database,
+    // so spawn it off to run on its own.
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("connection error: {}", e);
+        }
+    });
 
     //let rel_defs_query = std::include_str!("../sql/relation_defs.sql");
     let rel_defs_query =
         fs::read_to_string("./sql/relation_defs.sql").expect("./sql/relation_defs.sql");
 
-    let conn = pool.check_out().await.unwrap();
-    // let tx = conn.start_transaction(Option::None).await.unwrap();
-
-    let rel_defs = from_rows(
-        conn.query_raw(
-            &rel_defs_query,
-            &[quaint::ast::Value::array(schemas.clone())],
-        )
-        .await
-        .unwrap(),
-    )
-    .unwrap()
+   let rows = client.query(&rel_defs_query, &[&schemas.clone()]).await.unwrap()
     .into_iter()
     .map(|c: RelationDef| (c.fqn.clone(), c))
     .collect();
@@ -162,7 +148,7 @@ async fn main() {
         //.allow_methods([Method::GET, Method::POST])
         .allow_origin(Any);
     let app = Router::new()
-        //.route("/query", post(query))
+        .route("/query", post(query))
         .route("/relation/:relation", get(select_rows).post(select_rows)) //.post(insert_rows).put(upsert_rows).delete(delete_rows))
         .route("/procedure/:procedure", post(call_procedure))
         .with_state(state)
@@ -182,35 +168,35 @@ struct RawQuery {
     params: Value,
 }
 
-//async fn query(
-//    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
-//    headers: HeaderMap,
-//    Json(body): Json<RawQuery>,
-//) -> Result<Response, (StatusCode, String)> {
-//    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
-//    let conn = pool.check_out().await.map_err(internal_error)?;
-//    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
-//
-//    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
-//    let rows = tx.query_raw(&body.query, &[quaint::Value::from(body.params)]).await.map_err(internal_error)?; // @TODO params
-//    tx.commit().await.map_err(internal_error)?;
-//
-//    //let res: Vec<Value> = rows.into_iter().map(|row| {
-//    //    dbg!(&row);
-//    //    let r: Value = row[0].as_json().unwrap().to_owned();
-//    //    //@TODO add hypermedia links
-//    //    r
-//    //}).collect();
-//
-//    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-//        //Ok("text/html") => {
-//        //    let mut handlebars = Handlebars::new(); // @TODO share instance
-//        //    handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
-//        //    Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
-//        //},
-//        _ => Ok(axum::response::Json(rows).into_response()),
-//    }
-//}
+async fn query(
+    State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<RawQuery>,
+) -> Result<Response, (StatusCode, String)> {
+    let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
+    let conn = pool.check_out().await.map_err(internal_error)?;
+    let tx = conn.start_transaction(Option::None).await.map_err(internal_error)?;
+
+    tx.execute_raw("select set_config('role', $1, true)", &[role.into()]).await.map_err(internal_error)?;
+    let rows = tx.query_raw(&body.query, &[quaint::Value::from(body.params)]).await.map_err(internal_error)?; // @TODO params
+    tx.commit().await.map_err(internal_error)?;
+
+    let res: Vec<Value> = rows.into_iter().map(|row| {
+        dbg!(&row);
+        let r: Value = row[0].as_json().unwrap().to_owned();
+        //@TODO add hypermedia links
+        r
+    }).collect();
+
+    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
+        Ok("text/html") => {
+            let mut handlebars = Handlebars::new(); // @TODO share instance
+            handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
+            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &res).unwrap()).into_response())
+        },
+        _ => Ok(axum::response::Json(res).into_response()),
+    }
+}
 
 fn cast<'a>(val: &'a str, ty: &'a str) -> quaint::ast::Value<'a> {
     match ty {

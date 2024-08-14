@@ -1,6 +1,6 @@
-prepare ps1 as 
-with recursive view_dep ("from", oid, ev_action) as (
-    select v.oid, v.oid, rw.ev_action
+-- prepare ps1 as 
+with recursive view_dep (nspname, "from", oid, ev_action) as (
+    select n.nspname, v.oid, v.oid, rw.ev_action
     from pg_rewrite rw
     join pg_class v on rw.ev_class = v.oid
     join pg_depend d on rw.oid = d.objid
@@ -9,10 +9,10 @@ with recursive view_dep ("from", oid, ev_action) as (
     and d.deptype in ('i', 'n')
     and d.classid = 'pg_rewrite'::regclass
     and d.refclassid = 'pg_class'::regclass
-    and n.nspname = any($1)
+    -- and n.nspname = any($1)
     -- and n.nspname = any(array['pim', 'public'])
 union all
-    select view_dep.from, d.refobjid, rw.ev_action
+    select view_dep.nspname, view_dep.from, d.refobjid, rw.ev_action
     from view_dep
     join pg_rewrite rw on rw.ev_class = view_dep.oid
     join pg_class v on v.oid = view_dep.oid
@@ -24,8 +24,8 @@ union all
     and d.refclassid = 'pg_class'::regclass
     and d.refobjid <> v.oid
 ),
-tl("from", oid, resno, resorigtbl, resorigcol) as (
-    select v.from::regclass, v.oid::regclass, (tl->'resno')::int, (tl->>'resorigtbl')::oid::regclass, (tl->'resorigcol')::int
+tl(nspname, "from", oid, resno, resorigtbl, resorigcol) as (
+    select v.nspname, v.from::regclass, v.oid::regclass, (tl->'resno')::int, (tl->>'resorigtbl')::oid::regclass, (tl->'resorigcol')::int
     from view_dep v
     cross join jsonb_array_elements(replace(replace(replace(replace(replace(replace(replace(
                                     regexp_replace(replace(replace(replace(replace(replace(
@@ -75,7 +75,7 @@ relation as (
     left join view_col vc on r.oid = vc.from
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
     and a.attnum > 0
-    and n.nspname = any($1)
+    -- and n.nspname = any($1)
     -- and n.nspname = any(array['pim', 'public'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
 ),
@@ -94,7 +94,7 @@ out_link as (
         join pg_catalog.pg_attribute ra on ra.attrelid = c.confrelid and ra.attnum = c.confkey
         where a.attnum > 0
         and ra.attnum > 0
-        and ra.attname <> 'tenant'
+        -- and ra.attname <> 'tenant'
         group by 1, 2, 3
     )
     select r.conrelid, jsonb_object_agg(c.conname, jsonb_build_object(
@@ -122,7 +122,7 @@ in_link as (
         join pg_catalog.pg_attribute ra on ra.attrelid = c.conrelid and ra.attnum = c.conkey
         where a.attnum > 0
         and ra.attnum > 0
-        and ra.attname <> 'tenant'
+        -- and ra.attname <> 'tenant'
         group by 1, 2, 3
     )
     select r.conrelid, jsonb_object_agg(c.conname, jsonb_build_object(
