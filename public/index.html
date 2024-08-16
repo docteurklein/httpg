@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    #sqlprompt textarea {
+      field-sizing: content;
+      width: 100%;
+      height: 10vh;
+    }
+    .container {
+      display: grid;
+      grid-template-columns: auto auto auto; // repeat(auto-fill, minmax(230px, 1fr));
+      grid-gap: 20px;
+    }
+
+    article {
+      display: grid;
+      grid-template-rows: max-content 200px 1fr;
+    }
+
+    article {
+      outline: grey solid;
+      padding-left: 2em;
+    }
+    .link form, .link a {
+      display: inline;
+    }
+  </style>
+</head>
+
+<body>
+  <form id="sqlprompt" method="POST" action="http://0:3000/query">
+    <textarea id="query" name="query">
+select p, 'pim.product'
+from pim.product p
+limit 3
+    </textarea>
+    <textarea id="params" name="params">[]</textarea>
+    <input type="submit" />
+  </form>
+
+  <script type="module">
+    document.addEventListener('submit', async event => {
+      event.preventDefault();
+      let data = new FormData(event.target);
+      let body = Object.fromEntries(data.entries());
+      body.params = JSON.parse(body.params ? body.params : '[]');
+
+      let config = {
+        method: event.target.method.toUpperCase(),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      };
+      console.log(config, data);
+      let res = await fetch(event.target.action, config);
+      let nodes = await res.json();
+      console.log(nodes);
+
+      let container = document.createElement('div');
+      container.className = 'container';
+      container.append(...nodes.map(node => {
+        let article = document.createElement('article');
+        let links = node.links ?? [];
+        delete node.links;
+        article.innerHTML = `
+          <h2>${node.rel}</h2>
+          <pre>${JSON.stringify(node, null, 10)}</pre>
+        `;
+        article.append(...links.map(link => {
+          let e = document.createElement('div');
+          e.className = 'link';
+          e.innerHTML = `
+            <a href="/?query=${encodeURIComponent(link.query)}&params=${encodeURIComponent(JSON.stringify(link.params))}">root</a>
+            <form method="POST" action="http://0:3000/query">
+              <textarea hidden name="query">
+              ${link.query}
+              </textarea>
+              <textarea hidden name="params">${JSON.stringify(link.params)}</textarea>
+              <input type="submit" value="${link.direction}: ${link.fkey}" />
+            </form>
+          `;
+          return e;
+        }));
+        return article;
+      }));
+      event.target.insertAdjacentElement('afterend', container);
+    });
+
+    const querystring = new URLSearchParams(window.location.search);
+    if (querystring.has('params')) {
+      params.value = querystring.get('params');
+    }
+    if (querystring.has('query')) {
+      query.value = querystring.get('query');
+      //sqlprompt.submit();
+    }
+
+  </script>
+</body>

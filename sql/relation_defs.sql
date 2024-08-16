@@ -1,4 +1,43 @@
+create or replace function decorate(record jsonb, in_links jsonb, out_links jsonb)
+returns jsonb 
+language sql
+immutable parallel safe
+begin atomic
+    with link (direction, fkey, details) as (
+        select 'in', key, value from jsonb_each(in_links)
+        union all select 'out', key, value from jsonb_each(out_links)
+    ),
+    crit (direction, fkey, crit, fields, params) as (
+        select direction, fkey,
+            format('(%s) = (%s)', string_agg(quote_ident(key), ', '), string_agg('$' || ordinality, ', ')),
+            array_agg(key), -- filter (where record->>key is not null),
+            array_agg(record->value) filter (where record->>value is not null)
+        from link, jsonb_each_text(details->'attributes') with ordinality
+        where record->key is not null
+        group by direction, fkey
+    ),
+    query (direction, fkey, query, fields, params) as (
+        select direction, fkey,
+        format('
+select r, %L
+from %s r
+where %s
+limit 10', details->>'target', details->>'target', crit),
+        fields, params
+        from crit
+        join link using (direction, fkey)
+        where cardinality(params) = cardinality(fields)
+    )
+    select record || jsonb_build_object(
+        'links', coalesce(jsonb_agg(to_jsonb(q)), '[]')
+    )
+    from query q
+    ;
+end;
+
 -- prepare ps1 as 
+drop materialized view if exists rel;
+create materialized view rel as
 with recursive view_dep (nspname, "from", oid, ev_action) as (
     select n.nspname, v.oid, v.oid, rw.ev_action
     from pg_rewrite rw
@@ -10,7 +49,7 @@ with recursive view_dep (nspname, "from", oid, ev_action) as (
     and d.classid = 'pg_rewrite'::regclass
     and d.refclassid = 'pg_class'::regclass
     -- and n.nspname = any($1)
-    -- and n.nspname = any(array['pim', 'public'])
+    and n.nspname = any(array['pim', 'public'])
 union all
     select view_dep.nspname, view_dep.from, d.refobjid, rw.ev_action
     from view_dep
@@ -76,7 +115,7 @@ relation as (
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
     and a.attnum > 0
     -- and n.nspname = any($1)
-    -- and n.nspname = any(array['pim', 'public'])
+    and n.nspname = any(array['pim', 'public'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
 ),
 out_link as (
@@ -145,3 +184,5 @@ coalesce(out_links, '{}') out_links
 from relation r
 left join out_link using (conrelid)
 left join in_link using (conrelid)
+;
+
