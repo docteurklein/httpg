@@ -10,9 +10,9 @@ begin atomic
     ),
     crit (direction, fkey, crit, fields, params) as (
         select direction, fkey,
-            format('(%s) = (%s)', string_agg(quote_ident(key) || '::text', ', '), string_agg('$' || ordinality, ', ')),
-            array_agg(key),
-            array_agg(record->>value order by key) filter (where record->>value is not null)
+            format('(%s) = (%s)', string_agg(quote_ident(key) || '::text', ', ' order by ordinality), string_agg('$' || ordinality, ', ' order by ordinality)),
+            array_agg(key order by key),
+            array_agg(record->>value order by ordinality) filter (where record->>value is not null)
         from link, jsonb_each_text(details->'attributes') with ordinality
         -- where record->key is not null
         group by direction, fkey

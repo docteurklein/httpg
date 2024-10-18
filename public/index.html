@@ -36,7 +36,9 @@
     <input type="submit" />
   </form>
   <hr>
-  <svg id="graph" width="960" height="600">
+  <svg id="graph" viewBox="0 0 960 500" preserveAspectRatio="xMidYMid meet">
+    <g id="nodes" stroke="#fff" stroke-width="1.5"></g>
+    <g id="edges" stroke="#999" stroke-opacity="1"></g>
   </svg>
   <hr>
   <div id="container"></div>
@@ -72,7 +74,7 @@
 
       body.params = JSON.parse(body.params ? body.params : '[]');
 
-      let nodes = await fetchNodes(event.target.method, event.target.action, body);
+      let nodes = await fetchJSON(event.target.method, event.target.action, body);
 
       renderHTML(nodes);
 
@@ -89,7 +91,7 @@
       renderGraph(simulation, color, new Set(nodes), new Set([]));
     });
 
-    async function fetchNodes(method, url, body) {
+    async function fetchJSON(method, url, body) {
       let config = {
         method: method.toUpperCase(),
         headers: {
@@ -132,9 +134,7 @@
       const svg = d3.select('#graph');
       
       const nodeJoin = svg
-          .append("g")
-          //.attr("stroke", "#fff")
-          //.attr("stroke-width", 1.5)
+        .select('#nodes')
         .selectAll('circle')
         .data([...nodes], (d) => JSON.stringify(d.pkey))
         .join(
@@ -146,12 +146,6 @@
               .attr("fill", d => color(d.rel));
             ;
             circle.append("title").text((d) => JSON.stringify({rel: d.rel, record: d.record}));
-            //node.append("foreignObject")
-            //  .attr("width", 480)
-            //  .attr("height", 500)
-            //.append("xhtml:div")
-            //  .style("font", "14px 'Helvetica Neue'")
-            //  .html(container.innerHTML);
             
             circle.call(d3.drag()
               .on("start", event => {
@@ -174,7 +168,7 @@
             circle.on('click', async event => {
               let newNodes = (await Promise.all(
                 event.target.__data__.links.map(
-                  link => fetchNodes('POST', 'http://0:3000/query', link)
+                  link => fetchJSON('POST', 'http://0:3000/query', link)
                 )
               )).flat(1);
 
@@ -194,9 +188,7 @@
       ;
 
       const linkJoin = svg
-        .append("g")
-          .attr("stroke", "#999")
-          .attr("stroke-opacity", 1)
+        .select('#edges')
         .selectAll('line')
         .data(links)
         .join("line");

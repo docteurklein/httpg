@@ -37,7 +37,6 @@
             package = pkgs.postgresql_16;
             initialDatabases = [{
               name = "httpg";
-              # schema = ./src/schema.sql;
             }];
             extensions = extensions: [
             ];
