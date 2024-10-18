@@ -34,7 +34,7 @@ document.addEventListener('submit', async event => {
 
   const simulation = d3.forceSimulation()
     .force("charge", d3.forceManyBody())
-    .force("collide", d3.forceCollide().radius(30).iterations(30))
+    .force("collide", d3.forceCollide().radius(30).iterations(3))
     .force("link", d3.forceLink().id(d => JSON.stringify(d.pkey)))
     .force("x", d3.forceX())
     .force("y", d3.forceY())
@@ -116,7 +116,7 @@ function renderGraph(simulation, color, nodes, links) {
             simulation.alpha(1).restart();
           })
         );
-        circle.on('click', async event => {
+        circle.on('dblclick', async event => {
           let newNodes = (await Promise.all(
             event.target.__data__.links.map(
               link => fetchJSON('POST', '/query', link)
@@ -148,7 +148,6 @@ function renderGraph(simulation, color, nodes, links) {
     .nodes([...nodes])
     .force('link').links([...links])
   ;
-
 
   simulation.on("tick", (e) => {
     linkJoin

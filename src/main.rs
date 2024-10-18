@@ -116,7 +116,7 @@ async fn main() {
 }
 
 #[derive(Debug, Deserialize, ToSql)]
-struct RawQuery {
+struct QueryBody {
     query: String,
     params: Vec<String>,
 }
@@ -124,14 +124,15 @@ struct RawQuery {
 async fn query(
     State(AppState {pool, relations, max_limit, max_offset, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<RawQuery>,
+    Query(qs): Query<HashMap<String, String>>,
+    Json(body): Json<QueryBody>,
 ) -> Result<Response, (StatusCode, String)> {
     let role = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok()).unwrap_or(&anon_role); // @TODO crypto
     let conn = pool.get().await.map_err(internal_error)?;
 
     // conn.execute("select set_config('role', $1, true)", &[&role]).await.map_err(internal_error)?;
 
-    let params: Vec<&(dyn ToSql + Sync)> = body.params.iter().map(|x| x as &(dyn ToSql + Sync)).collect();
+    let sqlParams: Vec<&(dyn ToSql + Sync)> = body.params.iter().map(|x| x as &(dyn ToSql + Sync)).collect();
 
     let sql = format!(r#"with record (record, rel) as (
     {}
@@ -140,8 +141,7 @@ select decorate(rel, to_jsonb(record), null, pkey, in_links, out_links)
 from record
 left join rel on rel.fqn = rel
     "#, body.query);
-    dbg!(&sql, &params);
-    let rows: Vec<Value> = conn.query(&sql, &params).await.map_err(internal_error)?.iter().map(|row| {
+    let rows: Vec<Value> = conn.query(&sql, &sqlParams).await.map_err(internal_error)?.iter().map(|row| {
         row.get(0)
     }).collect();
 
@@ -149,7 +149,11 @@ left join rel on rel.fqn = rel
         Ok("text/html") => {
             let mut handlebars = Handlebars::new(); // @TODO share instance
             handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
-            Ok(Html(handlebars.render(headers.get("template").unwrap().to_str().unwrap(), &rows).unwrap()).into_response())
+
+            // let name = headers.get("template").expect("template").to_str().unwrap();
+            let name = qs.get("template").expect("template");
+
+            Ok(Html(handlebars.render(name, &rows).unwrap()).into_response())
         },
         _ => Ok(axum::response::Json(rows).into_response()),
     }
