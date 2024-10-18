@@ -8,6 +8,15 @@
       height: 10vh;
     }
 
+    .svg-container {
+      height: 100vh;
+      overflow: auto;
+
+      & svg {
+        height: 100vh;
+      }
+    }
+
     #container {
       display: grid;
       grid-template-columns: auto auto auto; // repeat(auto-fill, minmax(230px, 1fr));
@@ -36,10 +45,12 @@
     <input type="submit" />
   </form>
   <hr>
-  <svg id="graph" viewBox="0 0 960 500" preserveAspectRatio="xMidYMid meet">
-    <g id="nodes" stroke="#fff" stroke-width="1.5"></g>
-    <g id="edges" stroke="#999" stroke-opacity="1"></g>
-  </svg>
+  <div class="svg-container">
+    <svg id="graph" viewBox="0 0 960 500" preserveAspectRatio="xMidYMid meet">
+      <g id="nodes" stroke="#fff" stroke-width="1.5"></g>
+      <g id="edges" stroke="#999" stroke-opacity="1"></g>
+    </svg>
+  </div>
   <hr>
   <div id="container"></div>
 

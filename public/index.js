@@ -34,7 +34,7 @@ document.addEventListener('submit', async event => {
 
   const simulation = d3.forceSimulation()
     .force("charge", d3.forceManyBody())
-    .force("collide", d3.forceCollide().radius(20).iterations(3))
+    .force("collide", d3.forceCollide().radius(30).iterations(30))
     .force("link", d3.forceLink().id(d => JSON.stringify(d.pkey)))
     .force("x", d3.forceX())
     .force("y", d3.forceY())
@@ -103,13 +103,16 @@ function renderGraph(simulation, color, nodes, links) {
         
         circle.call(d3.drag()
           .on("start", event => {
+            simulation.stop();
             event.subject.fx = event.subject.x;
             event.subject.fy = event.subject.y;
-            simulation.alpha(1).restart();
           })
           .on("drag", event => {
             event.subject.fx = event.x;
             event.subject.fy = event.y;
+            simulation.alpha(0).restart();
+          })
+          .on("end", event => {
             simulation.alpha(1).restart();
           })
         );
@@ -156,5 +159,7 @@ function renderGraph(simulation, color, nodes, links) {
 
     nodeJoin.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
   });
+
+  simulation.alphaDecay(0.1);
 }
 
