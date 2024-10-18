@@ -1,23 +1,33 @@
-<!DOCTYPE html>
-<head>
-  <meta charset="utf-8" />
-  <link rel="stylesheet" href="/index.css"/>
-</head>
+#sqlprompt textarea {
+  field-sizing: content;
+  width: 100%;
+  height: 10vh;
+}
 
-<body>
-  <form id="sqlprompt" method="POST" action="http://0:3000/query">
-    <textarea id="query" name="query">select $1, ''</textarea>
-    <textarea id="params" name="params">["whatever"]</textarea>
-    <input type="submit" />
-  </form>
-  <hr>
-  <svg id="graph" viewBox="0 0 960 500" preserveAspectRatio="xMidYMid meet" overflow="scroll">
-    <g id="nodes" stroke="#fff" stroke-width="1.5"></g>
-    <g id="edges" stroke="#999" stroke-opacity="1"></g>
-  </svg>
-  <hr>
-  <div id="container"></div>
+.svg-container {
+  height: 100vh;
+  overflow: auto;
 
-  <script type="module" async src="/index.js"></script>
+  & svg {
+    height: 100vh;
+  }
+}
 
-</body>
+#container {
+  display: grid;
+  grid-template-columns: auto auto auto; // repeat(auto-fill, minmax(230px, 1fr));
+  grid-gap: 20px;
+}
+
+article {
+  display: grid;
+  grid-template-rows: max-content 200px 1fr;
+}
+
+article {
+  outline: grey solid;
+  padding-left: 2em;
+}
+.link form, .link a {
+  display: inline;
+}
