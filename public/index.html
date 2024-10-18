@@ -7,7 +7,8 @@
       width: 100%;
       height: 10vh;
     }
-    .container {
+
+    #container {
       display: grid;
       grid-template-columns: auto auto auto; // repeat(auto-fill, minmax(230px, 1fr));
       grid-gap: 20px;
@@ -30,49 +31,88 @@
 
 <body>
   <form id="sqlprompt" method="POST" action="http://0:3000/query">
-    <textarea id="query" name="query">
-select p, 'pim.product'
-from pim.product p
-limit 3
-    </textarea>
-    <textarea id="params" name="params">[]</textarea>
+    <textarea id="query" name="query">select $1, ''</textarea>
+    <textarea id="params" name="params">["whatever"]</textarea>
     <input type="submit" />
   </form>
+  <hr>
+  <svg id="graph" width="960" height="600">
+  </svg>
+  <hr>
+  <div id="container"></div>
 
-  <script type="module">
+  <script type="module" async>
+    import 'https://unpkg.com/d3@7';
+    //import * as d3 from 'https://unpkg.com/d3@7?module';
+
+    query.value = localStorage.getItem('query'); 
+    params.value = localStorage.getItem('params'); 
+
+    const querystring = new URLSearchParams(window.location.search);
+    if (querystring.has('params')) {
+      params.value = querystring.get('params');
+    }
+    if (querystring.has('query')) {
+      query.value = querystring.get('query');
+      //sqlprompt.submit();
+    }
+
+    document.onreadystatechange = () => {
+      if (document.readyState === 'complete') {
+      }
+    };
+
     document.addEventListener('submit', async event => {
       event.preventDefault();
       let data = new FormData(event.target);
       let body = Object.fromEntries(data.entries());
+
+      localStorage.setItem('query', body.query);
+      localStorage.setItem('params', body.params);
+
       body.params = JSON.parse(body.params ? body.params : '[]');
 
+      let nodes = await fetchNodes(event.target.method, event.target.action, body);
+
+      renderHTML(nodes);
+
+      const simulation = d3.forceSimulation()
+        .force("charge", d3.forceManyBody())
+        .force("link", d3.forceLink().id(d => JSON.stringify(d.pkey)).distance(100))
+        .force("x", d3.forceX())
+        .force("y", d3.forceY())
+        .force("center", d3.forceCenter(800 / 2, 600 / 2))
+      ;
+      const color = d3.scaleOrdinal(d3.schemeCategory10);
+      //const color = d3.scaleSequential(d3.interpolateBlues);
+
+      renderGraph(simulation, color, new Set(nodes), new Set([]));
+    });
+
+    async function fetchNodes(method, url, body) {
       let config = {
-        method: event.target.method.toUpperCase(),
+        method: method.toUpperCase(),
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
       };
-      console.log(config, data);
-      let res = await fetch(event.target.action, config);
-      let nodes = await res.json();
-      console.log(nodes);
+      let res = await fetch(url, config);
+      return await res.json();
+    }
 
-      let container = document.createElement('div');
-      container.className = 'container';
+    function renderHTML(nodes) {
       container.append(...nodes.map(node => {
         let article = document.createElement('article');
-        let links = node.links ?? [];
-        delete node.links;
         article.innerHTML = `
           <h2>${node.rel}</h2>
-          <pre>${JSON.stringify(node, null, 10)}</pre>
+          <pre>${JSON.stringify(node.record, null, 10)}</pre>
         `;
-        article.append(...links.map(link => {
+        article.append(...node.links.map(link => {
           let e = document.createElement('div');
           e.className = 'link';
           e.innerHTML = `
-            <a href="/?query=${encodeURIComponent(link.query)}&params=${encodeURIComponent(JSON.stringify(link.params))}">root</a>
+            <a href="/?query=${encodeURIComponent(link.query)}&params=${encodeURIComponent(JSON.stringify(link.params))}">root out</a>
             <form method="POST" action="http://0:3000/query">
               <textarea hidden name="query">
               ${link.query}
@@ -85,17 +125,95 @@ limit 3
         }));
         return article;
       }));
-      event.target.insertAdjacentElement('afterend', container);
-    });
-
-    const querystring = new URLSearchParams(window.location.search);
-    if (querystring.has('params')) {
-      params.value = querystring.get('params');
-    }
-    if (querystring.has('query')) {
-      query.value = querystring.get('query');
-      //sqlprompt.submit();
     }
 
+
+    function renderGraph(simulation, color, nodes, links) {
+      const svg = d3.select('#graph');
+      
+      const nodeJoin = svg
+          .append("g")
+          //.attr("stroke", "#fff")
+          //.attr("stroke-width", 1.5)
+        .selectAll('circle')
+        .data([...nodes], (d) => JSON.stringify(d.pkey))
+        .join(
+          (enter) => {
+          console.log({enter});
+            const circle = enter.append("circle").attr("class", "node")
+              .attr("r", 20)
+              .style('opacity', 1)
+              .attr("fill", d => color(d.rel));
+            ;
+            circle.append("title").text((d) => JSON.stringify({rel: d.rel, record: d.record}));
+            //node.append("foreignObject")
+            //  .attr("width", 480)
+            //  .attr("height", 500)
+            //.append("xhtml:div")
+            //  .style("font", "14px 'Helvetica Neue'")
+            //  .html(container.innerHTML);
+            
+            circle.call(d3.drag()
+              .on("start", event => {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                event.subject.fx = event.subject.x;
+                event.subject.fy = event.subject.y;
+              })
+              .on("drag", event => {
+                event.subject.fx = event.x;
+                event.subject.fy = event.y;
+              })
+              .on("end", (event) => {
+                if (!event.active) simulation.alphaTarget(0);
+                event.subject.fx = null;
+                event.subject.fy = null;
+              })
+            );
+            circle.on('mouseover', event => {
+            });
+            circle.on('click', async event => {
+              let newNodes = (await Promise.all(
+                event.target.__data__.links.map(
+                  link => fetchNodes('POST', 'http://0:3000/query', link)
+                )
+              )).flat(1);
+
+              let newLinks = newNodes.reduce((links, newNode) => links.concat(newNode.links.map(link => {
+                return {
+                  source: JSON.stringify(event.target.__data__.pkey),
+                  target: JSON.stringify(newNode.pkey),
+                  rel: link.fkey,
+                };
+              })), []);
+              
+              renderGraph(simulation, color, nodes.union(new Set(newNodes)), links.union(new Set(newLinks)));
+            });
+            return circle;
+          },
+        )
+      ;
+
+      const linkJoin = svg
+        .append("g")
+          .attr("stroke", "#999")
+          .attr("stroke-opacity", 1)
+        .selectAll('line')
+        .data(links)
+        .join("line");
+
+      simulation.nodes([...nodes]).force("link").links([...links]);
+
+
+      simulation.on("tick", (e) => {
+        linkJoin
+          .attr("x1", (d) => d.source.x)
+          .attr("y1", (d) => d.source.y)
+          .attr("x2", (d) => d.target.x)
+          .attr("y2", (d) => d.target.y);
+
+        nodeJoin.attr("cx", (d) => d.x).attr("cy", (d) => d.y);
+      });
+    }
   </script>
+
 </body>

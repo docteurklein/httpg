@@ -1,4 +1,5 @@
-create or replace function decorate(record jsonb, in_links jsonb, out_links jsonb)
+-- drop function decorate(text, jsonb, text, jsonb, jsonb);
+create or replace function decorate(rel text, record jsonb, query_format text, pkey jsonb, in_links jsonb, out_links jsonb)
 returns jsonb 
 language sql
 immutable parallel safe
@@ -9,29 +10,37 @@ begin atomic
     ),
     crit (direction, fkey, crit, fields, params) as (
         select direction, fkey,
-            format('(%s) = (%s)', string_agg(quote_ident(key), ', '), string_agg('$' || ordinality, ', ')),
-            array_agg(key), -- filter (where record->>key is not null),
-            array_agg(record->value) filter (where record->>value is not null)
+            format('(%s) = (%s)', string_agg(quote_ident(key) || '::text', ', '), string_agg('$' || ordinality, ', ')),
+            array_agg(key),
+            array_agg(record->>value order by key) filter (where record->>value is not null)
         from link, jsonb_each_text(details->'attributes') with ordinality
-        where record->key is not null
+        -- where record->key is not null
         group by direction, fkey
     ),
     query (direction, fkey, query, fields, params) as (
         select direction, fkey,
-        format('
+        format(coalesce(query_format, '
 select r, %L
 from %s r
 where %s
-limit 10', details->>'target', details->>'target', crit),
+limit 10'), details->>'target', details->>'target', crit),
         fields, params
         from crit
         join link using (direction, fkey)
         where cardinality(params) = cardinality(fields)
+    ),
+    pkey (pkey) as (
+        select array_agg(record->>value order by value) -- filter (where record->>value is not null)
+        from jsonb_array_elements_text(pkey)
     )
-    select record || jsonb_build_object(
+    select jsonb_build_object(
+        'record', record,
+        'pkey', pkey,
+        'rel', rel,
         'links', coalesce(jsonb_agg(to_jsonb(q)), '[]')
     )
-    from query q
+    from query q, pkey
+    group by pkey
     ;
 end;
 
@@ -48,8 +57,7 @@ with recursive view_dep (nspname, "from", oid, ev_action) as (
     and d.deptype in ('i', 'n')
     and d.classid = 'pg_rewrite'::regclass
     and d.refclassid = 'pg_class'::regclass
-    -- and n.nspname = any($1)
-    and n.nspname = any(array['pim', 'public'])
+    and n.nspname <> all(array['pg_catalog', 'information_schema'])
 union all
     select view_dep.nspname, view_dep.from, d.refobjid, rw.ev_action
     from view_dep
@@ -106,16 +114,19 @@ relation as (
         'name', a.attname,
         'type', t.typname,
         'oid', t.oid
-    )) cols
+    )) cols,
+    jsonb_agg(a.attname) filter (where i.indisprimary) pkey
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
     join pg_catalog.pg_attribute a on a.attrelid = r.oid
+    left join pg_index i
+        on a.attrelid = i.indrelid and a.attnum = ANY(i.indkey)
     join pg_catalog.pg_type t on t.oid = a.atttypid
     left join view_col vc on r.oid = vc.from
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
+    and i.indrelid = r.oid
     and a.attnum > 0
-    -- and n.nspname = any($1)
-    and n.nspname = any(array['pim', 'public'])
+    and n.nspname <> all(array['pg_catalog', 'information_schema'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
 ),
 out_link as (
@@ -179,6 +190,7 @@ format('%I', r.relname || '_') alias,
 r.nspname,
 r.relname,
 cols,
+pkey,
 coalesce(in_links, '{}') in_links,
 coalesce(out_links, '{}') out_links
 from relation r

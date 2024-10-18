@@ -136,7 +136,7 @@ async fn query(
     let sql = format!(r#"with record (record, rel) as (
     {}
 )
-select decorate(to_jsonb(record) || jsonb_build_object('rel', rel), in_links, out_links)
+select decorate(rel, to_jsonb(record), null, pkey, in_links, out_links)
 from record
 left join rel on rel.fqn = rel
     "#, body.query);
