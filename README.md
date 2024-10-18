@@ -32,4 +32,4 @@ HTTPG_CONN="" \
 cargo run
 ```
 
-visit [://0:3000](://0:3000)
+visit http://0:3000
