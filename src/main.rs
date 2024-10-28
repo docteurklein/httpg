@@ -12,14 +12,14 @@ use axum_extra::TypedHeader;
 use headers::{Authorization, authorization::Bearer};
 
 use axum_macros::debug_handler;
-use tokio::fs;
+use tokio::{fs};
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 // use quaint::{val, col, Value};
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::{collections::HashMap, net::TcpListener};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{NoTls, Error, Client};
@@ -71,9 +71,10 @@ async fn main() {
         .with_state(state)
         .layer(ServiceBuilder::new().layer(cors));
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3001));
-    tracing::debug!("listening on {}", addr);
-    axum::Server::bind(&addr)
+    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
+    let tcp = TcpListener::bind(addr).unwrap();
+    tracing::debug!("listening on {}", tcp.local_addr().unwrap());
+    axum::Server::from_tcp(tcp).unwrap()
         .serve(app.into_make_service())
         .await
         .unwrap();

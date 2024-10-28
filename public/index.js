@@ -23,12 +23,13 @@ document.addEventListener('submit', async event => {
   let data = new FormData(event.target);
   let body = Object.fromEntries(data.entries());
 
+  localStorage.setItem('biscuit', body.biscuit);
   localStorage.setItem('query', body.query);
   localStorage.setItem('params', body.params);
 
   body.params = JSON.parse(body.params ? body.params : '[]');
 
-  let nodes = await fetchJSON(event.target.method, event.target.action, body);
+  let nodes = await fetchJSON(event.target.method, event.target.action, body.biscuit, body);
 
   renderHTML(nodes);
 
@@ -43,14 +44,15 @@ document.addEventListener('submit', async event => {
   const color = d3.scaleOrdinal(d3.schemeCategory10);
   //const color = d3.scaleSequential(d3.interpolateBlues);
 
-  renderGraph(simulation, color, new Set(nodes), new Set([]));
+  renderGraph(body.biscuit, simulation, color, new Set(nodes), new Set([]));
 });
 
-async function fetchJSON(method, url, body) {
+async function fetchJSON(method, url, auth, body) {
   let config = {
     method: method.toUpperCase(),
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': auth,
     },
     body: JSON.stringify(body),
   };
@@ -85,7 +87,7 @@ function renderHTML(nodes) {
 }
 
 
-function renderGraph(simulation, color, nodes, links) {
+function renderGraph(auth, simulation, color, nodes, links) {
   const svg = d3.select('#graph');
   
   const nodeJoin = svg
@@ -119,7 +121,7 @@ function renderGraph(simulation, color, nodes, links) {
         circle.on('dblclick', async event => {
           let newNodes = (await Promise.all(
             event.target.__data__.links.map(
-              link => fetchJSON('POST', '/query', link)
+              link => fetchJSON('POST', '/query', auth, link)
             )
           )).flat(1);
 
@@ -131,7 +133,7 @@ function renderGraph(simulation, color, nodes, links) {
             };
           })), []);
           
-          renderGraph(simulation, color, nodes.union(new Set(newNodes)), links.union(new Set(newLinks)));
+          renderGraph(auth, simulation, color, nodes.union(new Set(newNodes)), links.union(new Set(newLinks)));
         });
         return circle;
       },
