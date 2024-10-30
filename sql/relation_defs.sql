@@ -1,12 +1,11 @@
--- drop function decorate(text, jsonb, text, jsonb, jsonb);
-create or replace function decorate(rel text, record jsonb, query_format text, pkey jsonb, in_links jsonb, out_links jsonb)
+-- drop function decorate(text, jsonb, text, jsonb, jsonb, jsonb);
+create or replace function decorate(rel text, record jsonb, query_format text, pkey jsonb, links jsonb)
 returns jsonb 
 language sql
 immutable parallel safe
 begin atomic
     with link (direction, fkey, details) as (
-        select 'in', key, value from jsonb_each(in_links)
-        union all select 'out', key, value from jsonb_each(out_links)
+        select value->'direction', key, value from jsonb_each(links)
     ),
     crit (direction, fkey, crit, fields, params) as (
         select direction, fkey,
@@ -14,7 +13,6 @@ begin atomic
             array_agg(key order by key),
             array_agg(record->>value order by ordinality) filter (where record->>value is not null)
         from link, jsonb_each_text(details->'attributes') with ordinality
-        -- where record->key is not null
         group by direction, fkey
     ),
     query (direction, fkey, query, fields, params) as (
@@ -22,15 +20,14 @@ begin atomic
         format(coalesce(query_format, '
 select r, %L
 from %s r
-where %s
-limit 10'), details->>'target', details->>'target', crit),
+where %s'), details->>'target', details->>'target', crit),
         fields, params
         from crit
         join link using (direction, fkey)
         where cardinality(params) = cardinality(fields)
     ),
     pkey (pkey) as (
-        select array_agg(record->>value order by value) -- filter (where record->>value is not null)
+        select array_agg(record->>value order by value)
         from jsonb_array_elements_text(pkey)
     )
     select jsonb_build_object(
@@ -44,7 +41,6 @@ limit 10'), details->>'target', details->>'target', crit),
     ;
 end;
 
--- prepare ps1 as 
 drop materialized view if exists rel;
 create materialized view rel as
 with recursive view_dep (nspname, "from", oid, ev_action) as (
@@ -110,91 +106,64 @@ view_col as (
 relation as (
     select r.oid, coalesce(vc.resorigtbl, r.oid) conrelid, n.nspname, r.relname,
     jsonb_object_agg(a.attname, jsonb_build_object(
-        'escaped_name', quote_ident(a.attname),
         'name', a.attname,
-        'type', t.typname,
-        'oid', t.oid
+        'type', t.typname
     )) cols,
     jsonb_agg(a.attname) filter (where i.indisprimary) pkey
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
     join pg_catalog.pg_attribute a on a.attrelid = r.oid
     left join pg_index i
-        on a.attrelid = i.indrelid and a.attnum = ANY(i.indkey)
+        on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
     join pg_catalog.pg_type t on t.oid = a.atttypid
-    left join view_col vc on r.oid = vc.from
+    left join view_col vc on r.oid in (vc.from, vc.resorigtbl)
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
     and i.indrelid = r.oid
     and a.attnum > 0
     and n.nspname <> all(array['pg_catalog', 'information_schema'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
 ),
-out_link as (
-    with fkey_col(conrelid, confrelid, conname, confkey, conkey) as (
-        select c.conrelid, c.confrelid, conname, an.confkey, an.conkey
+link as (
+    with fkey_col(direction, conrelid, confrelid, conname, attrelid, attnum, ratrel) as (
+        select 'out', c.conrelid, c.confrelid, format('out: %s', conname), c.conrelid, an.conkey, (c.confrelid, an.confkey)
         from relation r
         join pg_catalog.pg_constraint c on r.conrelid = c.conrelid,
         unnest(c.confkey, c.conkey) as an (confkey, conkey)
         where contype = 'f'
-    ),
-    fkey_agg as (
-        select c.conrelid, c.confrelid, conname, jsonb_object_agg(ra.attname, a.attname) map
-        from fkey_col c
-        join pg_catalog.pg_attribute a on a.attrelid = c.conrelid and a.attnum = c.conkey
-        join pg_catalog.pg_attribute ra on ra.attrelid = c.confrelid and ra.attnum = c.confkey
-        where a.attnum > 0
-        and ra.attnum > 0
-        -- and ra.attname <> 'tenant'
-        group by 1, 2, 3
-    )
-    select r.conrelid, jsonb_object_agg(c.conname, jsonb_build_object(
-        'target', format('%I.%I', rn.nspname, rr.relname),
-        'attributes', map
-    )) out_links
-    from fkey_agg c
-    join relation r on r.oid = c.conrelid
-    join pg_catalog.pg_class rr on c.confrelid = rr.oid
-    join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
-    group by r.conrelid
-),
-in_link as (
-    with fkey_col(conrelid, confrelid, conname, confkey, conkey) as (
-        select c.conrelid, c.confrelid, conname, an.confkey, an.conkey
+      union all
+        select 'in', c.conrelid, c.confrelid, format('in: %s', conname), c.confrelid, an.confkey, (c.conrelid, an.conkey)
         from relation r
         join pg_catalog.pg_constraint c on r.conrelid = c.confrelid,
         unnest(c.confkey, c.conkey) as an (confkey, conkey)
         where contype = 'f'
     ),
     fkey_agg as (
-        select c.conrelid, c.confrelid, conname, jsonb_object_agg(ra.attname, a.attname) map
+        select c.direction, c.conrelid, c.confrelid, conname, jsonb_object_agg(ra.attname, a.attname) map
         from fkey_col c
-        join pg_catalog.pg_attribute a on a.attrelid = c.confrelid and a.attnum = c.confkey
-        join pg_catalog.pg_attribute ra on ra.attrelid = c.conrelid and ra.attnum = c.conkey
+        join pg_catalog.pg_attribute a using (attrelid, attnum)
+        join pg_catalog.pg_attribute ra on (ra.attrelid, ra.attnum) = c.ratrel
         where a.attnum > 0
         and ra.attnum > 0
-        -- and ra.attname <> 'tenant'
-        group by 1, 2, 3
+        group by 1, 2, 3, 4
     )
     select r.conrelid, jsonb_object_agg(c.conname, jsonb_build_object(
         'target', format('%I.%I', rn.nspname, rr.relname),
-        'attributes', map
-    )) in_links
+        'attributes', map,
+        'direction', direction
+    )) links
     from fkey_agg c
     join relation r on r.oid = c.confrelid
     join pg_catalog.pg_class rr on c.conrelid = rr.oid
     join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
-    group by r.conrelid
+    group by 1
 )
 select format('%s.%s', r.nspname, r.relname) fqn,
-format('%I', r.relname || '_') alias,
 r.nspname,
 r.relname,
 cols,
 pkey,
-coalesce(in_links, '{}') in_links,
-coalesce(out_links, '{}') out_links
+coalesce(links, '{}') links
 from relation r
-left join out_link using (conrelid)
-left join in_link using (conrelid)
+left join link using (conrelid)
 ;
 

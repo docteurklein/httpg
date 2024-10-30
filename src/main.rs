@@ -24,9 +24,28 @@ use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{NoTls, Error, Client};
 use tokio_postgres::types::{FromSql, ToSql, Type};
-use deadpool_postgres::{Config, ManagerConfig, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit};
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Config {
+    #[serde(default)]
+    pg: deadpool_postgres::Config,
+}
+
+impl Config {
+    pub fn from_env() -> Self {
+        let cfg = config::Config::builder()
+            .add_source(config::Environment::default().separator("__"))//.keep_prefix(true))
+            
+            .build()
+            .unwrap();
+
+        let mut cfg = cfg.try_deserialize::<Self>().unwrap();
+        cfg
+    }
+}
 
 
 #[derive(Clone)]
@@ -45,14 +64,8 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let mut cfg = Config::new();
-    cfg.user = Some("florian".to_string());
-    cfg.dbname = Some("httpg".to_string());
-    cfg.host = Some("/run/user/1000/devenv-da8fc55/postgres/".to_string());
-    cfg.manager = Some(ManagerConfig {
-        recycling_method: RecyclingMethod::Fast,
-    });
-    let pool = cfg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+    let cfg = Config::from_env();
+    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
 
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await.unwrap();
     let pkey = hex::decode(pkey).unwrap();
@@ -110,7 +123,7 @@ async fn query(
     let sql = format!(r#"with record (record, rel) as (
     {}
 )
-select decorate(rel, to_jsonb(record), null, pkey, in_links, out_links)
+select decorate(rel, to_jsonb(record), null, pkey, links)
 from record
 left join rel on rel.fqn = rel
     "#, body.query);
