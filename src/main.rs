@@ -1,19 +1,19 @@
 use axum::{
-    extract::{Json, Query, State},
-    http::{
+    body::{Body, Bytes}, extract::{Json, Query, State}, http::{
         header::{HeaderMap, ACCEPT, AUTHORIZATION},
         StatusCode,
-    },
-    response::{Html, IntoResponse, Response},
-    routing::{get, post},
-    Router
+    }, response::{Html, IntoResponse, Response}, routing::{get, post}, Router
 };
 use axum_extra::TypedHeader;
+use axum_server::tls_rustls::RustlsConfig;
+use futures::{stream, Stream};
 use headers::{Authorization, authorization::Bearer};
 
 use axum_macros::debug_handler;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use tokio::{fs};
+use tokio_stream::StreamExt;
+use futures_util::{pin_mut, TryStreamExt};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
@@ -22,12 +22,12 @@ use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::instrument::WithSubscriber;
-use std::{collections::HashMap, net::TcpListener, sync::Arc};
+use std::{collections::HashMap, net::TcpListener, pin::Pin, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{tls::MakeTlsConnect, Client, Error};
 use tokio_postgres::types::{FromSql, ToSql, Type};
-use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
+use deadpool_postgres::{GenericClient, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit};
 
@@ -59,7 +59,7 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             env::var("RUST_LOG").unwrap_or("httpg=debug".to_string()),
@@ -69,25 +69,22 @@ async fn main() {
 
     let cfg = Config::from_env();
 
-    let mut tls_config = rustls::ClientConfig::builder()
+    let tls_config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
         .with_no_client_auth()
-        // .dangerous()
-        // .with_root_certificates(None)
-        // .with_no_client_auth()
     ;
     let tls = MakeRustlsConnect::new(tls_config.into());
     
-    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), tls).unwrap();
+    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), tls)?;
 
-    let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await.unwrap();
-    let pkey = hex::decode(pkey).unwrap();
+    let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
+    let pkey = hex::decode(pkey)?;
 
     let state = AppState {
         pool,
     //     anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
-        private_key: PrivateKey::from_bytes(&pkey).unwrap(),
+        private_key: PrivateKey::from_bytes(&pkey)?,
     };
 
     let cors = CorsLayer::new()
@@ -96,15 +93,25 @@ async fn main() {
         .route("/query", get(get_query).post(post_query))
         .nest_service("/", ServeDir::new("public"))
         .with_state(state)
-        .layer(ServiceBuilder::new().layer(cors));
+        .layer(ServiceBuilder::new().layer(cors))
+    ;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 0));
-    let tcp = TcpListener::bind(addr).unwrap();
-    tracing::debug!("listening on http://{}", tcp.local_addr().unwrap());
-    axum::Server::from_tcp(tcp).unwrap()
+    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let tcp = TcpListener::bind(addr)?;
+    tracing::debug!("listening on https://{}", tcp.local_addr()?);
+
+    let config = RustlsConfig::from_pem_file(
+        "localhost+2.pem",
+        "localhost+2-key.pem"
+    )
+    .await?;
+    
+    // axum_server::from_tcp(tcp)
+    axum_server::from_tcp_rustls(tcp, config)
         .serve(app.into_make_service())
-        .await
-        .unwrap();
+        .await?
+    ;
+    Ok(())
 }
 
 #[derive(Debug, Deserialize, ToSql)]
@@ -121,12 +128,21 @@ async fn get_query(
 ) -> Result<Response, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
-    let rows: Vec<Value> = conn.query(qs.get("q").expect("q"), &vec!()).await.map_err(internal_error)?.iter().map(|row| {
-        row.get(0)
-    }).collect();
+    let sql = format!(r#"with record (record, rel) as (
+    {}
+)
+select to_jsonb(record), decorate(rel, to_jsonb(record), null, pkey, links)
+from record
+left join rel on rel.fqn = rel
+    "#, qs.get("q").expect("q"));
+
+    let sqlParams: Vec<&(dyn ToSql + Sync)> = Vec::new();
+
+    let rows = conn.query_raw(&sql, sqlParams).await.map_err(internal_error)?
+        .map(|row| row.unwrap().get::<usize, Value>(0));
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-        Ok("application/json") => Ok(axum::response::Json(rows).into_response()),
+        // Ok("application/json") => Ok(axum::response::Json(rows).into_response()),
         _ => {
             let mut handlebars = Handlebars::new(); // @TODO share instance
             handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
@@ -134,7 +150,14 @@ async fn get_query(
             // let name = headers.get("template").expect("template").to_str().unwrap();
             let name = qs.get("template").expect("template");
 
-            Ok(Html(handlebars.render(name, &rows).unwrap()).into_response())
+            Ok(Html(Body::from_stream(
+                rows.map(|row| Bytes::from(row.to_string()))
+                .map(Ok::<_, axum::Error>),
+            )).into_response())
+
+            // Ok(Html(
+            //     handlebars.render(name, &rows).map_err(internal_error)?
+            // ).into_response())
         },
     }
 }
@@ -152,10 +175,10 @@ async fn post_query(
 
     let auth = headers.get(AUTHORIZATION).unwrap();
     // dbg!(&auth, &root.public());
-    let biscuit = Biscuit::from_base64(&auth, root.public()).unwrap(); // map_err(internal_error)?;
+    let biscuit = Biscuit::from_base64(&auth, root.public()).map_err(internal_error)?;
 
-    let mut authorizer = biscuit.authorizer().unwrap();
-    let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").unwrap();
+    let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
+    let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
     conn.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
 
     let sqlParams: Vec<&(dyn ToSql + Sync)> = body.params.iter().map(|x| x as &(dyn ToSql + Sync)).collect();
@@ -179,7 +202,7 @@ left join rel on rel.fqn = rel
             // let name = headers.get("template").expect("template").to_str().unwrap();
             let name = qs.get("template").expect("template");
 
-            Ok(Html(handlebars.render(name, &rows).unwrap()).into_response())
+            Ok(Html(handlebars.render(name, &rows).map_err(internal_error)?).into_response())
         },
         _ => Ok(axum::response::Json(rows).into_response()),
     }
