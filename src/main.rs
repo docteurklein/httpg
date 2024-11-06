@@ -5,30 +5,33 @@ use axum::{
         StatusCode,
     },
     response::{Html, IntoResponse, Response},
-    routing::post,
+    routing::{get, post},
     Router
 };
 use axum_extra::TypedHeader;
 use headers::{Authorization, authorization::Bearer};
 
 use axum_macros::debug_handler;
+use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use tokio::{fs};
+use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 // use quaint::{val, col, Value};
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{collections::HashMap, net::TcpListener};
+use tracing::instrument::WithSubscriber;
+use std::{collections::HashMap, net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
-use tokio_postgres::{NoTls, Error, Client};
+use tokio_postgres::{tls::MakeTlsConnect, Client, Error};
 use tokio_postgres::types::{FromSql, ToSql, Type};
 use deadpool_postgres::{ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit};
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 struct Config {
     #[serde(default)]
     pg: deadpool_postgres::Config,
@@ -65,7 +68,18 @@ async fn main() {
         .init();
 
     let cfg = Config::from_env();
-    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls).unwrap();
+
+    let mut tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+        .with_no_client_auth()
+        // .dangerous()
+        // .with_root_certificates(None)
+        // .with_no_client_auth()
+    ;
+    let tls = MakeRustlsConnect::new(tls_config.into());
+    
+    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), tls).unwrap();
 
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await.unwrap();
     let pkey = hex::decode(pkey).unwrap();
@@ -79,14 +93,14 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(Any);
     let app = Router::new()
-        .route("/query", post(query))
+        .route("/query", get(get_query).post(post_query))
         .nest_service("/", ServeDir::new("public"))
         .with_state(state)
         .layer(ServiceBuilder::new().layer(cors));
 
     let addr = SocketAddr::from(([127, 0, 0, 1], 0));
     let tcp = TcpListener::bind(addr).unwrap();
-    tracing::debug!("listening on {}", tcp.local_addr().unwrap());
+    tracing::debug!("listening on http://{}", tcp.local_addr().unwrap());
     axum::Server::from_tcp(tcp).unwrap()
         .serve(app.into_make_service())
         .await
@@ -100,7 +114,33 @@ struct QueryBody {
 }
 
 #[debug_handler]
-async fn query(
+async fn get_query(
+    State(AppState {pool, ..}): State<AppState>,
+    headers: HeaderMap,
+    Query(qs): Query<HashMap<String, String>>,
+) -> Result<Response, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(internal_error)?;
+
+    let rows: Vec<Value> = conn.query(qs.get("q").expect("q"), &vec!()).await.map_err(internal_error)?.iter().map(|row| {
+        row.get(0)
+    }).collect();
+
+    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
+        Ok("application/json") => Ok(axum::response::Json(rows).into_response()),
+        _ => {
+            let mut handlebars = Handlebars::new(); // @TODO share instance
+            handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
+
+            // let name = headers.get("template").expect("template").to_str().unwrap();
+            let name = qs.get("template").expect("template");
+
+            Ok(Html(handlebars.render(name, &rows).unwrap()).into_response())
+        },
+    }
+}
+
+#[debug_handler]
+async fn post_query(
     State(AppState {pool, private_key}): State<AppState>,
     headers: HeaderMap,
     // TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
@@ -134,7 +174,7 @@ left join rel on rel.fqn = rel
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
         Ok("text/html") => {
             let mut handlebars = Handlebars::new(); // @TODO share instance
-            handlebars.register_templates_directory("hbs", "./templates").map_err(internal_error)?;
+            handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
 
             // let name = headers.get("template").expect("template").to_str().unwrap();
             let name = qs.get("template").expect("template");
@@ -182,4 +222,54 @@ fn authorize(token: &Biscuit) -> Result<(), error::Token> {
 
     let _ = result?;
     Ok(())
+}
+
+
+#[derive(Debug)]
+pub struct NoCertificateVerification {}
+
+impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> std::result::Result<ServerCertVerified, rustls::Error> {
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Ok(HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP384_SHA384,
+            rustls::SignatureScheme::ECDSA_NISTP521_SHA512,
+            rustls::SignatureScheme::ED25519,
+            rustls::SignatureScheme::RSA_PSS_SHA256,
+            rustls::SignatureScheme::RSA_PSS_SHA384,
+            rustls::SignatureScheme::RSA_PSS_SHA512,
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::RSA_PKCS1_SHA384,
+            rustls::SignatureScheme::RSA_PKCS1_SHA512,
+        ]
+    }
 }
