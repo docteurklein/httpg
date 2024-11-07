@@ -22,7 +22,7 @@ use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tracing::instrument::WithSubscriber;
-use std::{collections::HashMap, net::TcpListener, pin::Pin, sync::Arc};
+use std::{collections::HashMap, net::TcpListener, pin::Pin, sync::Arc, time::Duration};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{tls::MakeTlsConnect, Client, Error};
@@ -128,18 +128,20 @@ async fn get_query(
 ) -> Result<Response, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
-    let sql = format!(r#"with record (record, rel) as (
-    {}
-)
-select to_jsonb(record), decorate(rel, to_jsonb(record), null, pkey, links)
-from record
-left join rel on rel.fqn = rel
-    "#, qs.get("q").expect("q"));
+//     let sql = format!(r#"with record (record, rel) as (
+//     {}
+// )
+// select to_jsonb(record), decorate(rel, to_jsonb(record), null, pkey, links)
+// from record
+// left join rel on rel.fqn = rel
+//     "#, qs.get("q").expect("q"));
+
+    let sql = qs.get("q").expect("q");
 
     let sqlParams: Vec<&(dyn ToSql + Sync)> = Vec::new();
 
-    let rows = conn.query_raw(&sql, sqlParams).await.map_err(internal_error)?
-        .map(|row| row.unwrap().get::<usize, Value>(0));
+    let rows = conn.query_raw(sql, sqlParams).await.map_err(internal_error)?
+        .map(|row| row.unwrap().get::<usize, String>(0));
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
         // Ok("application/json") => Ok(axum::response::Json(rows).into_response()),
@@ -148,10 +150,11 @@ left join rel on rel.fqn = rel
             handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
 
             // let name = headers.get("template").expect("template").to_str().unwrap();
-            let name = qs.get("template").expect("template");
+            // let name = qs.get("template").expect("template");
 
             Ok(Html(Body::from_stream(
-                rows.map(|row| Bytes::from(row.to_string()))
+                rows.map(|row| Bytes::from(row + "\n"))
+                // .throttle(Duration::from_millis(5))
                 .map(Ok::<_, axum::Error>),
             )).into_response())
 
