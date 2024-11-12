@@ -25,7 +25,7 @@ use tracing::instrument::WithSubscriber;
 use std::{collections::HashMap, net::TcpListener, pin::Pin, sync::Arc, time::Duration};
 use std::env;
 use std::net::SocketAddr;
-use tokio_postgres::{tls::MakeTlsConnect, Client, Error};
+use tokio_postgres::{tls::MakeTlsConnect, Client, Error, NoTls};
 use tokio_postgres::types::{FromSql, ToSql, Type};
 use deadpool_postgres::{GenericClient, ManagerConfig, Pool, RecyclingMethod, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -69,14 +69,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cfg = Config::from_env();
 
-    let tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-        .with_no_client_auth()
-    ;
-    let tls = MakeRustlsConnect::new(tls_config.into());
+    // let tls_config = rustls::ClientConfig::builder()
+    //     .dangerous()
+    //     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+    //     .with_no_client_auth()
+    // ;
+    // let tls = MakeRustlsConnect::new(tls_config.into());
     
-    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), tls)?;
+    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?;
 
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
     let pkey = hex::decode(pkey)?;
