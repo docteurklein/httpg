@@ -21,36 +21,24 @@
 
       perSystem = { config, self', inputs', pkgs, system, ... }: {
 
-        packages.pg_render = pkgs.stdenv.mkDerivation rec {
+        packages.pg_render = pkgs.buildPgrxExtension rec {
           pname = "pg_render";
           version = "0.1";
+          inherit system;
+          postgresql = pkgs.postgresql_16;
 
           src = pkgs.fetchFromGitHub {
             owner = "mkaski";
             repo = pname;
-            # url = "https://github.com/mkaski/pg_render.git";
             rev = "master";
             hash = "sha256-idnkh91kdsnXiF79q7SN9yOJM1eVLsIS35FFXiyOpS4=";
-            # deepClone = true;
-            # fetchSubmodules = true;
-            # leaveDotGit = true;
           };
-          # doCheck = false;
-          # doBuild = false;
-
-          buildInputs = with pkgs; [ postgresql_16 cargo cargo-pgrx ];
-
-          # patches = [ ./patch_nix ];
-
-          # dontConfigure = true;
-          buildPhase = ''
-            cargo pgrx package
-          '';
-          installPhase = ''
-            ls -alh .
-            # touch $out
-          '';
+          cargoHash = "sha256-q5Rv2G+deh7uHiKZSS0SgF4KiAqB3kxeub6czXBsuaI=";
+          cargoPatches = [
+            ./add-cargo.patch
+          ];
         };
+
         devenv.shells.default = {
           name = "httpg";
 
@@ -70,9 +58,18 @@
               name = "httpg";
             }];
             extensions = extensions: [
-              # self'.packages.pg_render
+              self'.packages.pg_render
+              extensions.plv8
             ];
             settings = {
+              # "wal_level" = "logical";
+              "app.tenant" = "tenant#1";
+              "shared_preload_libraries" = "auto_explain";
+              "auto_explain.log_min_duration" = "0ms";
+              "auto_explain.log_nested_statements" = true;
+              "auto_explain.log_timing" = true;
+              "auto_explain.log_analyze" = true;
+              "auto_explain.log_triggers" = true;
             };
           };
         };

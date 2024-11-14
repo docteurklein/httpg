@@ -20,7 +20,7 @@ axum-macros = "^0.4"
 deadpool-postgres = { version = "^0.14", features = ["serde"] }
 biscuit-auth = "5.0.0"
 hex = "^0.4"
-axum-extra = { version = "^0.9", features = ["typed-header"] }
+axum-extra = { version = "^0.9", features = ["typed-header", "cookie", "form"] }
 headers = "^0.4"
 config = "^0.14"
 tokio-postgres-rustls = "^0.13"

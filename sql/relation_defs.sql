@@ -1,5 +1,5 @@
--- drop function decorate(text, jsonb, text, jsonb, jsonb, jsonb);
-create or replace function decorate(rel text, record jsonb, query_format text, pkey jsonb, links jsonb)
+-- drop function if exists decorate(text, jsonb, jsonb, jsonb, jsonb);
+create or replace function decorate(rel text, record jsonb, pkey jsonb, links jsonb, qs_ jsonb = '{}')
 returns jsonb 
 language sql
 immutable parallel safe
@@ -7,21 +7,25 @@ begin atomic
     with link (direction, fkey, details) as (
         select value->'direction', key, value from jsonb_each(links)
     ),
-    crit (direction, fkey, crit, fields, params) as (
+    crit (direction, fkey, crit, qs, fields, params) as (
         select direction, fkey,
-            format('(%s) = (%s)', string_agg(quote_ident(key) || '::text', ', ' order by ordinality), string_agg('$' || ordinality, ', ' order by ordinality)),
+            format('(%s) = (%s)', string_agg(quote_ident(key), ', ' order by ordinality), string_agg(format('$%s', ordinality), ', ' order by ordinality)),
+            string_agg(format('params=%s', url_encode(record->>value)), '&' order by ordinality),
             array_agg(key order by key),
             array_agg(record->>value order by ordinality) filter (where record->>value is not null)
         from link, jsonb_each_text(details->'attributes') with ordinality
         group by direction, fkey
     ),
-    query (direction, fkey, query, fields, params) as (
+    query (direction, fkey, query, crit, qs, fields, params) as (
         select direction, fkey,
-        format(coalesce(query_format, '
-select r, %L
-from %s r
-where %s'), details->>'target', details->>'target', crit),
-        fields, params
+        format($sql$
+select html('%1$s', to_jsonb(r)) 
+from %1$s r 
+where %2$s 
+limit 100
+$sql$, details->>'target', crit),
+        crit,
+        qs, fields, params
         from crit
         join link using (direction, fkey)
         where cardinality(params) = cardinality(fields)
@@ -29,19 +33,24 @@ where %s'), details->>'target', details->>'target', crit),
     pkey (pkey) as (
         select array_agg(record->>value order by value)
         from jsonb_array_elements_text(pkey)
+    ),
+    where_ (where_) as (
+        select format('(%s) = (%s)', string_agg(quote_ident(value), ', '), string_agg(quote_literal(record->>value), ', '))
+        from jsonb_array_elements_text(pkey)
     )
     select jsonb_build_object(
         'record', record,
         'pkey', pkey,
+        'where', where_,
         'rel', rel,
         'links', coalesce(jsonb_agg(to_jsonb(q)), '[]')
     )
-    from query q, pkey
-    group by pkey
+    from query q, pkey, where_
+    group by pkey, where_
     ;
 end;
 
-drop materialized view if exists rel;
+drop materialized view if exists rel cascade;
 create materialized view rel as
 with recursive view_dep (nspname, "from", oid, ev_action) as (
     select n.nspname, v.oid, v.oid, rw.ev_action
@@ -109,7 +118,7 @@ relation as (
         'name', a.attname,
         'type', t.typname
     )) cols,
-    jsonb_agg(a.attname) filter (where i.indisprimary) pkey
+    jsonb_agg(distinct a.attname) filter (where i.indisprimary) pkey
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
     join pg_catalog.pg_attribute a on a.attrelid = r.oid
@@ -131,7 +140,7 @@ link as (
         unnest(c.confkey, c.conkey) as an (confkey, conkey)
         where contype = 'f'
       union all
-        select 'in', c.conrelid, c.confrelid, format('in: %s', conname), c.confrelid, an.confkey, (c.conrelid, an.conkey)
+        select 'in', c.confrelid, c.conrelid, format('in: %s', conname), c.confrelid, an.confkey, (c.conrelid, an.conkey)
         from relation r
         join pg_catalog.pg_constraint c on r.conrelid = c.confrelid,
         unnest(c.confkey, c.conkey) as an (confkey, conkey)
