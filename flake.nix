@@ -3,7 +3,7 @@
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
-    nixpkgs.url = "github:cachix/devenv-nixpkgs/rolling";
+    nixpkgs.url = "github:NixOS/nixpkgs";
     devenv.url = "github:cachix/devenv";
   };
 
@@ -25,7 +25,7 @@
           pname = "pg_render";
           version = "0.1";
           inherit system;
-          postgresql = pkgs.postgresql_16;
+          postgresql = pkgs.postgresql_17;
 
           src = pkgs.fetchFromGitHub {
             owner = "mkaski";
@@ -47,18 +47,20 @@
 
           # https://devenv.sh/reference/options/
           packages = with pkgs; [
-            postgresql_16
-            cargo rustc rust-analyzer openssl.dev pkg-config
+            postgresql_17
+            cargo cargo-watch clippy rustc rust-analyzer openssl.dev pkg-config
+            mold clang
+            biscuit-cli
           ];
 
           services.postgres = {
             enable = true;
-            package = pkgs.postgresql_16;
+            package = pkgs.postgresql_17;
             initialDatabases = [{
               name = "httpg";
             }];
             extensions = extensions: [
-              self'.packages.pg_render
+              # self'.packages.pg_render
               extensions.plv8
             ];
             settings = {

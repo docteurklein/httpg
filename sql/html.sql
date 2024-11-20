@@ -15,11 +15,21 @@ select $html$<!DOCTYPE html>
     console.log(document);
     document.addEventListener('click', console.log);
 </script>
-$html$;
-
-create or replace function url_encode (str text) returns text as $$
-return encodeURIComponent(String(str))
-$$ language plv8;
+$html$
+union all select xmlelement(name ul, xmlattributes('menu' as class), (
+        select xmlagg(
+            xmlelement(name li,
+                xmlelement(name a, xmlattributes(
+                    format(
+                        $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+                        fqn
+                    ) as href
+                ), fqn)
+            )
+        )
+        from rel
+    ), '')::text
+;
 
 -- drop function if exists html(text, jsonb, jsonb);
 create or replace function html(fqn_ text, r jsonb, qs jsonb = '{}')
@@ -36,28 +46,30 @@ select xmlelement(name card
     , xmlelement(name h3, fqn_)
     , xmlelement(name pre, r)
     , xmlelement(name ul, xmlattributes('order' as class), (
-        with link (href, field, value, "order") as (
-            select format(
-                $$/query?query=table head union all ( select html('%1$s', to_jsonb(r)) from %1$s r order by %2$s %3$s limit 100)&order[%2$s]=%3$s$$,
-                fqn_,
-                key,
-                (case when (qs->>format('order[%s]', key) = 'asc') then 'desc' else 'asc' end)
-                -- (select string_agg(format('%s=%s', key, url_encode(value)), '&') from jsonb_each_text(qs) where key ilike 'order[%')
-            ),
+        with link (href, field, value, sort) as (
+            select format('/query?%s', (
+                select string_agg(format('%s=%s', key, url_encode(value)), '&')
+                from jsonb_each_text(qs || jsonb_build_object(
+                    'order', key,
+                    'sort', (case when (qs->>'sort' = 'asc') then 'desc' else 'asc' end)
+                ))
+            )),
             key,
             value,
-            (case when (qs->>format('order[%s]', key) = 'asc') then 'desc' else 'asc' end)
+            (case when (qs->>'sort' = 'asc') then 'desc' else 'asc' end)
             from jsonb_each_text(r)
         )
         select xmlagg(
             xmlelement(name li,
-                xmlelement(name a, xmlattributes(
-                    href as href
-                ), format('%s: (order by: %s)', field, "order")),
-                xmlelement(name form, xmlattributes('POST' as method, '/query?redirect=' as action),
-                    xmlelement(name input, xmlattributes('text' as type, 'params' as name, value)),
-                    xmlelement(name textarea, xmlattributes('query' as name), format('update %s set %s = $1 where %s', fqn_, field, hypermedia->>'where')),
-                    xmlelement(name input, xmlattributes('submit' as type))
+                xmlelement(name form, xmlattributes('POST' as method, '/query?params=redirect=referer' as action),
+                    xmlelement(name fieldset, xmlattributes('grid' as class),
+                        xmlelement(name a, xmlattributes(
+                            href as href
+                        ), format('%s: (order by: %s)', field, sort)),
+                        xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, value)),
+                        xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1->>0 where %s', fqn_, field, hypermedia->>'where')),
+                        xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
+                    )
                 )
             )
         )
@@ -67,7 +79,7 @@ select xmlelement(name card
         select xmlagg(
             xmlelement(name li,
                 xmlelement(name a, xmlattributes(
-                    format('/query?query=table head union all (%s)&%s', value->>'query', value->>'qs') as href
+                    format('/query?sql=table head union all (%s)&%s', value->>'query', value->>'qs') as href
                 ), value->>'fkey'))
         )
         from jsonb_array_elements(hypermedia->'links')
@@ -93,5 +105,5 @@ grant select on all tables in schema pim to web, app;
 -- grant execute on function pg_catalog.jsonb_object_fields to web;
 -- grant execute on function pg_catalog.xmlagg to web;
 -- grant execute on function pg_catalog.format(text, variadic "any") to web;
-grant execute on all functions in schema pg_catalog to web, app;
+grant execute on all functions in schema pg_catalog to web, app, public;
 revoke execute on function pg_catalog.pg_sleep from web, app;

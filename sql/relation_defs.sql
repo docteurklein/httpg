@@ -1,3 +1,7 @@
+create or replace function url_encode (str text) returns text as $$
+return encodeURIComponent(String(str))
+$$ language plv8;
+
 -- drop function if exists decorate(text, jsonb, jsonb, jsonb, jsonb);
 create or replace function decorate(rel text, record jsonb, pkey jsonb, links jsonb, qs_ jsonb = '{}')
 returns jsonb 
@@ -9,7 +13,7 @@ begin atomic
     ),
     crit (direction, fkey, crit, qs, fields, params) as (
         select direction, fkey,
-            format('(%s) = (%s)', string_agg(quote_ident(key), ', ' order by ordinality), string_agg(format('$%s', ordinality), ', ' order by ordinality)),
+            format('(%s) = (%s)', string_agg(format('%I', key), ', ' order by ordinality), string_agg(format('$1->>%s', ordinality - 1), ', ' order by ordinality)),
             string_agg(format('params=%s', url_encode(record->>value)), '&' order by ordinality),
             array_agg(key order by key),
             array_agg(record->>value order by ordinality) filter (where record->>value is not null)
@@ -19,7 +23,7 @@ begin atomic
     query (direction, fkey, query, crit, qs, fields, params) as (
         select direction, fkey,
         format($sql$
-select html('%1$s', to_jsonb(r)) 
+select html('%1$s', to_jsonb(r), $2) 
 from %1$s r 
 where %2$s 
 limit 100

@@ -1,10 +1,10 @@
 use axum::{
-    body::{Body, Bytes}, extract::{Query, State}, http::{
+    body::{Body, Bytes}, extract::{State}, http::{
         header::{HeaderMap, ACCEPT},
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::get, Router
 };
-use axum_extra::{TypedHeader, extract::cookie::{CookieJar, Cookie}};
+use axum_extra::{TypedHeader, extract::{Query, cookie::{CookieJar, Cookie}}};
 use axum_server::tls_rustls::RustlsConfig;
 // use futures::{stream, Stream};
 use headers::{Authorization, authorization::Bearer};
@@ -120,29 +120,38 @@ async fn query(
     State(AppState {pool, private_key}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
-    Query(qs): Query<HashMap<String, String>>,
+    // Query(qs): Query<HashMap<String, String>>,
     query: extract::Query,
 ) -> Result<Response, (StatusCode, String)> {
     let conn = pool.get().await.map_err(internal_error)?;
 
     let root = KeyPair::from(&private_key);
-    let token = cookies.get("auth").unwrap().value();
+    let token = cookies.get("auth").expect("auth cookie").value();
     let biscuit = Biscuit::from_base64(token.to_string(), root.public()).map_err(internal_error)?;
 
     let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
     let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
     conn.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
 
-    // let sql_params = vec![
-    //     (serde_json::to_value(&query.params).map_err(internal_error)?, Type::JSONB),
-    // ];
-    let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = query.params.iter().map(|x| (x as &(dyn ToSql + Sync), Type::TEXT)).collect();
+    let sql_params = vec![
+        // (serde_json::from_str::<Value>(&query.params).unwrap(), Type::JSONB),
+        // (&query.params, Type::JSONB),
+        (serde_json::to_value(&query.params).map_err(internal_error)?, Type::JSONB),
+        (serde_json::to_value(&query).map_err(internal_error)?, Type::JSONB),
+    ];
+    // let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = query.params.iter().map(|x| (x as &(dyn ToSql + Sync), Type::TEXT)).collect();
 
-    let rows = conn.query_typed_raw(&query.query, sql_params).await.map_err(internal_error)?
+    // let sql = query.qs.iter().fold(query.sql, |acc, (k, v)| acc.replace(&("{".to_owned() + k + "}"), &v));
+    dbg!(&query);
+
+    let rows = conn.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
         .map(|row| row.unwrap().get::<usize, String>(0));
 
-    if let Some(_) = qs.get("redirect") {
-        return Ok(Redirect::to(headers.get("referer").unwrap().to_str().unwrap()).into_response());
+    if let Some(redirect) = query.redirect {
+        match redirect.as_ref() {
+            "referer" => return Ok(Redirect::to(headers.get("referer").unwrap().to_str().unwrap()).into_response()),
+            rest => return Ok(Redirect::to(rest).into_response()),
+        }
     }
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
