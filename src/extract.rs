@@ -7,6 +7,7 @@ use axum_extra::extract::Form;
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
+use serde_qs::Config;
 use std::collections::HashMap;
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -57,7 +58,8 @@ where
                     },
                     Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
                     // _ => {
-                        Ok(serde_qs::from_bytes::<Query>(&Bytes::from_request(req, state).await.unwrap()).unwrap())
+                        let serde_qs = Config::new(10, false); // non-strict for browsers
+                        Ok(serde_qs.deserialize_bytes::<Query>(&Bytes::from_request(req, state).await.unwrap()).unwrap())
                     },
                     _ => Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
                 };

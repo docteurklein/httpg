@@ -24,14 +24,8 @@ begin atomic
         from link, jsonb_each_text(details->'attributes') with ordinality
         group by direction, fkey
     ),
-    query (direction, fkey, query, crit, qs, fields, params) as (
-        select direction, fkey,
-        format($sql$
-select html('%1$s', to_jsonb(r), $2) 
-from %1$s r 
-where %2$s 
-limit 100
-$sql$, details->>'target', crit),
+    query (direction, fkey, target, crit, qs, fields, params) as (
+        select direction, fkey, details->>'target',
         crit,
         qs, fields, params
         from crit

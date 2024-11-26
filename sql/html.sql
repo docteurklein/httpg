@@ -8,6 +8,11 @@ select $html$<!DOCTYPE html>
           max-width: 90%;
           margin: auto;
         }
+        .menu {
+            //display: flex;
+            //flex-wrap: wrap;
+            //gap: 1rem 2rem;
+        }
     </style>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
 </head>
@@ -32,17 +37,17 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
                         $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
                         fqn
                     ) as href
-                ), fqn),
-                xmlelement(name a, xmlattributes(
-                    format(
-                        $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
-                        fqn
-                    ) as href,
-                    'portal-' || fqn as target
-                ), 'in iframe'),
-                xmlelement(name iframe, xmlattributes(
-                    'portal-' || fqn as name
-                ), '')
+                ), fqn)
+                -- , xmlelement(name a, xmlattributes(
+                --     format(
+                --         $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+                --         fqn
+                --     ) as href,
+                --     'portal-' || fqn as target
+                -- ), 'in iframe')
+                -- , xmlelement(name iframe, xmlattributes(
+                --     'portal-' || fqn as name
+                -- ), '')
             )
         )
         from rel
@@ -97,15 +102,15 @@ select xmlelement(name card
         select xmlagg(
             xmlelement(name li,
                 xmlelement(name a, xmlattributes(
-                    format('/query?sql=table head union all (%s)&%s', value->>'query', value->>'qs') as href
-                ), value->>'fkey'),
-                xmlelement(name a, xmlattributes(
-                    format('/query?sql=table head union all (%s)&%s', value->>'query', value->>'qs') as href,
-                    format('%s-%s', value ->>'fkey', value->>'qs') as target
-                ), 'in iframe'),
-                xmlelement(name iframe, xmlattributes(
-                    format('%s-%s', value ->>'fkey', value->>'qs') as name
-                ), '')
+                    format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
+                ), value->>'fkey')
+                -- , xmlelement(name a, xmlattributes(
+                --     format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href,
+                --     format('%s-%s', value ->>'fkey', value->>'qs') as target
+                -- ), 'in iframe')
+                -- , xmlelement(name iframe, xmlattributes(
+                --     format('%s-%s', value ->>'fkey', value->>'qs') as name
+                -- ), '')
             )
         )
         from jsonb_array_elements(hypermedia->'links')
