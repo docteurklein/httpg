@@ -1,11 +1,12 @@
 use axum::{
-    body::{Body, Bytes}, extract::{State}, http::{
-        header::{HeaderMap, ACCEPT},
+    body::{Body, Bytes}, extract::State, http::{
+        header::{HeaderMap, ACCEPT, SET_COOKIE},
         StatusCode,
-    }, response::{Html, IntoResponse, Redirect, Response}, routing::get, Router
+    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Json, Router
 };
 use axum_extra::{TypedHeader, extract::{Query, cookie::{CookieJar, Cookie}}};
 use axum_server::tls_rustls::RustlsConfig;
+use futures::TryFutureExt;
 // use futures::{stream, Stream};
 use headers::{Authorization, authorization::Bearer};
 
@@ -16,19 +17,19 @@ use tokio_stream::StreamExt;
 // use futures_util::{pin_mut, TryStreamExt};
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
+use tower_http::{compression::CompressionLayer, cors::{Any, CorsLayer}, services::ServeDir};
 use handlebars::Handlebars;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 // use tracing::instrument::WithSubscriber;
-use std::{collections::HashMap, net::TcpListener};
+use std::{collections::HashMap, net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
-use tokio_postgres::{tls::MakeTlsConnect, Client, Error, NoTls};
+use tokio_postgres::{tls::MakeTlsConnect, Client, Error, IsolationLevel, NoTls};
 use tokio_postgres::types::{ToSql, Type};
 use deadpool_postgres::{GenericClient, Pool, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit};
+use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit, builder::*, builder_ext::*};
 
 mod extract;
 
@@ -70,11 +71,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cfg = Config::from_env();
 
-    // let tls_config = rustls::ClientConfig::builder()
-    //     .dangerous()
-    //     .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-    //     .with_no_client_auth()
-    // ;
+    let tls_config = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+        .with_no_client_auth()
+    ;
     // let tls = MakeRustlsConnect::new(tls_config.into());
     
     let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?;
@@ -91,13 +92,15 @@ async fn main() -> Result<(), anyhow::Error> {
     let cors = CorsLayer::new()
         .allow_origin(Any);
     let app = Router::new()
-        .route("/query", get(query).post(query))
+        .route("/login", post(login))
+        .route("/query", get(stream_query).post(post_query))
         .nest_service("/", ServeDir::new("public"))
         .with_state(state)
+        // .layer(CompressionLayer::new().br(true)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
     ;
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on https://{}", tcp.local_addr()?);
 
@@ -116,14 +119,33 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 #[debug_handler]
-async fn query(
+async fn login(
+    State(AppState {private_key, ..}): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, (StatusCode, String)> {
+    let root = KeyPair::from(&private_key);
+
+    let mut builder = Biscuit::builder();
+    builder.add_fact(fact("sql", &[string("set local role to app; set local \"app.tenant\" to 'tenant#1';")]))
+        .map_err(internal_error)?
+    ;
+
+    Ok((
+        [(SET_COOKIE, Cookie::new("auth", builder.build(&root).unwrap().to_base64().unwrap()).to_string())],
+        Redirect::to(headers.get("referer").unwrap().to_str().unwrap())
+    ).into_response())
+}
+
+#[debug_handler]
+async fn stream_query(
     State(AppState {pool, private_key}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,
     query: extract::Query,
 ) -> Result<Response, (StatusCode, String)> {
-    let conn = pool.get().await.map_err(internal_error)?;
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
     let root = KeyPair::from(&private_key);
     let token = cookies.get("auth").expect("auth cookie").value();
@@ -131,7 +153,8 @@ async fn query(
 
     let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
     let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
-    conn.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+
+    tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
 
     let sql_params = vec![
         // (serde_json::from_str::<Value>(&query.params).unwrap(), Type::JSONB),
@@ -144,8 +167,11 @@ async fn query(
     // let sql = query.qs.iter().fold(query.sql, |acc, (k, v)| acc.replace(&("{".to_owned() + k + "}"), &v));
     dbg!(&query);
 
-    let rows = conn.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
-        .map(|row| row.unwrap().get::<usize, String>(0));
+    let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
+        .map(|row| row.unwrap().get::<usize, String>(0))
+    ;
+
+    // tx.commit().await.map_err(internal_error)?;
 
     if let Some(redirect) = query.redirect {
         match redirect.as_ref() {
@@ -155,9 +181,9 @@ async fn query(
     }
 
     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-        Ok("application/json") => {
+        Ok("application/jsonl") => {
             Ok((
-                [("content-type", "application/json")],
+                [("content-type", "application/jsonl")],
                 Html(Body::from_stream(
                     rows.map(|row| Bytes::from(row))
                     .map(Ok::<_, axum::Error>),
@@ -165,8 +191,8 @@ async fn query(
             ).into_response())
         }
         _ => {
-            let mut handlebars = Handlebars::new(); // @TODO share instance
-            handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
+            // let mut handlebars = Handlebars::new(); // @TODO share instance
+            // handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
 
             // let name = headers.get("template").expect("template").to_str().unwrap();
             // let name = qs.get("template").expect("template");
@@ -183,47 +209,84 @@ async fn query(
         },
     }
 }
+#[debug_handler]
+async fn post_query(
+    State(AppState {pool, private_key}): State<AppState>,
+    headers: HeaderMap,
+    cookies: CookieJar,
+    // Query(qs): Query<HashMap<String, String>>,
+    query: extract::Query,
+) -> Result<Response, (StatusCode, String)> {
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-// #[debug_handler]
-// async fn post_query(
-//     State(AppState {pool, private_key}): State<AppState>,
-//     headers: HeaderMap,
-//     // TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
-//     cookies: CookieJar,
-//     Query(qs): Query<HashMap<String, String>>,
-//     // Json(body): Json<QueryBody>,
-//     query: extract::Query,
-// ) -> Result<Response, (StatusCode, String)> {
-//     let conn = pool.get().await.map_err(internal_error)?;
+    let root = KeyPair::from(&private_key);
+    let token = cookies.get("auth").expect("auth cookie").value();
+    let biscuit = Biscuit::from_base64(token.to_string(), root.public()).map_err(internal_error)?;
 
-//     let token = cookies.get("auth").unwrap().value();
+    let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
+    let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
 
-//     let root = KeyPair::from(&private_key);
-//     let biscuit = Biscuit::from_base64(&token.to_string(), root.public()).map_err(internal_error)?;
+    tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
 
-//     let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
-//     let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
-//     conn.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+    let p1 = serde_json::to_value(&query.params);
+    let p2 = serde_json::to_value(&query);
+    let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = vec![
+        // (serde_json::from_str::<Value>(&query.params).unwrap(), Type::JSONB),
+        // (&query.params, Type::JSONB),
+        (p1.as_ref().map_err(internal_error)?, Type::JSONB),
+        (p2.as_ref().map_err(internal_error)?, Type::JSONB),
+    ];
+    // let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = query.params.iter().map(|x| (x as &(dyn ToSql + Sync), Type::JSONB)).collect();
 
-//     let sql_params: Vec<&(dyn ToSql + Sync)> = query.params.iter().map(|x| x as &(dyn ToSql + Sync)).collect();
+    // let sql = query.qs.iter().fold(query.sql, |acc, (k, v)| acc.replace(&("{".to_owned() + k + "}"), &v));
+    dbg!(&query);
 
-//     let rows: Vec<String> = conn.query(&query.query, &sql_params).await.map_err(internal_error)?.iter().map(|row| {
-//         row.get(0)
-//     }).collect();
+    // let rows = tx.query_typed(&query.sql, sql_params).await.map_err(internal_error)?
+    //     .map(|row| row.unwrap().get::<usize, String>(0))
+    // ;
+    let rows: Vec<String> = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?.iter().map(|row| {
+        row.get(0)
+    }).collect();
 
-//     match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-//         Ok("text/html") => {
-//             let mut handlebars = Handlebars::new(); // @TODO share instance
-//             handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
+    tx.commit().await.map_err(internal_error)?;
 
-//             // let name = headers.get("template").expect("template").to_str().unwrap();
-//             let name = qs.get("template").expect("template");
+    if let Some(redirect) = query.redirect {
+        match redirect.as_ref() {
+            "referer" => return Ok(Redirect::to(headers.get("referer").unwrap().to_str().unwrap()).into_response()),
+            rest => return Ok(Redirect::to(rest).into_response()),
+        }
+    }
 
-//             Ok(Html(handlebars.render(name, &rows).map_err(internal_error)?).into_response())
-//         },
-//         _ => Ok(axum::response::Json(rows).into_response()),
-//     }
-// }
+    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
+        Ok("application/jsonl") => {
+            Ok((
+                [("content-type", "application/jsonl")],
+                Json(
+                    rows//.map(|row| Bytes::from(row))
+                    // .map(Ok::<_, axum::Error>),
+                )
+            ).into_response())
+        }
+        _ => {
+            // let mut handlebars = Handlebars::new(); // @TODO share instance
+            // handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
+
+            // let name = headers.get("template").expect("template").to_str().unwrap();
+            // let name = qs.get("template").expect("template");
+
+            Ok(Html(
+                rows.join("\n")
+                // .throttle(Duration::from_millis(5))
+                // .map(Ok::<_, axum::Error>),
+            ).into_response())
+
+            // Ok(Html(
+            //     handlebars.render(name, &rows).map_err(internal_error)?
+            // ).into_response())
+        },
+    }
+}
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
 where
@@ -232,7 +295,7 @@ where
     eprintln!("{}", err);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        "internal error".to_string(),
+        err.to_string(),
     )
 }
 

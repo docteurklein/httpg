@@ -11,12 +11,16 @@ begin atomic
     with link (direction, fkey, details) as (
         select value->'direction', key, value from jsonb_each(links)
     ),
-    crit (direction, fkey, crit, qs, fields, params) as (
+    crit as (
         select direction, fkey,
-            format('(%s) = (%s)', string_agg(format('%I', key), ', ' order by ordinality), string_agg(format('$1->>%s', ordinality - 1), ', ' order by ordinality)),
-            string_agg(format('params=%s', url_encode(record->>value)), '&' order by ordinality),
-            array_agg(key order by key),
-            array_agg(record->>value order by ordinality) filter (where record->>value is not null)
+            format(
+                '(%s) = (%s)',
+                string_agg(format('%I', key), ', ' order by ordinality),
+                string_agg(format('$1->>%s', ordinality - 1), ', ' order by ordinality)
+            ) crit,
+            string_agg(format('params[]=%s', url_encode(record->>value)), '&' order by ordinality) qs,
+            array_agg(key order by key) fields,
+            array_agg(record->>value order by ordinality) filter (where record->>value is not null) params
         from link, jsonb_each_text(details->'attributes') with ordinality
         group by direction, fkey
     ),
