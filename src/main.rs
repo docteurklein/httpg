@@ -4,32 +4,24 @@ use axum::{
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Json, Router
 };
-use axum_extra::{TypedHeader, extract::{Query, cookie::{CookieJar, Cookie}}};
+use axum_extra::extract::cookie::{CookieJar, Cookie};
 use axum_server::tls_rustls::RustlsConfig;
-use futures::TryFutureExt;
-// use futures::{stream, Stream};
-use headers::{Authorization, authorization::Bearer};
-
 use axum_macros::debug_handler;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use tokio::fs;
 use tokio_stream::StreamExt;
-// use futures_util::{pin_mut, TryStreamExt};
-use tokio_postgres_rustls::MakeRustlsConnect;
+// use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
-use tower_http::{compression::CompressionLayer, cors::{Any, CorsLayer}, services::ServeDir};
-use handlebars::Handlebars;
+use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-// use tracing::instrument::WithSubscriber;
-use std::{collections::HashMap, net::TcpListener, sync::Arc};
+use std::{net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
-use tokio_postgres::{tls::MakeTlsConnect, Client, Error, IsolationLevel, NoTls};
+use tokio_postgres::{IsolationLevel, NoTls};
 use tokio_postgres::types::{ToSql, Type};
 use deadpool_postgres::{GenericClient, Pool, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit, builder::*, builder_ext::*};
+use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit, builder::*};
 
 mod extract;
 
@@ -47,8 +39,7 @@ impl Config {
             .build()
             .unwrap();
 
-        let mut cfg = cfg.try_deserialize::<Self>().unwrap();
-        cfg
+        cfg.try_deserialize::<Self>().unwrap()
     }
 }
 
@@ -71,7 +62,7 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cfg = Config::from_env();
 
-    let tls_config = rustls::ClientConfig::builder()
+    let _tls_config = rustls::ClientConfig::builder()
         .dangerous()
         .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
         .with_no_client_auth()
@@ -145,11 +136,15 @@ async fn stream_query(
     query: extract::Query,
 ) -> Result<Response, (StatusCode, String)> {
     let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+    let tx = conn.build_transaction()
+        .read_only(true)
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await
+    .map_err(internal_error)?;
 
     let root = KeyPair::from(&private_key);
     let token = cookies.get("auth").expect("auth cookie").value();
-    let biscuit = Biscuit::from_base64(token.to_string(), root.public()).map_err(internal_error)?;
+    let biscuit = Biscuit::from_base64(token, root.public()).map_err(internal_error)?;
 
     let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
     let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
@@ -185,7 +180,7 @@ async fn stream_query(
             Ok((
                 [("content-type", "application/jsonl")],
                 Html(Body::from_stream(
-                    rows.map(|row| Bytes::from(row))
+                    rows.map(Bytes::from)
                     .map(Ok::<_, axum::Error>),
                 ))
             ).into_response())
@@ -222,7 +217,7 @@ async fn post_query(
 
     let root = KeyPair::from(&private_key);
     let token = cookies.get("auth").expect("auth cookie").value();
-    let biscuit = Biscuit::from_base64(token.to_string(), root.public()).map_err(internal_error)?;
+    let biscuit = Biscuit::from_base64(token, root.public()).map_err(internal_error)?;
 
     let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
     let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
@@ -299,7 +294,7 @@ where
     )
 }
 
-fn authorize(token: &Biscuit) -> Result<(), error::Token> {
+fn _authorize(token: &Biscuit) -> Result<(), error::Token> {
     let operation = "read";
 
     // same as the `biscuit!` macro. There is also a `authorizer_merge!`

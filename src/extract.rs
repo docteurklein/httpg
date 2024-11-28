@@ -1,12 +1,8 @@
-use anyhow::Error;
 use axum::{
-    async_trait, extract::{FromRequest, FromRequestParts, RawForm, Request}, http::{header::CONTENT_TYPE, Method, StatusCode}, response::{IntoResponse, Response}, Json,
-    RequestPartsExt,
+    async_trait, extract::{FromRequest, FromRequestParts, Request}, http::{header::CONTENT_TYPE, Method, StatusCode}, response::{IntoResponse, Response}, Json,
 };
-use axum_extra::extract::Form;
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
-use serde_json::Value;
 use serde_qs::Config;
 use std::collections::HashMap;
 
@@ -30,7 +26,7 @@ where
         match req.method() {
             &Method::GET | &Method::HEAD | &Method::OPTIONS => {
                 if let Some(query) = req.uri().query() {
-                    Ok(serde_qs::from_str::<Query>(&query).unwrap())
+                    Ok(serde_qs::from_str::<Query>(query).unwrap())
                 }
                   else {
                     return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
