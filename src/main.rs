@@ -26,12 +26,12 @@ use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macro
 mod extract;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct Config {
+struct DeadPoolConfig {
     #[serde(default)]
     pg: deadpool_postgres::Config,
 }
 
-impl Config {
+impl DeadPoolConfig {
     pub fn from_env() -> Self {
         let cfg = config::Config::builder()
             .add_source(config::Environment::default().separator("__"))//.keep_prefix(true))
@@ -47,7 +47,7 @@ impl Config {
 #[derive(Clone)]
 struct AppState {
     pool: Pool,
-    // anon_role: String,
+    anon_role: String,
     private_key: PrivateKey,
 }
 
@@ -60,7 +60,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let cfg = Config::from_env();
+    let cfg = DeadPoolConfig::from_env();
 
     let _tls_config = rustls::ClientConfig::builder()
         .dangerous()
@@ -72,12 +72,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?;
 
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
-    let pkey = hex::decode(pkey)?;
 
     let state = AppState {
         pool,
-    //     anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
-        private_key: PrivateKey::from_bytes(&pkey)?,
+        anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
+        private_key: PrivateKey::from_bytes(&hex::decode(pkey)?)?,
     };
 
     let cors = CorsLayer::new()
@@ -117,7 +116,8 @@ async fn login(
     let root = KeyPair::from(&private_key);
 
     let mut builder = Biscuit::builder();
-    builder.add_fact(fact("sql", &[string("set local role to app; set local \"app.tenant\" to 'tenant#1';")]))
+    builder
+        .add_fact(fact("sql", &[string("set local role to app; set local \"app.tenant\" to 'tenant#1';")]))
         .map_err(internal_error)?
     ;
 
@@ -129,7 +129,7 @@ async fn login(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, private_key}): State<AppState>,
+    State(AppState {pool, private_key, anon_role}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,
@@ -143,13 +143,17 @@ async fn stream_query(
     .map_err(internal_error)?;
 
     let root = KeyPair::from(&private_key);
-    let token = cookies.get("auth").expect("auth cookie").value();
-    let biscuit = Biscuit::from_base64(token, root.public()).map_err(internal_error)?;
+    if let Some(token) = cookies.get("auth") {
+        let biscuit = Biscuit::from_base64(token.value(), root.public()).map_err(internal_error)?;
 
-    let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
-    let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
+        let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
+        let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
 
-    tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+        tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+    }
+    else {
+        tx.batch_execute(&format!("set local role {anon_role}")).await.map_err(internal_error)?;
+    }
 
     let sql_params = vec![
         // (serde_json::from_str::<Value>(&query.params).unwrap(), Type::JSONB),
@@ -206,7 +210,7 @@ async fn stream_query(
 }
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, private_key}): State<AppState>,
+    State(AppState {pool, private_key, ..}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,

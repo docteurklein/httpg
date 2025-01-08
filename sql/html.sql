@@ -21,6 +21,8 @@ select $html$<!DOCTYPE html>
     console.log(document);
     document.addEventListener('click', console.log);
 </script>
+$html$
+union all select $html$
 <form method="POST" action="/login">
   <fieldset class="grid">
     <input type="text" name="user" />
@@ -29,6 +31,7 @@ select $html$<!DOCTYPE html>
   </fieldset>
 </form>
 $html$
+where current_role = 'anon'
 union all select xmlelement(name ul, xmlattributes('menu' as class), (
         select xmlagg(
             xmlelement(name li,
@@ -52,6 +55,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         )
         from rel
     ), '')::text
+    where current_role <> 'anon'
 ;
 
 -- drop function if exists html(text, jsonb, jsonb);
@@ -125,7 +129,7 @@ end;
 -- revoke all on all functions in schema pg_catalog, public from web, app, public;
 
 grant usage on schema public, pg_catalog to web, app;
-grant select on public.rel, public.head to web, app;
+grant select on public.rel, public.head to web, app, anon;
 grant execute on function public.html(text, jsonb, jsonb) to web, app;
 grant execute on function public.url_encode(text) to web, app;
 grant execute on function public.decorate(text, jsonb, jsonb, jsonb, jsonb) to web, app;
