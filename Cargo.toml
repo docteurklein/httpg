@@ -37,3 +37,4 @@ tokio-stream = "0.1.16"
 futures-util = "0.3.31"
 serde_qs = "0.13.0"
 bytes = "1.8.0"
+sqlparser = { version = "0.53.0", features = ["visitor"] }

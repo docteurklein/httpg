@@ -33,25 +33,24 @@ union all select $html$
 $html$
 where current_role = 'anon'
 union all select xmlelement(name ul, xmlattributes('menu' as class), (
-        select xmlagg(
-            xmlelement(name li,
-                xmlelement(name a, xmlattributes(
-                    format(
-                        $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
-                        fqn
-                    ) as href
-                ), fqn)
-                -- , xmlelement(name a, xmlattributes(
-                --     format(
-                --         $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
-                --         fqn
-                --     ) as href,
-                --     'portal-' || fqn as target
-                -- ), 'in iframe')
-                -- , xmlelement(name iframe, xmlattributes(
-                --     'portal-' || fqn as name
-                -- ), '')
-            )
+    select xmlagg(
+        xmlelement(name li,
+            xmlelement(name a, xmlattributes(
+                format(
+                    $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+                    fqn
+                ) as href
+            ), fqn)
+            -- , xmlelement(name a, xmlattributes(
+            --     format(
+            --         $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+            --         fqn
+            --     ) as href,
+            --     'portal-' || fqn as target
+            -- ), 'in iframe')
+            -- , xmlelement(name iframe, xmlattributes(
+            --     'portal-' || fqn as name
+            -- ), '')
         )
         from rel
     ), '')::text

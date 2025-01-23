@@ -7,7 +7,11 @@ use axum::{
 use axum_extra::extract::cookie::{CookieJar, Cookie};
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
+use axum_server::tls_rustls::RustlsConfig;
+
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
+use serde::{Deserialize, Serialize};
+use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, OrderByExpr, Query, Statement}, dialect::GenericDialect, parser::Parser};
 use tokio::fs;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
@@ -15,6 +19,10 @@ use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use serde::{Deserialize, Serialize};
 use std::{net::TcpListener, sync::Arc};
+use tower::builder::ServiceBuilder;
+use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
+// use tracing::instrument::WithSubscriber;
+use std::{net::TcpListener, ops::ControlFlow};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
@@ -133,7 +141,7 @@ async fn stream_query(
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,
-    query: extract::Query,
+    mut query: extract::Query,
 ) -> Result<Response, (StatusCode, String)> {
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
@@ -164,6 +172,23 @@ async fn stream_query(
     // let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = query.params.iter().map(|x| (x as &(dyn ToSql + Sync), Type::TEXT)).collect();
 
     // let sql = query.qs.iter().fold(query.sql, |acc, (k, v)| acc.replace(&("{".to_owned() + k + "}"), &v));
+    let mut statements = Parser::parse_sql(&GenericDialect{}, &query.sql).unwrap();
+
+    // Remove all select limits in sub-queries
+    visit_statements_mut(&mut statements, |expr| {
+      if let Statement::Query(q) = expr {
+        q.order_by = None;
+        // q.order_by.replace(|o| {o.exprs.iter_mut().map(|OrderByExpr {asc, ..}| {
+        //     match asc {
+        //         Some(b) => asc.replace(!b.clone()),
+        //         None => todo!()
+        //     }
+        // })});
+      }
+      ControlFlow::<()>::Continue(())
+    });
+
+    query.sql = statements[0].to_string();
     dbg!(&query);
 
     let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
