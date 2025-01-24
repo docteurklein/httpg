@@ -212,7 +212,7 @@ async fn stream_query(
 }
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, private_key, ..}): State<AppState>,
+    State(AppState {pool, private_key, anon_role, ..}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,
@@ -222,13 +222,19 @@ async fn post_query(
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
     let root = KeyPair::from(&private_key);
-    let token = cookies.get("auth").expect("auth cookie").value();
-    let biscuit = Biscuit::from_base64(token, root.public()).map_err(internal_error)?;
+    // let token = cookies.get("auth").expect("auth cookie").value();
+    // let biscuit = Biscuit::from_base64(token, root.public()).map_err(internal_error)?;
+    if let Some(token) = cookies.get("auth") {
+        let biscuit = Biscuit::from_base64(token.value(), root.public()).map_err(internal_error)?;
 
-    let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
-    let sql: Vec<(String, )> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
+        let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
+        let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
 
-    tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+        tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
+    }
+    else {
+        tx.batch_execute(&format!("set local role {anon_role}")).await.map_err(internal_error)?;
+    }
 
     let p1 = serde_json::to_value(&query.params);
     let p2 = serde_json::to_value(&query);

@@ -32,10 +32,6 @@ begin atomic
         join link using (direction, fkey)
         where cardinality(params) = cardinality(fields)
     ),
-    pkey (pkey) as (
-        select array_agg(record->>value order by value)
-        from jsonb_array_elements_text(pkey)
-    ),
     where_ (where_) as (
         select format('(%s) = (%s)', string_agg(quote_ident(value), ', '), string_agg(quote_literal(record->>value), ', '))
         from jsonb_array_elements_text(pkey)
@@ -47,7 +43,7 @@ begin atomic
         'rel', rel,
         'links', coalesce(jsonb_agg(to_jsonb(q)), '[]')
     )
-    from query q, pkey, where_
+    from query q, where_
     group by pkey, where_
     ;
 end;
@@ -119,20 +115,27 @@ relation as (
     jsonb_object_agg(a.attname, jsonb_build_object(
         'name', a.attname,
         'type', t.typname
-    )) cols,
-    jsonb_agg(distinct a.attname) filter (where i.indisprimary) pkey
+    )) cols
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
     join pg_catalog.pg_attribute a on a.attrelid = r.oid
-    left join pg_index i
-        on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
     join pg_catalog.pg_type t on t.oid = a.atttypid
     left join view_col vc on r.oid in (vc.from, vc.resorigtbl)
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
-    and i.indrelid = r.oid
     and a.attnum > 0
     and n.nspname <> all(array['pg_catalog', 'information_schema'])
     group by vc.resorigtbl, r.oid, n.nspname, r.relname
+),
+pkey as (
+    select r.oid, jsonb_agg(a.attname order by a.attnum) pkey
+    from relation r
+    join pg_attribute a on a.attrelid = r.oid
+    left join pg_index i
+        on a.attrelid = i.indrelid and a.attnum = any(i.indkey)
+    where true
+    and i.indrelid = r.oid
+    and i.indisprimary
+    group by r.oid
 ),
 link as (
     with fkey_col(direction, conrelid, confrelid, conname, attrelid, attnum, ratrel) as (
@@ -175,6 +178,7 @@ cols,
 pkey,
 coalesce(links, '{}') links
 from relation r
+join pkey using (oid)
 left join link using (conrelid)
 ;
 

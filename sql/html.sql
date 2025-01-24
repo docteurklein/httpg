@@ -37,7 +37,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         xmlelement(name li,
             xmlelement(name a, xmlattributes(
                 format(
-                    $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+                    $sql$/query?sql=select * from head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
                     fqn
                 ) as href
             ), fqn)
@@ -64,26 +64,25 @@ returns text
 language sql
 immutable parallel safe
 begin atomic
-with hypermedia (hypermedia) as (
-    select decorate(fqn, r, pkey, links, qs)
+with hypermedia (hypermedia, pkey) as (
+    select decorate(fqn, r, pkey, links, qs), pkey
     from rel
     where fqn = fqn_
 )
 select xmlelement(name card
-    , xmlelement(name h3, fqn_)
-    , xmlelement(name pre, r)
+    , xmlelement(name h3, (select string_agg(r->>value, ' ') from jsonb_array_elements_text(pkey)))
+    -- , xmlelement(name h3, r #>> array[jsonb_array_elements_text(pkey)])
+    , xmlelement(name pre, jsonb_pretty(r))
     , xmlelement(name ul, xmlattributes('order' as class), (
-        with link (href, field, value, sort) as (
+        with link (href, field, value) as (
             select format('/query?%s', (
                 select string_agg(format('%s=%s', key, url_encode(value)), '&')
                 from jsonb_each_text(qs || jsonb_build_object(
-                    'order', key,
-                    'sort', (case when (qs->>'sort' = 'asc') then 'desc' else 'asc' end)
+                    'reorder[]', key
                 ))
             )),
             key,
-            value,
-            (case when (qs->>'sort' = 'asc') then 'desc' else 'asc' end)
+            value
             from jsonb_each_text(r)
         )
         select xmlagg(
@@ -92,9 +91,12 @@ select xmlelement(name card
                     xmlelement(name fieldset, xmlattributes('grid' as class),
                         xmlelement(name a, xmlattributes(
                             href as href
-                        ), format('%s: (order by: %s)', field, sort)),
+                        ), field),
                         xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, value)),
-                        xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1->>0 where %s', fqn_, field, hypermedia->>'where')),
+                        xmlelement(name details,
+                            xmlelement(name summary, 'sql'),
+                            xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1->>0 where %s', fqn_, field, hypermedia->>'where'))
+                        ),
                         xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
                     )
                 )
@@ -106,7 +108,7 @@ select xmlelement(name card
         select xmlagg(
             xmlelement(name li,
                 xmlelement(name a, xmlattributes(
-                    format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
+                    format($$/query?sql=select * from head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
                 ), value->>'fkey')
                 -- , xmlelement(name a, xmlattributes(
                 --     format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href,

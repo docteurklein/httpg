@@ -10,10 +10,13 @@ use std::collections::HashMap;
 pub struct Query {
     pub sql: String,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reorder: Vec<String>,
 }
 
