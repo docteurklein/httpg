@@ -191,6 +191,15 @@ async fn stream_query(
                 ))
             ).into_response())
         }
+        Ok("application/json") => {
+            Ok((
+                [("content-type", "application/json")],
+                Json(
+                    rows.collect::<Vec<String>>().await.join("\n")
+                    // .map(Ok::<_, axum::Error>),
+                )
+            ).into_response())
+        }
         _ => {
             // let mut handlebars = Handlebars::new(); // @TODO share instance
             // handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
@@ -252,7 +261,7 @@ async fn post_query(
     // let rows = tx.query_typed(&query.sql, sql_params).await.map_err(internal_error)?
     //     .map(|row| row.unwrap().get::<usize, String>(0))
     // ;
-    let rows: Vec<String> = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?.iter().map(|row| {
+    let rows: Vec<serde_json::Value> = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?.iter().map(|row| {
         row.get(0)
     }).collect();
 
@@ -275,6 +284,15 @@ async fn post_query(
                 )
             ).into_response())
         }
+        Ok("application/json") => {
+            Ok((
+                [("content-type", "application/json")],
+                Json(
+                    rows//.join("\n")
+                    // .map(Ok::<_, axum::Error>),
+                )
+            ).into_response())
+        }
         _ => {
             // let mut handlebars = Handlebars::new(); // @TODO share instance
             // handlebars.register_templates_directory(".hbs", "./templates").map_err(internal_error)?;
@@ -283,7 +301,7 @@ async fn post_query(
             // let name = qs.get("template").expect("template");
 
             Ok(Html(
-                rows.join("\n")
+                rows.into_iter().map(|r| r.to_string()).collect::<Vec<String>>().join(" \n")
                 // .throttle(Duration::from_millis(5))
                 // .map(Ok::<_, axum::Error>),
             ).into_response())
