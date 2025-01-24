@@ -13,6 +13,8 @@ pub struct Query {
     pub params: Vec<String>,
     #[serde(default)]
     pub redirect: Option<String>,
+    #[serde(default)]
+    pub reorder: Vec<String>,
 }
 
 #[async_trait]

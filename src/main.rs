@@ -7,22 +7,19 @@ use axum::{
 use axum_extra::extract::cookie::{CookieJar, Cookie};
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
-use axum_server::tls_rustls::RustlsConfig;
+// use axum_server::tls_rustls::RustlsConfig;
 
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
-use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, OrderByExpr, Query, Statement}, dialect::GenericDialect, parser::Parser};
+use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, Ident, OrderBy, OrderByExpr, Query, Statement, VisitMut, VisitorMut}, dialect::GenericDialect, parser::Parser};
 use tokio::fs;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
-use serde::{Deserialize, Serialize};
-use std::{net::TcpListener, sync::Arc};
-use tower::builder::ServiceBuilder;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
+use std::{net::TcpListener, ops::Deref, sync::Arc};
 // use tracing::instrument::WithSubscriber;
-use std::{net::TcpListener, ops::ControlFlow};
+use std::ops::ControlFlow;
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
@@ -43,7 +40,6 @@ impl DeadPoolConfig {
     pub fn from_env() -> Self {
         let cfg = config::Config::builder()
             .add_source(config::Environment::default().separator("__"))//.keep_prefix(true))
-            
             .build()
             .unwrap();
 
@@ -164,29 +160,12 @@ async fn stream_query(
     }
 
     let sql_params = vec![
-        // (serde_json::from_str::<Value>(&query.params).unwrap(), Type::JSONB),
-        // (&query.params, Type::JSONB),
         (serde_json::to_value(&query.params).map_err(internal_error)?, Type::JSONB),
         (serde_json::to_value(&query).map_err(internal_error)?, Type::JSONB),
     ];
-    // let sql_params: Vec<(&(dyn ToSql + Sync), Type)> = query.params.iter().map(|x| (x as &(dyn ToSql + Sync), Type::TEXT)).collect();
 
-    // let sql = query.qs.iter().fold(query.sql, |acc, (k, v)| acc.replace(&("{".to_owned() + k + "}"), &v));
     let mut statements = Parser::parse_sql(&GenericDialect{}, &query.sql).unwrap();
-
-    // Remove all select limits in sub-queries
-    visit_statements_mut(&mut statements, |expr| {
-      if let Statement::Query(q) = expr {
-        q.order_by = None;
-        // q.order_by.replace(|o| {o.exprs.iter_mut().map(|OrderByExpr {asc, ..}| {
-        //     match asc {
-        //         Some(b) => asc.replace(!b.clone()),
-        //         None => todo!()
-        //     }
-        // })});
-      }
-      ControlFlow::<()>::Continue(())
-    });
+    statements.visit(&mut VisitOrderBy {reorder: query.reorder.clone()});
 
     query.sql = statements[0].to_string();
     dbg!(&query);
@@ -194,8 +173,6 @@ async fn stream_query(
     let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
         .map(|row| row.unwrap().get::<usize, String>(0))
     ;
-
-    // tx.commit().await.map_err(internal_error)?;
 
     if let Some(redirect) = query.redirect {
         match redirect.as_ref() {
@@ -399,4 +376,25 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
             rustls::SignatureScheme::RSA_PKCS1_SHA512,
         ]
     }
+}
+
+struct VisitOrderBy {
+    reorder: Vec<String>,
+}
+
+impl VisitorMut for VisitOrderBy {
+  type Break = ();
+
+  fn post_visit_query(&mut self, expr: &mut Query) -> ControlFlow<Self::Break> {
+    if let Query { order_by: Some(o), ..} = expr {
+        o.exprs.iter_mut().for_each(|e| {
+            if let Expr::Identifier(Ident {value: v, ..}) = e.expr.to_owned() {
+                if self.reorder.contains(&v) {
+                    e.asc = e.asc.map(|a| !a);
+                }
+            }
+        });
+    }
+    ControlFlow::Continue(())
+  }
 }

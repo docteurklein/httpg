@@ -1,6 +1,8 @@
 import 'https://unpkg.com/d3@7';
 //import * as d3 from 'https://unpkg.com/d3@7?module';
 
+navigator.registerProtocolHandler("magnet", "https://localhost:3000/?magnet=%s");
+
 query.value = localStorage.getItem('query'); 
 params.value = localStorage.getItem('params'); 
 

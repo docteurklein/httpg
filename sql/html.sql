@@ -51,6 +51,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
             -- , xmlelement(name iframe, xmlattributes(
             --     'portal-' || fqn as name
             -- ), '')
+            )
         )
         from rel
     ), '')::text
