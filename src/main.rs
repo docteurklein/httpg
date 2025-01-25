@@ -11,7 +11,7 @@ use axum_macros::debug_handler;
 
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
-use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, Ident, OrderBy, OrderByExpr, Query, Statement, VisitMut, VisitorMut}, dialect::GenericDialect, parser::Parser};
+use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, Ident, OrderBy, OrderByExpr, Query, Statement, VisitMut, VisitorMut}, dialect::{GenericDialect, PostgreSqlDialect}, parser::Parser};
 use tokio::fs;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
@@ -164,8 +164,8 @@ async fn stream_query(
         (serde_json::to_value(&query).map_err(internal_error)?, Type::JSONB),
     ];
 
-    let mut statements = Parser::parse_sql(&GenericDialect{}, &query.sql).unwrap();
-    statements.visit(&mut VisitOrderBy {reorder: query.reorder.clone()});
+    let mut statements = Parser::parse_sql(&PostgreSqlDialect{}, &query.sql).unwrap();
+    statements.visit(&mut VisitOrderBy(query.reorder.clone()));
 
     query.sql = statements[0].to_string();
     dbg!(&query);
@@ -402,9 +402,7 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     }
 }
 
-struct VisitOrderBy {
-    reorder: Vec<String>,
-}
+struct VisitOrderBy(Vec<String>);
 
 impl VisitorMut for VisitOrderBy {
   type Break = ();
@@ -413,7 +411,7 @@ impl VisitorMut for VisitOrderBy {
     if let Query { order_by: Some(o), ..} = expr {
         o.exprs.iter_mut().for_each(|e| {
             if let Expr::Identifier(Ident {value: v, ..}) = e.expr.to_owned() {
-                if self.reorder.contains(&v) {
+                if self.0.contains(&v) {
                     e.asc = e.asc.map(|a| !a);
                 }
             }
