@@ -37,7 +37,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         xmlelement(name li,
             xmlelement(name a, xmlattributes(
                 format(
-                    $sql$/query?sql=select * from head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
+                    $sql$/query?sql=select * from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r limit 100)$sql$,
                     fqn
                 ) as href
             ), fqn)
@@ -58,26 +58,25 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
     where current_role <> 'anon'
 ;
 
--- drop function if exists html(text, jsonb, jsonb);
-create or replace function html(fqn_ text, r jsonb, qs jsonb = '{}')
+-- drop function if exists html(text, jsonb, jsonb, jsonb);
+create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
 returns text
 language sql
 immutable parallel safe
 begin atomic
 with hypermedia (hypermedia, pkey) as (
-    select decorate(fqn, r, pkey, links, qs), pkey
+    select decorate(fqn, r, pkey, links, query), pkey
     from rel
     where fqn = fqn_
 )
 select xmlelement(name card
     , xmlelement(name h3, (select string_agg(r->>value, ' ') from jsonb_array_elements_text(pkey)))
-    -- , xmlelement(name h3, r #>> array[jsonb_array_elements_text(pkey)])
-    , xmlelement(name pre, jsonb_pretty(r))
+    , xmlelement(name pre, jsonb_pretty(query))
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (
             select format('/query?%s', (
                 select string_agg(format('%s=%s', key, url_encode(value)), '&')
-                from jsonb_each_text(qs || jsonb_build_object(
+                from jsonb_each_text(query || jsonb_build_object(
                     'reorder[]', key
                 ))
             )),
@@ -87,15 +86,38 @@ select xmlelement(name card
         )
         select xmlagg(
             xmlelement(name li,
-                xmlelement(name form, xmlattributes('POST' as method, '/query?redirect=referer' as action),
+                xmlelement(name form, xmlattributes('POST' as method, '/query' as action),
                     xmlelement(name fieldset, xmlattributes('grid' as class),
+                        xmlelement(name input, xmlattributes('hidden' as type, 'redirect' as name, url_encode(coalesce(query->>'redirect', 'referer')) as value)),
                         xmlelement(name a, xmlattributes(
                             href as href
                         ), field),
-                        xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, value)),
+                        xmlelement(name input, xmlattributes(
+                            'text' as type,
+                            'params[]' as name,
+                            value,
+                            case when errors ? 'error' and errors->>'field' = field then 'true' end as "aria-invalid",
+                            'invalid-helper' as "aria-describedby"
+                        )),
+                        case when errors ? 'error' and errors->>'field' = field then xmlelement(name small, xmlattributes('invalid-helper' as id), errors->>'error') end,
+                        xmlelement(name input, xmlattributes('hidden' as type, 'on_error' as name, format(
+                            $sql$
+                            select * from head
+                            union all
+                            select html(
+                                %1$L,
+                                to_jsonb(r),
+                                current_setting('httpg.query')::jsonb,
+                                current_setting('httpg.errors')::jsonb || jsonb_build_object(
+                                    'field', '%3$s'
+                                )
+                            )
+                            from %1$s r
+                            where %2$s
+                            $sql$, fqn_, hypermedia->>'where', field) as value)),
                         xmlelement(name details,
                             xmlelement(name summary, 'sql'),
-                            xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1->>0 where %s', fqn_, field, hypermedia->>'where'))
+                            xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1 where %s', fqn_, field, hypermedia->>'where'))
                         ),
                         xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
                     )
@@ -108,7 +130,7 @@ select xmlelement(name card
         select xmlagg(
             xmlelement(name li,
                 xmlelement(name a, xmlattributes(
-                    format($$/query?sql=select * from head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
+                    format($$/query?sql=select * from head union all (select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
                 ), value->>'fkey')
                 -- , xmlelement(name a, xmlattributes(
                 --     format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href,
@@ -126,23 +148,22 @@ from hypermedia;
 end;
 
 -- create role web noinherit nologin;
--- revoke all on schema pg_catalog, public from web, app, public;
--- revoke all on all tables in schema pg_catalog, public from web, app, public;
--- revoke all on all functions in schema pg_catalog, public from web, app, public;
+revoke all on schema pg_catalog, public, pim from web, app, public;
+revoke all on all tables in schema pg_catalog, public from web, app, public;
+revoke all on all routines in schema pg_catalog, public, pim from web, app, public;
 
-grant usage on schema public, pg_catalog to web, app;
+grant usage on schema public, pim to web, app, anon;
 grant select on public.rel, public.head to web, app, anon;
-grant execute on function public.html(text, jsonb, jsonb) to web, app;
-grant execute on function public.url_encode(text) to web, app;
-grant execute on function public.decorate(text, jsonb, jsonb, jsonb, jsonb) to web, app;
--- grant execute on function public.html(pim.product, jsonb) to web, app;
--- grant execute on function public.html(pim.product_descendant, jsonb, jsonb) to web, app;
+grant select on all tables in schema pim to web, app, anon;
+grant execute on function public.html(text, jsonb, jsonb, jsonb) to web, app, anon;
+grant execute on function public.url_encode(text) to web, app, anon;
+grant execute on function public.decorate(text, jsonb, jsonb, jsonb, jsonb) to web, app, anon;
 
 grant select, insert, update on all tables in schema pim to web, app;
 
--- grant execute on function pg_catalog.jsonb_each to web;
+grant select on pg_ts_config to pim, web, app;
 -- grant execute on function pg_catalog.jsonb_object_fields to web;
 -- grant execute on function pg_catalog.xmlagg to web;
 -- grant execute on function pg_catalog.format(text, variadic "any") to web;
-grant execute on all functions in schema pg_catalog to web, app, public;
-revoke execute on function pg_catalog.pg_sleep from web, app;
+grant execute on all functions in schema pg_catalog, pim to web, app, anon;
+revoke execute on function pg_catalog.pg_sleep from web, app, anon;

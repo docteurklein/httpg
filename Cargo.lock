@@ -1129,6 +1129,7 @@ dependencies = [
  "tokio",
  "tokio-postgres",
  "tokio-postgres-rustls",
+ "tokio-postgres-utils",
  "tokio-stream",
  "tower 0.5.1",
  "tower-http",
@@ -1718,6 +1719,23 @@ checksum = "b5b9d34b8991d19d98081b46eacdd8eb58c6f2b201139f7c5f643cc155a633af"
 dependencies = [
  "proc-macro2",
 ]
+
+[[package]]
+name = "quote2"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "970573b86f7e5795c8c6c50c56ef602368593f0687188da27fd489a59e253630"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "quote2-macros",
+]
+
+[[package]]
+name = "quote2-macros"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5f4b89c37b2d870a28629ad20da669bb0e7d7214878d0d5111b304aa466e1977"
 
 [[package]]
 name = "rand"
@@ -2384,6 +2402,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-postgres-macros"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e85cb40a19d1e62e94d67e1d12aaf7d590677fdb4cffb22971d618961367cd3f"
+dependencies = [
+ "quote2",
+ "syn 2.0.87",
+]
+
+[[package]]
 name = "tokio-postgres-rustls"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2396,6 +2424,15 @@ dependencies = [
  "tokio-postgres",
  "tokio-rustls",
  "x509-cert",
+]
+
+[[package]]
+name = "tokio-postgres-utils"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c924158dcf9ce1ec6fd677d29b0d9af1fd33e55ad2a18d4758317e80678621"
+dependencies = [
+ "tokio-postgres-macros",
 ]
 
 [[package]]

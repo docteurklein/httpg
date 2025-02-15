@@ -1,12 +1,12 @@
 use axum::{
-    async_trait, extract::{FromRequest, FromRequestParts, Request}, http::{header::CONTENT_TYPE, Method, StatusCode}, response::{IntoResponse, Response}, Json,
+    async_trait, extract::{FromRequest, FromRequestParts, Request}, http::{header::{CONTENT_TYPE, REFERER}, Method, StatusCode}, response::{IntoResponse, Response}, Json,
 };
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Deref};
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
     pub sql: String,
     #[serde(default)]
@@ -18,6 +18,19 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub reorder: Vec<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub on_error: Option<String>,
+}
+
+impl Query {
+    fn resolve_referer(&mut self, referer: Option<&str>) -> &mut Self {
+        self.redirect = match &self.redirect {
+                Some(a) if a == "referer" => referer.map(str::to_string),
+                _ => None,
+        };
+        self
+    }
 }
 
 #[async_trait]
@@ -28,48 +41,42 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match req.method() {
+        let headers = req.headers().clone();
+
+        let query = match req.method() {
             &Method::GET | &Method::HEAD | &Method::OPTIONS => {
-                if let Some(query) = req.uri().query() {
-                    Ok(serde_qs::from_str::<Query>(query).unwrap())
-                }
-                  else {
-                    return Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response());
+                match req.uri().query() {
+                    Some(qs) => Ok(serde_qs::from_str::<Query>(qs).unwrap()),
+                    None => Err(StatusCode::BAD_REQUEST.into_response())
                 }
             },
-            // Method::POST | Method::PUT | Method::PATCH => {
             _ => {
-                let (mut parts, body) = req.into_parts();
-                let qs: axum::extract::Query<HashMap<String, String>> = axum::extract::Query::from_request_parts(&mut parts, state)
-                    .await
-                    .map_err(IntoResponse::into_response)?
-                ;
-                let req = Request::from_parts(parts, body);
-
-                let content_type_header = req.headers().get(CONTENT_TYPE);
+                let content_type_header = headers.get(CONTENT_TYPE);
                 let content_type = content_type_header.and_then(|value| value.to_str().ok());
 
-                let mut query = match content_type {
+                match content_type {
                     Some(ct) if ct.starts_with("application/json") => {
-                        let Json(query) = Json::<Query>::from_request(req, state)
+                        Ok(Json::<Query>::from_request(req, state)
                             .await
-                            .or(Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response()))?
-                        ;
-                        Ok(query)
+                            .or(Err(StatusCode::BAD_REQUEST.into_response()))?.0
+                        )
                     },
                     Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
-                    // _ => {
-                        let serde_qs = Config::new(10, false); // non-strict for browsers
-                        Ok(serde_qs.deserialize_bytes::<Query>(&Bytes::from_request(req, state).await.unwrap()).unwrap())
+                        let serde_qs = Config::new(5, false); // non-strict for browsers
+                        serde_qs.deserialize_bytes::<Query>(
+                            &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
+                        )
+                        .or(Err(StatusCode::BAD_REQUEST.into_response()))
                     },
                     _ => Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
-                };
-                query.as_mut().map(|query| query.redirect = qs.get("redirect").map(|x| x.to_owned())).unwrap();
-                query
+                }
             },
-            // Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
-            // _ => {
-        }
+        };
+
+        let referer_header = headers.get(REFERER);
+        let referer = referer_header.and_then(|value| value.to_str().ok());
+
+        query.map(|mut query| query.resolve_referer(referer).to_owned())
     }
 }
 

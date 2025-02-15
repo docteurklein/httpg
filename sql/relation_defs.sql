@@ -1,6 +1,10 @@
-create or replace function url_encode (str text) returns text as $$
+create or replace function url_encode (str text)
+immutable strict parallel safe
+returns text
+language plv8
+as $$
 return encodeURIComponent(String(str))
-$$ language plv8;
+$$;
 
 -- drop function if exists decorate(text, jsonb, jsonb, jsonb, jsonb);
 create or replace function decorate(rel text, record jsonb, pkey jsonb, links jsonb, qs_ jsonb = '{}')
@@ -16,7 +20,7 @@ begin atomic
             format(
                 '(%s) = (%s)',
                 string_agg(format('%I', key), ', ' order by ordinality),
-                string_agg(format('$1->>%s', ordinality - 1), ', ' order by ordinality)
+                string_agg(format('$%s', ordinality), ', ' order by ordinality)
             ) crit,
             string_agg(format('params[]=%s', url_encode(record->>value)), '&' order by ordinality) qs,
             array_agg(key order by key) fields,
@@ -114,7 +118,8 @@ relation as (
     select r.oid, coalesce(vc.resorigtbl, r.oid) conrelid, n.nspname, r.relname,
     jsonb_object_agg(a.attname, jsonb_build_object(
         'name', a.attname,
-        'type', t.typname
+        'type', t.typname,
+        'oid', t.oid
     )) cols
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
