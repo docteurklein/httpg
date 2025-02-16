@@ -75,6 +75,13 @@
             biscuit-cli
           ];
 
+          env = {
+            PG__DBNAME = "httpg";
+            HTTPG_PRIVATE_KEY = "private-key-file";
+            HTTPG_ANON_ROLE = "florian";
+          };
+          
+
           services.postgres = {
             enable = true;
             package = pkgs.postgresql_17;

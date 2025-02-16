@@ -4,7 +4,7 @@ use axum::{
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
-use std::{collections::HashMap, ops::Deref};
+use std::{collections::{BTreeMap, HashMap}, ops::Deref};
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
@@ -16,8 +16,8 @@ pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
     #[serde(default)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub reorder: Vec<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub reorder: BTreeMap<String, String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,

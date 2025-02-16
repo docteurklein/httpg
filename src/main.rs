@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, Bytes}, extract::{FromRef, State}, http::{
+    body::{Body, Bytes}, extract::State, http::{
         header::{HeaderMap, ACCEPT, SET_COOKIE},
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Json, Router
@@ -9,18 +9,18 @@ use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
 
-use postgres_types::FromSql;
+// use futures::stream::Select;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlparser::{ast::{visit_expressions_mut, visit_statements_mut, Expr, Ident, OrderBy, OrderByExpr, Query, Statement, VisitMut, VisitorMut}, dialect::{GenericDialect, PostgreSqlDialect}, parser::Parser};
+use sqlparser::{ast::{Expr, Ident, OrderBy, OrderByExpr, Query, SetExpr, TableFactor, TableWithJoins, VisitMut, VisitorMut}, dialect::PostgreSqlDialect, parser::Parser, tokenizer::Location};
 use tokio::fs;
-use tokio_postgres_utils::FromRow;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
-use std::{collections::BTreeMap, net::TcpListener, ops::Deref, sync::Arc};
+use core::panic;
+use std::{collections::BTreeMap, net::TcpListener, sync::Arc};
 // use tracing::instrument::WithSubscriber;
 use std::ops::ControlFlow;
 use std::env;
@@ -29,7 +29,7 @@ use tokio_postgres::{IsolationLevel, NoTls};
 use tokio_postgres::types::{ToSql, Type};
 use deadpool_postgres::{GenericClient, Pool, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use biscuit_auth::{KeyPair, PrivateKey, builder_ext::AuthorizerExt, error, macros::*, Biscuit, builder::*};
+use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 mod extract;
 
@@ -56,16 +56,6 @@ struct AppState {
     pool: Pool,
     anon_role: String,
     private_key: PrivateKey,
-    rels: BTreeMap<String, Rel>,
-}
-
-#[derive(Clone, FromRow, Debug)]
-struct Rel {
-    fqn: String,
-    nspname: String,
-    relname: String,
-    cols: serde_json::Value,
-
 }
 
 #[tokio::main]
@@ -91,14 +81,10 @@ async fn main() -> Result<(), anyhow::Error> {
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
 
     
-    let mut conn = pool.get().await?;
-    let rels = conn.query("table rel", &[]).await?;
-
     let state = AppState {
         pool,
         anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
         private_key: PrivateKey::from_bytes(&hex::decode(pkey)?)?,
-        rels: rels.iter().map(|rel| (rel.get(0), Rel::from(rel))).collect(),
     };
 
     let cors = CorsLayer::new()
@@ -143,6 +129,7 @@ async fn login(
         .add_fact(fact("sql", &[string("set local role to app; set local \"app.tenant\" to 'tenant#1';")]))
         .map_err(internal_error)?
     ;
+    // @TODO challenge!
 
     Ok((
         [(SET_COOKIE, Cookie::new("auth", builder.build(&root).unwrap().to_base64().unwrap()).to_string())],
@@ -152,7 +139,7 @@ async fn login(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, private_key, anon_role, rels}): State<AppState>,
+    State(AppState {pool, private_key, anon_role}): State<AppState>,
     headers: HeaderMap,
     cookies: CookieJar,
     // Query(qs): Query<HashMap<String, String>>,
@@ -186,6 +173,7 @@ async fn stream_query(
     if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect{}, &query.sql) {
         statements.visit(&mut VisitOrderBy(query.reorder.clone()));
         query.sql = statements[0].to_string();
+        dbg!(&query.sql);
     }
 
     let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
@@ -227,12 +215,11 @@ async fn post_query(
     cookies: CookieJar,
     query: extract::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-    let root = KeyPair::from(&private_key);
     if let Some(token) = cookies.get("auth") {
+        let root = KeyPair::from(&private_key);
         let biscuit = Biscuit::from_base64(token.value(), root.public()).map_err(internal_error)?;
 
         let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
@@ -264,6 +251,7 @@ async fn post_query(
             }).collect()
         },
         Err(err) => {
+            dbg!(&err);
             let errors = json!({"error": err.to_string()});
 
             let mut conn = pool.get().await.map_err(internal_error)?;
@@ -273,7 +261,6 @@ async fn post_query(
             tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
             let rows: Vec<String> = tx.query_typed(query.on_error.unwrap().as_str(), &[]).await.map_err(internal_error)?.iter().map(|row| row.get(0)).collect();
-
 
             return Ok((
                 StatusCode::BAD_REQUEST,
@@ -304,17 +291,6 @@ where
     eprintln!("{}", err);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
-        err.to_string(),
-    )
-}
-
-fn query_error<E>(err: E) -> (StatusCode, String)
-where
-    E: std::error::Error,
-{
-    eprintln!("{:#?}", err);
-    (
-        StatusCode::BAD_REQUEST,
         err.to_string(),
     )
 }
@@ -368,20 +344,42 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     }
 }
 
-struct VisitOrderBy(Vec<String>);
+struct VisitOrderBy(BTreeMap<String, String>);
 
 impl VisitorMut for VisitOrderBy {
   type Break = ();
 
   fn post_visit_query(&mut self, expr: &mut Query) -> ControlFlow<Self::Break> {
-    if let Query { order_by: Some(o), ..} = expr {
-        o.exprs.iter_mut().for_each(|e| {
-            if let Expr::Identifier(Ident {value: v, ..}) = e.expr.to_owned() {
-                if self.0.contains(&v) {
-                    e.asc = e.asc.map(|a| !a);
+    if let Query { body, ..} = expr {
+        if let SetExpr::Select(select) = &**body {
+
+            if select.from.iter().any(|from| {
+                match from {
+                    TableWithJoins { relation: TableFactor::Table { alias: Some(alias), .. }, .. } => {
+                        self.0.iter().any(|(rel, _col)| &alias.to_string() == rel )
+                    }
+                    _ => false
                 }
+            }) {
+                expr.order_by = Some(OrderBy {
+                    exprs: self.0.iter()
+                        .map(|reorder| {
+                            OrderByExpr {
+                                expr: Expr::Identifier(Ident {
+                                    value: reorder.1.to_string(),
+                                    quote_style: None,
+                                    span: sqlparser::tokenizer::Span { start: Location {line: 1, column: 1}, end: Location {line: 1, column: 1} }
+                                }),
+                                asc: None,
+                                nulls_first: None,
+                                with_fill: None,
+                            }
+                        })
+                        .collect(),
+                    interpolate: None,
+                })
             }
-        });
+        }
     }
     ControlFlow::Continue(())
   }

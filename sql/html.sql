@@ -76,7 +76,7 @@ select xmlelement(name card
         with link (href, field, value) as (
             select format('/query?%s', (
                 select string_agg(format('%s=%s', key, url_encode(value)), '&')
-                from jsonb_each_text(query || jsonb_build_object(
+                from jsonb_each_text(query - 'reorder' || jsonb_build_object(
                     'reorder[]', key
                 ))
             )),
