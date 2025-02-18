@@ -37,7 +37,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         xmlelement(name li,
             xmlelement(name a, xmlattributes(
                 format(
-                    $sql$/query?sql=select * from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r limit 100)$sql$,
+                    $$/query?sql=select * from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r limit 100)$$,
                     fqn
                 ) as href
             ), fqn)
@@ -99,20 +99,21 @@ language sql
 immutable parallel safe
 leakproof
 begin atomic
-with hypermedia (hypermedia, pkey) as (
+select xmlconcat(
+    xmlelement(name pre, jsonb_pretty(r)), -- debug
+(with hypermedia (hypermedia, pkey) as (
     select decorate(fqn, r, pkey, links, query), pkey
     from rel
     where fqn = fqn_
 )
 select xmlelement(name card
     , xmlelement(name h3, (select string_agg(r->>value, ' ') from jsonb_array_elements_text(pkey)))
-    , xmlelement(name pre, jsonb_pretty(query)) -- debug
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (
-            select url('/query', query->'qs' || jsonb_build_object(
+            select url('/query', query || jsonb_build_object(
                 'order', jsonb_build_object(
-                    coalesce(query->'qs'->>'rel', 'r'), jsonb_build_object(
-                        key, case query->'qs'->'order'->(query->'qs'->>'rel')->>key
+                    coalesce(query->>'rel', 'r'), jsonb_build_object(
+                        key, case query->'order'->(coalesce(query->>'rel', 'r'))->>key
                             when 'asc' then 'desc'
                             else 'asc'
                         end
@@ -183,7 +184,7 @@ select xmlelement(name card
         from jsonb_array_elements(hypermedia->'links')
     ), '')
 )
-from hypermedia;
+from hypermedia));
 end;
 
 -- create role web noinherit nologin;

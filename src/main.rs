@@ -4,7 +4,7 @@ use axum::{
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Json, Router
 };
-use axum_extra::extract::cookie::{CookieJar, Cookie};
+use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
@@ -41,10 +41,11 @@ struct DeadPoolConfig {
 
 impl DeadPoolConfig {
     pub fn from_env() -> Self {
-        let cfg = config::Config::builder()
+        let config = config::Config::builder()
             .add_source(config::Environment::default().separator("__"))//.keep_prefix(true))
             .build()
             .unwrap();
+        let cfg = config;
 
         cfg.try_deserialize::<Self>().unwrap()
     }
@@ -93,7 +94,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let app = Router::new()
         .route("/login", post(login))
         .route("/query", get(stream_query).post(post_query))
-        .nest_service("/", ServeDir::new("public"))
+        .fallback_service(ServeDir::new("public"))
         .with_state(state)
         // .layer(CompressionLayer::new().br(true)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
@@ -139,11 +140,10 @@ async fn login(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, private_key, anon_role}): State<AppState>,
+    State(AppState {pool, ..}): State<AppState>,
     headers: HeaderMap,
-    cookies: CookieJar,
-    // Query(qs): Query<HashMap<String, String>>,
-    mut query: extract::Query,
+    biscuit: extract::biscuit::Biscuit,
+    mut query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
     dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
@@ -153,23 +153,12 @@ async fn stream_query(
         .start().await
     .map_err(internal_error)?;
 
-    let root = KeyPair::from(&private_key);
-    if let Some(token) = cookies.get("auth") {
-        let biscuit = Biscuit::from_base64(token.value(), root.public()).map_err(internal_error)?;
-
-        let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
-        let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
-
-        tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
-    }
-    else {
-        tx.batch_execute(&format!("set local role {anon_role}")).await.map_err(internal_error)?;
-    }
+    tx.batch_execute(&biscuit.0).await.map_err(internal_error)?;
 
     let sql_params = query.params.iter().map(|param| {
         (param, Type::UNKNOWN)
     });
-    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
     if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect{}, &query.sql) {
         statements.visit(&mut VisitOrderBy(query.order.clone()));
@@ -185,9 +174,8 @@ async fn stream_query(
         return Ok(Redirect::to(&redirect).into_response());
     }
 
-
-    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-        Ok("application/jsonl") => {
+    match headers.get(ACCEPT).map(|h| h.to_str()).transpose() { // @TODO real negotation parsing
+        Ok(Some("application/jsonl")) => {
             Ok((
                 [("content-type", "application/jsonl")],
                 Body::from_stream(
@@ -196,7 +184,7 @@ async fn stream_query(
                 )
             ).into_response())
         }
-        Ok("application/json") => {
+        Ok(Some("application/json")) => {
             Ok(Json(
                 rows.collect::<Vec<String>>().await.join("\n")
             ).into_response())
@@ -211,33 +199,22 @@ async fn stream_query(
 }
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, private_key, anon_role, ..}): State<AppState>,
+    State(AppState {pool, ..}): State<AppState>,
     headers: HeaderMap,
-    cookies: CookieJar,
-    query: extract::Query,
+    biscuit: extract::biscuit::Biscuit,
+    query: extract::query::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-    if let Some(token) = cookies.get("auth") {
-        let root = KeyPair::from(&private_key);
-        let biscuit = Biscuit::from_base64(token.value(), root.public()).map_err(internal_error)?;
-
-        let mut authorizer = biscuit.authorizer().map_err(internal_error)?;
-        let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)").map_err(internal_error)?;
-
-        tx.batch_execute(&sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; ")).await.map_err(internal_error)?;
-    }
-    else {
-        tx.batch_execute(&format!("set local role {anon_role}")).await.map_err(internal_error)?;
-    }
+    tx.batch_execute(&biscuit.0).await.map_err(internal_error)?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), Type::UNKNOWN)
     }).collect();
 
-    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
     let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;//.map_err(query_error);
     let rows: Vec<String> = match result {
@@ -253,26 +230,40 @@ async fn post_query(
             }).collect()
         },
         Err(err) => {
-            dbg!(&err);
             let errors = json!({"error": err.to_string()});
 
             let mut conn = pool.get().await.map_err(internal_error)?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
             tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
-            let rows: Vec<String> = tx.query_typed(query.on_error.unwrap().as_str(), &[]).await.map_err(internal_error)?.iter().map(|row| row.get(0)).collect();
-
-            return Ok((
-                StatusCode::BAD_REQUEST,
-                Html(rows.join(" \n"))
-            ).into_response());
-        },
+            match query.on_error {
+                Some(on_error) => {
+                    let rows: Vec<String> = tx
+                        .query_typed(on_error.as_str(), &[]).await
+                        .map_err(internal_error)?
+                        .iter()
+                        .map(|row| row.get(0))
+                        .collect()
+                    ;
+                    return Ok((
+                        StatusCode::BAD_REQUEST,
+                        Html(rows.join(" \n"))
+                    ).into_response());
+                }
+                _ => {
+                    return Ok((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        err.to_string(),
+                    ).into_response());
+                }
+            }
+        }
     };
 
-    match headers.get(ACCEPT).unwrap().to_str() { // @TODO real negotation parsing
-        Ok("application/json") => {
+    match headers.get(ACCEPT).map(|h| h.to_str()).transpose() { // @TODO real negotation parsing
+        Ok(Some("application/json")) => {
             Ok((
                 [("content-type", "application/json")],
                 Json(rows)

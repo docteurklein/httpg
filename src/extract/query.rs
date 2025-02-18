@@ -1,10 +1,10 @@
 use axum::{
-    async_trait, extract::{FromRequest, Request}, http::{header::{CONTENT_TYPE, REFERER}, Method, StatusCode}, response::{IntoResponse, Response}, Json,
+    extract::{FromRequest, Request}, http::{header::{CONTENT_TYPE, REFERER}, StatusCode}, response::{IntoResponse, Response}, Json,
 };
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
-use std::{borrow::Borrow, collections::BTreeMap};
+use std::collections::BTreeMap;
 
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
@@ -47,7 +47,6 @@ pub struct Query {
 
 impl Query {
     fn new(qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>) -> Self {
-        let serde_qs = Config::new(5, false); // non-strict for browsers
         Self {
             sql: match qs.get("sql") {
                 Some(Param::String(sql)) => sql.to_string(),
@@ -99,7 +98,6 @@ pub enum Param {
     Order(BTreeMap<String, BTreeMap<String, Order>>),
 }
 
-#[async_trait]
 impl<S> FromRequest<S> for Query
 where
     S: Send + Sync,
@@ -114,7 +112,6 @@ where
             Some(qs) => match serde_qs.deserialize_str::<BTreeMap<String, Param>>(qs) {
                 Ok(qs) => Ok(Some(qs)),
                 Err(e) => {
-                    dbg!(&e);
                     Err((StatusCode::BAD_REQUEST, e.to_string()).into_response())
                 }
             }
@@ -153,7 +150,7 @@ mod tests {
     use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
 
     use axum::extract::FromRequest;
-    use crate::extract::Query;
+    use crate::extract::query::Query;
     // use std::collections::HashMap;
 
     #[tokio::test]
