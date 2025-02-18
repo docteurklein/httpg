@@ -65,10 +65,27 @@ immutable parallel safe
 leakproof
 begin atomic
 select format('%s?%s', path, (
+    with new("order") as (
+        select case params->'order'->(params->>'rel')->>(params->>'key')
+            when 'asc' then 'desc'
+            else 'asc'
+        end
+    )
     select string_agg(format('%s=%s', key, url_encode(value)), '&')
-    from jsonb_each_text(params)
+    from new, jsonb_each_text(params - 'order' - 'key' || jsonb_build_object(
+        format('order[%s][%s]', params->>'rel', params->>'key'), new.order
+    ))
 ));
 end;
+
+-- create or replace function url (str text)
+-- create or replace function url(path text, params jsonb = '{}')
+-- immutable strict parallel safe leakproof
+-- returns text
+-- language plv8
+-- as $$
+-- return encodeURIComponent(String(str))
+-- $$;
 
 -- drop function if exists html(text, jsonb, jsonb, jsonb);
 create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
@@ -87,9 +104,7 @@ select xmlelement(name card
     , xmlelement(name pre, jsonb_pretty(query)) -- debug
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (
-            select url('/query', query - 'order' || jsonb_build_object(
-                format('order[%s][%s]', query->>'rel', key), coalesce(not (query->'order'->(query->>'rel')->key)::bool, true)
-            )),
+            select url('/query', query || jsonb_build_object('key', key)),
             key,
             value
             from jsonb_each_text(r)

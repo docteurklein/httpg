@@ -1,5 +1,5 @@
 use axum::{
-    async_trait, extract::{FromRequest, FromRequestParts, Request}, http::{header::{CONTENT_TYPE, REFERER}, Method, StatusCode}, response::{IntoResponse, Response}, Json,
+    async_trait, extract::{FromRequest, Request}, http::{header::{CONTENT_TYPE, REFERER}, Method, StatusCode}, response::{IntoResponse, Response}, Json,
 };
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
@@ -46,8 +46,8 @@ pub struct Query {
 impl Query {
     fn resolve_referer(&mut self, referer: Option<&str>) -> &mut Self {
         self.redirect = match &self.redirect {
-                Some(a) if a == "referer" => referer.map(str::to_string),
-                _ => None,
+            Some(a) if a == "referer" => referer.map(str::to_string),
+            _ => self.redirect.to_owned(),
         };
         self
     }
