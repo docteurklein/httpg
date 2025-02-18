@@ -111,7 +111,7 @@ select xmlelement(name card
         with link (href, field, value) as (
             select url('/query', query->'qs' || jsonb_build_object(
                 'order', jsonb_build_object(
-                    query->'qs'->>'rel', jsonb_build_object(
+                    coalesce(query->'qs'->>'rel', 'r'), jsonb_build_object(
                         key, case query->'qs'->'order'->(query->'qs'->>'rel')->>key
                             when 'asc' then 'desc'
                             else 'asc'
