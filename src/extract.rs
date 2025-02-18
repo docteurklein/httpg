@@ -4,7 +4,24 @@ use axum::{
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
-use std::{collections::{BTreeMap, HashMap}, ops::Deref};
+use std::collections::BTreeMap;
+
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "lowercase")] 
+pub enum Order {
+    Asc,
+    Desc
+}
+
+impl From<Order> for bool {
+    fn from(f: Order) -> bool {
+        match f {
+            Order::Asc => true,
+            Order::Desc => false,
+        }
+    }
+}
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
@@ -17,10 +34,13 @@ pub struct Query {
     pub redirect: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    pub reorder: BTreeMap<String, String>,
+    pub order: BTreeMap<String, BTreeMap<String, Order>>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rel: Option<String>,
 }
 
 impl Query {

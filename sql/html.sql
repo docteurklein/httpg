@@ -58,11 +58,24 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
     where current_role <> 'anon'
 ;
 
+create or replace function url(path text, params jsonb = '{}')
+returns text
+language sql
+immutable parallel safe
+leakproof
+begin atomic
+select format('%s?%s', path, (
+    select string_agg(format('%s=%s', key, url_encode(value)), '&')
+    from jsonb_each_text(params)
+));
+end;
+
 -- drop function if exists html(text, jsonb, jsonb, jsonb);
 create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
 returns text
 language sql
 immutable parallel safe
+leakproof
 begin atomic
 with hypermedia (hypermedia, pkey) as (
     select decorate(fqn, r, pkey, links, query), pkey
@@ -71,14 +84,11 @@ with hypermedia (hypermedia, pkey) as (
 )
 select xmlelement(name card
     , xmlelement(name h3, (select string_agg(r->>value, ' ') from jsonb_array_elements_text(pkey)))
-    , xmlelement(name pre, jsonb_pretty(query))
+    , xmlelement(name pre, jsonb_pretty(query)) -- debug
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (
-            select format('/query?%s', (
-                select string_agg(format('%s=%s', key, url_encode(value)), '&')
-                from jsonb_each_text(query - 'reorder' || jsonb_build_object(
-                    'reorder[]', key
-                ))
+            select url('/query', query - 'order' || jsonb_build_object(
+                format('order[%s][%s]', query->>'rel', key), coalesce(not (query->'order'->(query->>'rel')->key)::bool, true)
             )),
             key,
             value
@@ -156,6 +166,7 @@ grant usage on schema public, pim to web, app, anon;
 grant select on public.rel, public.head to web, app, anon;
 grant select on all tables in schema pim to web, app, anon;
 grant execute on function public.html(text, jsonb, jsonb, jsonb) to web, app, anon;
+grant execute on function public.url(text, jsonb) to web, app, anon;
 grant execute on function public.url_encode(text) to web, app, anon;
 grant execute on function public.decorate(text, jsonb, jsonb, jsonb, jsonb) to web, app, anon;
 

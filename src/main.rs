@@ -13,16 +13,15 @@ use axum_macros::debug_handler;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlparser::{ast::{Expr, Ident, OrderBy, OrderByExpr, Query, SetExpr, TableFactor, TableWithJoins, VisitMut, VisitorMut}, dialect::PostgreSqlDialect, parser::Parser, tokenizer::Location};
+use sql::VisitOrderBy;
+use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 use tokio::fs;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use core::panic;
-use std::{collections::BTreeMap, net::TcpListener, sync::Arc};
-// use tracing::instrument::WithSubscriber;
-use std::ops::ControlFlow;
+use std::{net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
@@ -32,6 +31,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 mod extract;
+mod sql;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DeadPoolConfig {
@@ -171,7 +171,7 @@ async fn stream_query(
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
     if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect{}, &query.sql) {
-        statements.visit(&mut VisitOrderBy(query.reorder.clone()));
+        statements.visit(&mut VisitOrderBy(query.order.clone()));
         query.sql = statements[0].to_string();
         dbg!(&query.sql);
     }
@@ -344,43 +344,3 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerification {
     }
 }
 
-struct VisitOrderBy(BTreeMap<String, String>);
-
-impl VisitorMut for VisitOrderBy {
-  type Break = ();
-
-  fn post_visit_query(&mut self, expr: &mut Query) -> ControlFlow<Self::Break> {
-    if let Query { body, ..} = expr {
-        if let SetExpr::Select(select) = &**body {
-
-            if select.from.iter().any(|from| {
-                match from {
-                    TableWithJoins { relation: TableFactor::Table { alias: Some(alias), .. }, .. } => {
-                        self.0.iter().any(|(rel, _col)| &alias.to_string() == rel )
-                    }
-                    _ => false
-                }
-            }) {
-                expr.order_by = Some(OrderBy {
-                    exprs: self.0.iter()
-                        .map(|reorder| {
-                            OrderByExpr {
-                                expr: Expr::Identifier(Ident {
-                                    value: reorder.1.to_string(),
-                                    quote_style: None,
-                                    span: sqlparser::tokenizer::Span { start: Location {line: 1, column: 1}, end: Location {line: 1, column: 1} }
-                                }),
-                                asc: None,
-                                nulls_first: None,
-                                with_fill: None,
-                            }
-                        })
-                        .collect(),
-                    interpolate: None,
-                })
-            }
-        }
-    }
-    ControlFlow::Continue(())
-  }
-}
