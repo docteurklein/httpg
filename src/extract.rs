@@ -4,7 +4,7 @@ use axum::{
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
-use std::collections::BTreeMap;
+use std::{borrow::Borrow, collections::BTreeMap};
 
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
@@ -23,6 +23,8 @@ impl From<Order> for bool {
     }
 }
 
+// pub struct Orders(BTreeMap<String, BTreeMap<String, Order>>);
+
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
     pub sql: String,
@@ -39,18 +41,62 @@ pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
     #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rel: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub qs: BTreeMap<String, Param>
 }
 
 impl Query {
-    fn resolve_referer(&mut self, referer: Option<&str>) -> &mut Self {
-        self.redirect = match &self.redirect {
-            Some(a) if a == "referer" => referer.map(str::to_string),
-            _ => self.redirect.to_owned(),
-        };
-        self
+    fn new(qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>) -> Self {
+        let serde_qs = Config::new(5, false); // non-strict for browsers
+        Self {
+            sql: match qs.get("sql") {
+                Some(Param::String(sql)) => sql.to_string(),
+                _ => match &body {
+                    Some(Query {sql, ..}) => sql.to_string(),
+                    _ => panic!(),
+                }
+            },
+            params: match qs.get("params") {
+                Some(Param::Vec(params)) => params.to_vec(),
+                _ => match &body {
+                    Some(Query {params, ..}) => params.to_vec(),
+                    _ => vec![],
+                }
+            },
+            redirect: match qs.get("redirect") {
+                Some(Param::String(a)) if a == "referer" => referer.map(str::to_string),
+                Some(Param::String(a)) => Some(a.to_string()),
+                _ => match &body {
+                    Some(Query {redirect: Some(a), ..}) if a == "referer" => referer.map(str::to_string),
+                    Some(Query {redirect: Some(a), ..}) => Some(a.to_string()),
+                    _ => None,
+                }
+            },
+            order: match qs.get("order") {
+                Some(Param::Order(order)) => order.to_owned(),
+                _ => match &body {
+                    Some(Query {order, ..}) => order.to_owned(),
+                    _ => BTreeMap::new(),
+                }
+            },
+            on_error: match qs.get("on_error") {
+                Some(Param::String(on_error)) => Some(on_error.to_string()),
+                _ => match &body {
+                    Some(Query {on_error, ..}) => on_error.to_owned(),
+                    _ => None,
+                }
+            },
+            qs,
+        }
     }
+}
+
+#[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum Param {
+    String(String),
+    Vec(Vec<String>),
+    Order(BTreeMap<String, BTreeMap<String, Order>>),
 }
 
 #[async_trait]
@@ -62,41 +108,43 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let headers = req.headers().clone();
+        let serde_qs = Config::new(5, false); // non-strict for browsers
 
-        let query = match req.method() {
-            &Method::GET | &Method::HEAD | &Method::OPTIONS => {
-                match req.uri().query() {
-                    Some(qs) => Ok(serde_qs::from_str::<Query>(qs).unwrap()),
-                    None => Err(StatusCode::BAD_REQUEST.into_response())
+        let qs = match req.uri().query() {
+            Some(qs) => match serde_qs.deserialize_str::<BTreeMap<String, Param>>(qs) {
+                Ok(qs) => Ok(Some(qs)),
+                Err(e) => {
+                    dbg!(&e);
+                    Err((StatusCode::BAD_REQUEST, e.to_string()).into_response())
                 }
-            },
-            _ => {
-                let content_type_header = headers.get(CONTENT_TYPE);
-                let content_type = content_type_header.and_then(|value| value.to_str().ok());
+            }
+            None => Ok(None),
+        };
+        let qs = qs.unwrap();
 
-                match content_type {
-                    Some(ct) if ct.starts_with("application/json") => {
-                        Ok(Json::<Query>::from_request(req, state)
-                            .await
-                            .or(Err(StatusCode::BAD_REQUEST.into_response()))?.0
-                        )
-                    },
-                    Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
-                        let serde_qs = Config::new(5, false); // non-strict for browsers
-                        serde_qs.deserialize_bytes::<Query>(
-                            &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
-                        )
-                        .or(Err(StatusCode::BAD_REQUEST.into_response()))
-                    },
-                    _ => Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
-                }
+        let content_type_header = headers.get(CONTENT_TYPE);
+        let content_type = content_type_header.and_then(|value| value.to_str().ok());
+
+        let body = match content_type {
+            Some(ct) if ct.starts_with("application/json") => {
+                Ok(Json::<Query>::from_request(req, state)
+                    .await
+                    .or(Err(StatusCode::BAD_REQUEST.into_response()))?.0
+                )
             },
+            Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
+                serde_qs.deserialize_bytes::<Query>(
+                    &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
+                )
+                .or(Err(StatusCode::BAD_REQUEST.into_response()))
+            },
+            _ => Err(StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response())
         };
 
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
-
-        query.map(|mut query| query.resolve_referer(referer).to_owned())
+        
+        Ok(Query::new(qs.unwrap_or(BTreeMap::new()), body.ok(), referer))
     }
 }
 

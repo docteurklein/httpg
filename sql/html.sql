@@ -61,31 +61,36 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
 create or replace function url(path text, params jsonb = '{}')
 returns text
 language sql
-immutable parallel safe
-leakproof
+immutable strict parallel safe leakproof
 begin atomic
 select format('%s?%s', path, (
-    with new("order") as (
-        select case params->'order'->(params->>'rel')->>(params->>'key')
-            when 'asc' then 'desc'
-            else 'asc'
-        end
+    with recursive param(path, value) as (
+        select key, value
+        from jsonb_each(params)
+        union all (
+            with _param as (select * from param)
+            select format('%s[%s]', path, key), c.value
+            from _param, jsonb_each(value) c
+            where _param.value is json object
+            union all
+            select format('%s[]', path), c.value
+            from _param, jsonb_array_elements(value) c
+            where _param.value is json array
+        )
     )
-    select string_agg(format('%s=%s', key, url_encode(value)), '&')
-    from new, jsonb_each_text(params - 'order' - 'key' || jsonb_build_object(
-        format('order[%s][%s]', params->>'rel', params->>'key'), new.order
-    ))
+    select string_agg(format('%s=%s', path, url_encode(value #>> '{}')), '&')
+    from param 
+    where value is json scalar
 ));
 end;
 
--- create or replace function url (str text)
--- create or replace function url(path text, params jsonb = '{}')
--- immutable strict parallel safe leakproof
--- returns text
--- language plv8
--- as $$
--- return encodeURIComponent(String(str))
--- $$;
+create or replace function url_decode (str text)
+returns text
+immutable strict parallel safe leakproof
+language plv8
+as $$
+return decodeURIComponent(String(str))
+$$;
 
 -- drop function if exists html(text, jsonb, jsonb, jsonb);
 create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
@@ -104,7 +109,16 @@ select xmlelement(name card
     , xmlelement(name pre, jsonb_pretty(query)) -- debug
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (
-            select url('/query', query || jsonb_build_object('key', key)),
+            select url('/query', query->'qs' || jsonb_build_object(
+                'order', jsonb_build_object(
+                    query->'qs'->>'rel', jsonb_build_object(
+                        key, case query->'qs'->'order'->(query->'qs'->>'rel')->>key
+                            when 'asc' then 'desc'
+                            else 'asc'
+                        end
+                    )
+                )
+            )),
             key,
             value
             from jsonb_each_text(r)
@@ -113,7 +127,7 @@ select xmlelement(name card
             xmlelement(name li,
                 xmlelement(name form, xmlattributes('POST' as method, '/query' as action),
                     xmlelement(name fieldset, xmlattributes('grid' as class),
-                        xmlelement(name input, xmlattributes('hidden' as type, 'redirect' as name, url_encode(coalesce(query->>'redirect', 'referer')) as value)),
+                        xmlelement(name input, xmlattributes('hidden' as type, 'redirect' as name, coalesce(query->>'redirect', 'referer') as value)),
                         xmlelement(name a, xmlattributes(
                             href as href
                         ), field),

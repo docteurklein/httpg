@@ -1,6 +1,6 @@
 create or replace function url_encode (str text)
-immutable strict parallel safe
 returns text
+immutable strict parallel safe
 language plv8
 as $$
 return encodeURIComponent(String(str))

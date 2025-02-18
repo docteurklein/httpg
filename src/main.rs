@@ -145,6 +145,7 @@ async fn stream_query(
     // Query(qs): Query<HashMap<String, String>>,
     mut query: extract::Query,
 ) -> Result<Response, (StatusCode, String)> {
+    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
         .read_only(true)
@@ -215,6 +216,7 @@ async fn post_query(
     cookies: CookieJar,
     query: extract::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
