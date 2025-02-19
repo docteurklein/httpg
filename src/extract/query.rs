@@ -1,10 +1,13 @@
 use axum::{
-    extract::{FromRequest, Request}, http::{header::{CONTENT_TYPE, REFERER}, StatusCode}, response::{IntoResponse, Response}, Json,
+    extract::{FromRequest, Request}, http::{header::{ACCEPT, CONTENT_TYPE, REFERER}, StatusCode}, response::{IntoResponse, Response}, Json,
 };
 use bytes::Bytes;
 use serde::{Serialize, Deserialize};
 use serde_qs::Config;
+use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 use std::collections::BTreeMap;
+
+use crate::sql::VisitOrderBy;
 
 
 #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
@@ -35,6 +38,9 @@ pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accept: Option<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub order: BTreeMap<String, BTreeMap<String, Order>>,
     #[serde(default)]
@@ -46,15 +52,29 @@ pub struct Query {
 }
 
 impl Query {
-    fn new(qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>) -> Self {
+    fn new(qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>, accept: Option<&str>) -> Self {
+        let mut sql = match qs.get("sql") {
+            Some(Param::String(sql)) => sql.to_string(),
+            _ => match &body {
+                Some(Query {sql, ..}) => sql.to_string(),
+                _ => panic!(),
+            }
+        };
+        let order = match qs.get("order") {
+            Some(Param::Order(order)) => order.to_owned(),
+            _ => match &body {
+                Some(Query {order, ..}) => order.to_owned(),
+                _ => BTreeMap::new(),
+            }
+        };
+        if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect{}, &sql) {
+            statements.visit(&mut VisitOrderBy(order.clone()));
+            sql = statements[0].to_string();
+        }
+
         Self {
-            sql: match qs.get("sql") {
-                Some(Param::String(sql)) => sql.to_string(),
-                _ => match &body {
-                    Some(Query {sql, ..}) => sql.to_string(),
-                    _ => panic!(),
-                }
-            },
+            sql,
+            order,
             params: match qs.get("params") {
                 Some(Param::Vec(params)) => params.to_vec(),
                 _ => match &body {
@@ -71,13 +91,7 @@ impl Query {
                     _ => None,
                 }
             },
-            order: match qs.get("order") {
-                Some(Param::Order(order)) => order.to_owned(),
-                _ => match &body {
-                    Some(Query {order, ..}) => order.to_owned(),
-                    _ => BTreeMap::new(),
-                }
-            },
+            accept: accept.map(str::to_string),
             on_error: match qs.get("on_error") {
                 Some(Param::String(on_error)) => Some(on_error.to_string()),
                 _ => match &body {
@@ -140,8 +154,11 @@ where
 
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
+
+        let accept_header = headers.get(ACCEPT);
+        let accept = accept_header.and_then(|value| value.to_str().ok());
         
-        Ok(Query::new(qs.unwrap_or(BTreeMap::new()), body.ok(), referer))
+        Ok(Query::new(qs.unwrap_or(BTreeMap::new()), body.ok(), referer, accept))
     }
 }
 

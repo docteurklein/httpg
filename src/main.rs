@@ -1,8 +1,8 @@
 use axum::{
     body::{Body, Bytes}, extract::State, http::{
-        header::{HeaderMap, ACCEPT, SET_COOKIE},
+        header::{HeaderMap, SET_COOKIE},
         StatusCode,
-    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Json, Router
+    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
@@ -13,8 +13,6 @@ use axum_macros::debug_handler;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sql::VisitOrderBy;
-use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 use tokio::fs;
 use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
@@ -32,6 +30,7 @@ use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 mod extract;
 mod sql;
+mod response;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DeadPoolConfig {
@@ -50,7 +49,6 @@ impl DeadPoolConfig {
         cfg.try_deserialize::<Self>().unwrap()
     }
 }
-
 
 #[derive(Clone)]
 struct AppState {
@@ -140,12 +138,10 @@ async fn login(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, ..}): State<AppState>,
-    headers: HeaderMap,
-    biscuit: extract::biscuit::Biscuit,
-    mut query: extract::query::Query,
+    State(AppState {pool, anon_role, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
-    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
         .read_only(true)
@@ -153,62 +149,46 @@ async fn stream_query(
         .start().await
     .map_err(internal_error)?;
 
-    tx.batch_execute(&biscuit.0).await.map_err(internal_error)?;
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
 
-    let sql_params = query.params.iter().map(|param| {
+    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
+        tx.batch_execute(&b).await.map_err(internal_error)?;
+    }
+
+   let sql_params = query.params.iter().map(|param| {
         (param, Type::UNKNOWN)
     });
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
-
-    if let Ok(mut statements) = Parser::parse_sql(&PostgreSqlDialect{}, &query.sql) {
-        statements.visit(&mut VisitOrderBy(query.order.clone()));
-        query.sql = statements[0].to_string();
-        dbg!(&query.sql);
-    }
 
     let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
         .map(|row| row.unwrap().get::<usize, String>(0))
     ;
 
-    if let Some(redirect) = query.redirect {
-        return Ok(Redirect::to(&redirect).into_response());
-    }
-
-    match headers.get(ACCEPT).map(|h| h.to_str()).transpose() { // @TODO real negotation parsing
-        Ok(Some("application/jsonl")) => {
-            Ok((
-                [("content-type", "application/jsonl")],
-                Body::from_stream(
-                    rows.map(Bytes::from)
-                    .map(Ok::<_, axum::Error>),
-                )
-            ).into_response())
-        }
-        Ok(Some("application/json")) => {
-            Ok(Json(
-                rows.collect::<Vec<String>>().await.join("\n")
-            ).into_response())
-        }
-        _ => {
-            Ok(Html(Body::from_stream(
+    Ok(response::Result {
+        query,
+        rows: response::Rows::Stream(
+            Body::from_stream(
                 rows.map(|row| Bytes::from(row + "\n"))
                 .map(Ok::<_, axum::Error>),
-            )).into_response())
-        },
-    }
+            )
+        )
+    }.into_response())
+
 }
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, ..}): State<AppState>,
-    headers: HeaderMap,
-    biscuit: extract::biscuit::Biscuit,
+    State(AppState {pool, anon_role, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-    tx.batch_execute(&biscuit.0).await.map_err(internal_error)?;
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
+
+    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
+        tx.batch_execute(&b).await.map_err(internal_error)?;
+    }
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), Type::UNKNOWN)
@@ -262,19 +242,10 @@ async fn post_query(
         }
     };
 
-    match headers.get(ACCEPT).map(|h| h.to_str()).transpose() { // @TODO real negotation parsing
-        Ok(Some("application/json")) => {
-            Ok((
-                [("content-type", "application/json")],
-                Json(rows)
-            ).into_response())
-        }
-        _ => {
-            Ok(Html(
-                rows.into_iter().map(|r| r.to_string()).collect::<Vec<String>>().join(" \n")
-            ).into_response())
-        },
-    }
+    Ok(response::Result {
+        query,
+        rows: response::Rows::Vec(rows)
+    }.into_response())
 }
 
 fn internal_error<E>(err: E) -> (StatusCode, String)
