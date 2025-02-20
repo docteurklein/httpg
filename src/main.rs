@@ -181,6 +181,7 @@ async fn post_query(
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
+    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 

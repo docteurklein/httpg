@@ -96,13 +96,12 @@ $$;
 create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
 returns text
 language sql
-immutable parallel safe
-leakproof
+immutable parallel safe leakproof
 begin atomic
-select xmlconcat(
-    xmlelement(name pre, jsonb_pretty(r)), -- debug
-(with hypermedia (hypermedia, pkey) as (
-    select decorate(fqn, r, pkey, links, query), pkey
+-- select xmlconcat(
+--     xmlelement(name pre, jsonb_pretty(r)), -- debug
+((with hypermedia (hypermedia, pkey, cols) as (
+    select decorate(fqn, r, pkey, links, query), pkey, cols
     from rel
     where fqn = fqn_
 )
@@ -126,9 +125,18 @@ select xmlelement(name card
         )
         select xmlagg(
             xmlelement(name li,
-                xmlelement(name form, xmlattributes('POST' as method, '/query' as action),
+                xmlelement(name form, xmlattributes('POST' as method, format('/query?redirect=%s', coalesce(query->>'redirect', 'referer')) as action),
+                    xmlelement(name details,
+                        xmlelement(name summary, 'sql'),
+                        xmlelement(name textarea, xmlattributes('sql' as name), format(
+                            $sql$update %s set %s = nullif($1, '')::%s where %s$sql$,
+                            fqn_,
+                            field,
+                            hypermedia.cols->(link.field)->>'type',
+                            hypermedia->>'where'
+                        ))
+                    ),
                     xmlelement(name fieldset, xmlattributes('grid' as class),
-                        xmlelement(name input, xmlattributes('hidden' as type, 'redirect' as name, coalesce(query->>'redirect', 'referer') as value)),
                         xmlelement(name a, xmlattributes(
                             href as href
                         ), field),
@@ -155,10 +163,6 @@ select xmlelement(name card
                             from %1$s r
                             where %2$s
                             $sql$, fqn_, hypermedia->>'where', field) as value)),
-                        xmlelement(name details,
-                            xmlelement(name summary, 'sql'),
-                            xmlelement(name textarea, xmlattributes('sql' as name), format('update %s set %s = $1 where %s', fqn_, field, hypermedia->>'where'))
-                        ),
                         xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
                     )
                 )

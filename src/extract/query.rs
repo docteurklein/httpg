@@ -52,7 +52,7 @@ pub struct Query {
 }
 
 impl Query {
-    fn new(qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>, accept: Option<&str>) -> Self {
+    fn new(mut qs: BTreeMap<String, Param>, body: Option<Query>, referer: Option<&str>, accept: Option<&str>) -> Self {
         let mut sql = match qs.get("sql") {
             Some(Param::String(sql)) => sql.to_string(),
             _ => match &body {
@@ -72,6 +72,17 @@ impl Query {
             sql = statements[0].to_string();
         }
 
+        let redirect = match qs.get("redirect") {
+            Some(Param::String(a)) if a == "referer" => referer.map(str::to_string),
+            Some(Param::String(a)) => Some(a.to_string()),
+            _ => match &body {
+                Some(Query {redirect: Some(a), ..}) if a == "referer" => referer.map(str::to_string),
+                Some(Query {redirect: Some(a), ..}) => Some(a.to_string()),
+                _ => None,
+            }
+        };
+        qs.insert("redirect".to_string(), Param::String(redirect.clone().unwrap_or("referer".to_string())));
+
         Self {
             sql,
             order,
@@ -82,15 +93,7 @@ impl Query {
                     _ => vec![],
                 }
             },
-            redirect: match qs.get("redirect") {
-                Some(Param::String(a)) if a == "referer" => referer.map(str::to_string),
-                Some(Param::String(a)) => Some(a.to_string()),
-                _ => match &body {
-                    Some(Query {redirect: Some(a), ..}) if a == "referer" => referer.map(str::to_string),
-                    Some(Query {redirect: Some(a), ..}) => Some(a.to_string()),
-                    _ => None,
-                }
-            },
+            redirect,
             accept: accept.map(str::to_string),
             on_error: match qs.get("on_error") {
                 Some(Param::String(on_error)) => Some(on_error.to_string()),
@@ -157,7 +160,7 @@ where
 
         let accept_header = headers.get(ACCEPT);
         let accept = accept_header.and_then(|value| value.to_str().ok());
-        
+
         Ok(Query::new(qs.unwrap_or(BTreeMap::new()), body.ok(), referer, accept))
     }
 }
