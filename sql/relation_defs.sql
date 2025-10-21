@@ -1,11 +1,3 @@
-create or replace function url_encode (str text)
-returns text
-immutable strict parallel safe
-language plv8
-as $$
-return encodeURIComponent(String(str))
-$$;
-
 -- drop function if exists decorate(text, jsonb, jsonb, jsonb, jsonb);
 create or replace function decorate(rel text, record jsonb, pkey jsonb, links jsonb, qs_ jsonb = '{}')
 returns jsonb 
@@ -37,8 +29,8 @@ begin atomic
         where cardinality(params) = cardinality(fields)
     ),
     where_ (where_) as (
-        select format('(%s) = (%s)', string_agg(quote_ident(value), ', '), string_agg(quote_literal(record->>value), ', '))
-        from jsonb_array_elements_text(pkey)
+        select format('(%s) = (%s)', string_agg(quote_ident(value), ', '), string_agg('$'|| ordinality, ', '))
+        from jsonb_array_elements_text(pkey) with ordinality
     )
     select jsonb_build_object(
         'record', record,
@@ -118,13 +110,21 @@ relation as (
     select r.oid, coalesce(vc.resorigtbl, r.oid) conrelid, n.nspname, r.relname,
     jsonb_object_agg(a.attname, jsonb_build_object(
         'name', a.attname,
-        'type', t.typname,
+        'type', format('%I.%I', tn.nspname, t.typname),
+        'html_type', case lower(t.typname)
+            when 'jsonb' then 'textarea'
+            when 'int8' then 'number'
+            when 'int4' then 'number'
+            when 'bigint' then 'number'
+            else 'text'
+        end,
         'oid', t.oid
     )) cols
     from pg_catalog.pg_class r
     join pg_catalog.pg_namespace n on n.oid = r.relnamespace
     join pg_catalog.pg_attribute a on a.attrelid = r.oid
     join pg_catalog.pg_type t on t.oid = a.atttypid
+    join pg_catalog.pg_namespace tn on tn.oid = t.typnamespace
     left join view_col vc on r.oid in (vc.from, vc.resorigtbl)
     where r.relkind = any(array['v', 'r', 'm', 'f', 'p'])
     and a.attnum > 0
@@ -176,7 +176,7 @@ link as (
     join pg_catalog.pg_namespace rn on rn.oid = rr.relnamespace
     group by 1
 )
-select format('%s.%s', r.nspname, r.relname) fqn,
+select format('%I.%I', r.nspname, r.relname) fqn,
 r.nspname,
 r.relname,
 cols,

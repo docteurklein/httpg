@@ -9,7 +9,6 @@ use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
 
-// use futures::stream::Select;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -18,13 +17,13 @@ use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
-use core::panic;
+use core::{panic};
 use std::{net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
 use tokio_postgres::types::{ToSql, Type};
-use deadpool_postgres::{GenericClient, Pool, Runtime};
+use deadpool_postgres::{Pool, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
@@ -55,6 +54,7 @@ struct AppState {
     pool: Pool,
     anon_role: String,
     private_key: PrivateKey,
+    login_proc: String,
 }
 
 #[tokio::main]
@@ -78,9 +78,11 @@ async fn main() -> Result<(), anyhow::Error> {
     let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?;
 
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
+    let login_proc = env::var("HTTPG_LOGIN_PROC").expect("HTTPG_LOGIN_PROC");
 
     
     let state = AppState {
+        login_proc,
         pool,
         anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
         private_key: PrivateKey::from_bytes(&hex::decode(pkey)?)?,
@@ -118,17 +120,38 @@ async fn main() -> Result<(), anyhow::Error> {
 
 #[debug_handler]
 async fn login(
-    State(AppState {private_key, ..}): State<AppState>,
+    State(AppState {pool, login_proc, anon_role, private_key, ..}): State<AppState>,
     headers: HeaderMap,
+    query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
     let root = KeyPair::from(&private_key);
 
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction()
+        .read_only(true)
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await
+    .map_err(internal_error)?;
+
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
+        (
+            serde_json::to_string(&query).map_err(internal_error)?,
+            Type::TEXT
+        )
+    ])
+    .await
+    .map_err(internal_error)?;
+    dbg!(&query);
+
+    let row = tx.query_opt(&login_proc, &[]).await;
+
     let mut builder = Biscuit::builder();
-    builder
-        .add_fact(fact("sql", &[string("set local role to app; set local \"app.tenant\" to 'tenant#1';")]))
-        .map_err(internal_error)?
-    ;
-    // @TODO challenge!
+    if let Ok(Some(row)) = row {
+        builder
+        .add_fact(fact("sql", &[string(row.get(0))]))
+        .map_err(internal_error)?;
+    }
 
     Ok((
         [(SET_COOKIE, Cookie::new("auth", builder.build(&root).unwrap().to_base64().unwrap()).to_string())],
@@ -142,6 +165,7 @@ async fn stream_query(
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
+    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
         .read_only(true)
@@ -151,17 +175,32 @@ async fn stream_query(
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
 
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
+        (
+            serde_json::to_string(&query).map_err(internal_error)?,
+            Type::TEXT
+        )
+    ])
+    .await
+    .map_err(internal_error)?;
+
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-   let sql_params = query.params.iter().map(|param| {
+    let sql_params = query.params.iter().map(|param| {
         (param, Type::UNKNOWN)
     });
-    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+    dbg!(&query.sql, &sql_params);
 
-    let rows = tx.query_typed_raw(&query.sql, sql_params).await.map_err(internal_error)?
-        .map(|row| row.unwrap().get::<usize, String>(0))
+
+    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?
+        .map(|row|
+            row.map(|row|
+                row.get::<usize, String>(0)
+            )
+            .unwrap_or_else(|e| e.to_string())
+        )
     ;
 
     Ok(response::Result {
@@ -181,13 +220,19 @@ async fn post_query(
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
 
+    tx.query_typed("select set_config('httpg.query', $1, true)", &[
+        (&serde_json::to_string(&query).unwrap(), Type::TEXT)
+    ])
+    .await
+    .map_err(internal_error)?;
+
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
+        dbg!(&b);
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
@@ -195,9 +240,9 @@ async fn post_query(
         (param as &(dyn ToSql + Sync), Type::UNKNOWN)
     }).collect();
 
-    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+    dbg!(&query.sql, sql_params.as_slice());
+    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;
 
-    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;//.map_err(query_error);
     let rows: Vec<String> = match result {
          Ok(rows) => {
             tx.commit().await.map_err(internal_error)?;
@@ -206,23 +251,25 @@ async fn post_query(
                 return Ok(Redirect::to(&redirect).into_response());
             }
 
-             rows.iter().map(|row| {
+            rows.iter().map(|row| {
                 row.get(0)
             }).collect()
         },
         Err(err) => {
+            dbg!(&err);
             let errors = json!({"error": err.to_string()});
 
             let mut conn = pool.get().await.map_err(internal_error)?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query.qs).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
             tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
             match query.on_error {
                 Some(on_error) => {
                     let rows: Vec<String> = tx
-                        .query_typed(on_error.as_str(), &[]).await
+                        .query_typed(on_error.as_str(), &[])
+                        .await
                         .map_err(internal_error)?
                         .iter()
                         .map(|row| row.get(0))

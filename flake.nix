@@ -31,7 +31,7 @@
           pname = "pg_render";
           version = "0.1";
           inherit system;
-          postgresql = pkgs.postgresql_17;
+          postgresql = pkgs.postgresql_18;
 
           src = pkgs.fetchFromGitHub {
             owner = "mkaski";
@@ -69,7 +69,7 @@
 
           # https://devenv.sh/reference/options/
           packages = with pkgs; [
-            postgresql_17
+            postgresql_18
             cargo cargo-watch clippy rustc rust-analyzer openssl.dev pkg-config
             mold clang
             biscuit-cli
@@ -84,7 +84,7 @@
 
           services.postgres = {
             enable = true;
-            package = pkgs.postgresql_17;
+            package = pkgs.postgresql_18;
             initialDatabases = [{
               name = "httpg";
             }];
@@ -97,11 +97,12 @@
               "app.tenant" = "tenant#1";
               "shared_preload_libraries" = "auto_explain";
               "auto_explain.log_min_duration" = "0ms";
-              # "auto_explain.log_nested_statements" = true;
-              "auto_explain.log_timing" = true;
-              "auto_explain.log_analyze" = true;
-              "auto_explain.log_triggers" = true;
-              "log_statement" = "all";
+              "auto_explain.log_nested_statements" = true;
+              # "auto_explain.log_timing" = true;
+              # "auto_explain.log_analyze" = true;
+              # "auto_explain.log_triggers" = true;
+              # "log_statement" = "all";
+              "lc_messages" = "fr_FR.UTF-8";
             };
           };
         };
