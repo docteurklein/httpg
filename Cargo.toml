@@ -9,7 +9,7 @@ debug = 0
 strip = "debuginfo"
 
 [dependencies]
-axum = { version = "^0.8", features = ["http2"] }
+axum = { version = "^0.8", features = ["http2", "multipart"] }
 axum-macros = "^0.5"
 axum-extra = { version = "^0.10", features = ["typed-header", "cookie", "form", "query"] }
 tower = "^0.5"
@@ -39,3 +39,5 @@ serde_qs = "0.13.0"
 bytes = "1.8.0"
 sqlparser = { version = "0.53.0", features = ["visitor"] }
 bunner_qs_rs = "0.1.1"
+cookie = "0.18.1"
+base64 = "0.22.1"

@@ -1,10 +1,10 @@
 use axum::{
-    body::{Body, Bytes}, extract::State, http::{
-        header::{HeaderMap, SET_COOKIE},
+    body::{Body, Bytes}, extract::{DefaultBodyLimit, State}, http::{
+        header::SET_COOKIE,
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
 };
-use axum_extra::extract::cookie::Cookie;
+use axum_extra::extract::cookie::{Cookie, SameSite::Strict};
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
@@ -96,6 +96,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .route("/query", get(stream_query).post(post_query))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
+        .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
         // .layer(CompressionLayer::new().br(true)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
     ;
@@ -121,14 +122,12 @@ async fn main() -> Result<(), anyhow::Error> {
 #[debug_handler]
 async fn login(
     State(AppState {pool, login_proc, anon_role, private_key, ..}): State<AppState>,
-    headers: HeaderMap,
     query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
     let root = KeyPair::from(&private_key);
 
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
-        .read_only(true)
         .isolation_level(IsolationLevel::Serializable)
         .start().await
     .map_err(internal_error)?;
@@ -142,7 +141,6 @@ async fn login(
     ])
     .await
     .map_err(internal_error)?;
-    dbg!(&query);
 
     let row = tx.query_opt(&login_proc, &[]).await;
 
@@ -152,10 +150,17 @@ async fn login(
         .add_fact(fact("sql", &[string(row.get(0))]))
         .map_err(internal_error)?;
     }
+    tx.commit().await.map_err(internal_error)?;
 
     Ok((
-        [(SET_COOKIE, Cookie::new("auth", builder.build(&root).unwrap().to_base64().unwrap()).to_string())],
-        Redirect::to(headers.get("referer").unwrap().to_str().unwrap())
+        [(SET_COOKIE, Cookie::build(("auth", builder.build(&root).unwrap().to_base64().unwrap()))
+            .http_only(true)
+            .secure(true)
+            .same_site(Strict)
+            .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
+            .to_string()
+        )],
+        Redirect::to(&query.redirect.unwrap())
     ).into_response())
 }
 
@@ -165,7 +170,6 @@ async fn stream_query(
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<Response, (StatusCode, String)> {
-    dbg!(&query);
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
         .read_only(true)
@@ -191,8 +195,6 @@ async fn stream_query(
     let sql_params = query.params.iter().map(|param| {
         (param, Type::UNKNOWN)
     });
-    dbg!(&query.sql, &sql_params);
-
 
     let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?
         .map(|row|
@@ -232,7 +234,6 @@ async fn post_query(
     .map_err(internal_error)?;
 
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
-        dbg!(&b);
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
@@ -240,7 +241,6 @@ async fn post_query(
         (param as &(dyn ToSql + Sync), Type::UNKNOWN)
     }).collect();
 
-    dbg!(&query.sql, sql_params.as_slice());
     let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;
 
     let rows: Vec<String> = match result {
@@ -257,7 +257,7 @@ async fn post_query(
         },
         Err(err) => {
             dbg!(&err);
-            let errors = json!({"error": err.to_string()});
+            let errors = json!({"error": &err.as_db_error().unwrap().message()});
 
             let mut conn = pool.get().await.map_err(internal_error)?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;

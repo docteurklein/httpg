@@ -81,27 +81,28 @@
             HTTPG_ANON_ROLE = "florian";
           };
           
-
           services.postgres = {
             enable = true;
             package = pkgs.postgresql_18;
             initialDatabases = [{
               name = "httpg";
             }];
-            extensions = extensions: [
+            extensions = extensions: with extensions; [
               # self'.packages.pg_render
-              extensions.plv8
+              plv8
+              # pg_net
+              pgsql-http
             ];
             settings = {
               # "wal_level" = "logical";
               "app.tenant" = "tenant#1";
               "shared_preload_libraries" = "auto_explain";
-              "auto_explain.log_min_duration" = "0ms";
+              # "auto_explain.log_min_duration" = "0ms";
               "auto_explain.log_nested_statements" = true;
               # "auto_explain.log_timing" = true;
               # "auto_explain.log_analyze" = true;
               # "auto_explain.log_triggers" = true;
-              # "log_statement" = "all";
+              "log_statement" = "all";
               "lc_messages" = "fr_FR.UTF-8";
             };
           };
