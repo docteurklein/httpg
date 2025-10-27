@@ -40,7 +40,10 @@ struct DeadPoolConfig {
 impl DeadPoolConfig {
     pub fn from_env() -> Self {
         let config = config::Config::builder()
-            .add_source(config::Environment::default().separator("__"))//.keep_prefix(true))
+            .add_source(config::Environment::default()
+                // .prefix("PG")
+                .separator("_")
+                .keep_prefix(true))
             .build()
             .unwrap();
         let cfg = config;
@@ -94,6 +97,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let app = Router::new()
         .route("/login", post(login))
         .route("/query", get(stream_query).post(post_query))
+        .route("/upload", post(upload_query))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
@@ -216,8 +220,89 @@ async fn stream_query(
     }.into_response())
 
 }
+
 #[debug_handler]
 async fn post_query(
+    State(AppState {pool, anon_role, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
+
+    tx.query_typed("select set_config('httpg.query', $1, true)", &[
+        (&serde_json::to_string(&query).unwrap(), Type::TEXT)
+    ])
+    .await
+    .map_err(internal_error)?;
+
+    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
+        tx.batch_execute(&b).await.map_err(internal_error)?;
+    }
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), Type::UNKNOWN)
+    }).collect();
+
+    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;
+
+    let rows: Vec<String> = match result {
+         Ok(rows) => {
+            tx.commit().await.map_err(internal_error)?;
+
+            if let Some(redirect) = query.redirect {
+                return Ok(Redirect::to(&redirect).into_response());
+            }
+
+            rows.iter().map(|row| {
+                row.get(0)
+            }).collect()
+        },
+        Err(err) => {
+            dbg!(&err);
+            let errors = json!({"error": &err.as_db_error().unwrap().message()});
+
+            let mut conn = pool.get().await.map_err(internal_error)?;
+            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+
+            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+            tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+
+            match query.on_error {
+                Some(on_error) => {
+                    let rows: Vec<String> = tx
+                        .query_typed(on_error.as_str(), &[])
+                        .await
+                        .map_err(internal_error)?
+                        .iter()
+                        .map(|row| row.get(0))
+                        .collect()
+                    ;
+                    return Ok((
+                        StatusCode::BAD_REQUEST,
+                        Html(rows.join(" \n"))
+                    ).into_response());
+                }
+                _ => {
+                    return Ok((
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        err.to_string(),
+                    ).into_response());
+                }
+            }
+        }
+    };
+
+    Ok(response::Result {
+        query,
+        rows: response::Rows::Vec(rows)
+    }.into_response())
+}
+
+#[debug_handler]
+async fn upload_query(
     State(AppState {pool, anon_role, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,

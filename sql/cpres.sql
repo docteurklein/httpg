@@ -410,7 +410,6 @@ as select xmlelement(name div,
 from interest
 join person receiver using (person_id)
 join good using (good_id)
--- left join message using (good_id, person_id)
 where giver = current_person_id()
 or interest.person_id = current_person_id()
 order by (select max(at) from message where message.good_id = interest.good_id and message.person_id = interest.person_id) desc, interest.at desc;
@@ -528,6 +527,7 @@ select $html$<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
 </head>
 <body>
@@ -585,8 +585,8 @@ insert into person (person_id, name, email, location, login_challenge) values
     (uuidv7(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', uuidv4());
 
 insert into good (title, description, location, giver, medias)
-select format('good %s %s', name, i), format('good %s %s', name, i), format('(%s, %s)', random(44.000, 49.000), random(2.500, 5.800))::point, person_id, array[format('https://lipsum.app/id/%s/800x900', i)]
-from generate_series(1, 10) i, person
+select format('good %s %s', name, i), format('good %s %s', name, i), format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point, person_id, array[format('https://lipsum.app/id/%s/800x900', i)]
+from generate_series(1, 100) i, person
 where name <> 'p3';
 
 insert into interest (good_id, person_id, price)

@@ -35,8 +35,6 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub body: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub files: BTreeMap<String, String>,
 }
 

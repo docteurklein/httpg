@@ -24,11 +24,13 @@ Select queries are run in read-only transactions (and rollbacked once done, even
 ```
 nix develop --impure -c $SHELL
 
+generate keypair: https://doc.biscuitsec.org/usage/command-line.html
+export HTTPG_PRIVATE_KEY=private-key-file
+
 devenv up --tui=false
 
-HTTPG_SCHEMA=public \
-HTTPG_ANON_ROLE=florian \
-HTTPG_CONN="" \
+export PG_DATABASE=httpg
+export PG_HOST=$PGHOST
 cargo run
 ```
 
