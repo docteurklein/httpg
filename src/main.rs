@@ -322,13 +322,43 @@ async fn upload_query(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), Type::UNKNOWN)
-    }).collect();
+    // let sql_params: Vec<&(dyn ToSql + Sync)> = query.files.iter()
+    //     .map(|v| v.name)
+    //     // .flat_map(|v| vec![
+    //     //     // &v.content,
+    //     //     // (file.content_type, Type::TEXT),
+    //     // ])
+    //     // .map(|p| p as &(dyn ToSql + Sync))
+    //     // .flat_map(|file| {
+    //     //     // let content = file.content.to_vec();
+    //     //     let content = "".to_string();
+    //     //     &[
+    //     //         (content, Type::TEXT),
+    //     //         // (file.content_type, Type::TEXT),
+    //     //     ]
+    //     // })
+    //     .collect()
+    // ;
+    let sql_params: Vec<(_, Type)> = query.files.iter()
+        .map(|file| (file.content.as_ref(), Type::BYTEA))
+        // .flat_map(|v| {
+        //     let mut vec: Vec<(&(dyn ToSql + Sync), Type)> = Vec::new();
+        //     vec.push((&v.content.to_owned().as_ref(), Type::BYTEA));
+        //     vec.push((&v.file_name.to_owned(), Type::UNKNOWN));
+        //     vec
+        // })
+        // .flat_map(|param| {
+        // &[
+        //     // (&param.content.to_vec(), Type::BYTEA),
+        //     (&param.file_name, Type::TEXT),
+        //     // (&param.test, Type::INT8),
+        //     (&param.content_type, Type::TEXT),
+        // ]
+    .collect();
 
-    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;
+    let result = tx.query_typed_raw(&query.sql, sql_params).await;
 
-    let rows: Vec<String> = match result {
+    let rows = match result {
          Ok(rows) => {
             tx.commit().await.map_err(internal_error)?;
 
@@ -336,9 +366,20 @@ async fn upload_query(
                 return Ok(Redirect::to(&redirect).into_response());
             }
 
-            rows.iter().map(|row| {
-                row.get(0)
-            }).collect()
+            let rows = rows.map(|row|
+                    row.map(|row|
+                        row.get::<usize, String>(0)
+                    )
+                    .unwrap_or_else(|e| e.to_string())
+                )
+            ;
+
+            response::Rows::Stream(
+                Body::from_stream(
+                    rows.map(|row| Bytes::from(row + "\n"))
+                    .map(Ok::<_, axum::Error>),
+                )
+            )
         },
         Err(err) => {
             dbg!(&err);
@@ -377,7 +418,7 @@ async fn upload_query(
 
     Ok(response::Result {
         query,
-        rows: response::Rows::Vec(rows)
+        rows,
     }.into_response())
 }
 

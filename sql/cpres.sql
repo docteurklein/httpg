@@ -50,7 +50,6 @@ create table good (
     title text not null check (title <> ''),
     description text not null,
     tags text[] not null default '{}',
-    medias text[] not null default '{}',
     location point not null,
     giver uuid not null default current_person_id()
         references person (person_id)
@@ -69,13 +68,34 @@ for each row
 execute procedure moddatetime (updated_at);
 
 grant select, delete,
-    insert(good_id, title, description, tags, medias, location, given_to, given_at),
-    update(good_id, title, description, tags, medias, location, given_to, given_at)
+    insert(good_id, title, description, tags, location, given_to, given_at),
+    update(good_id, title, description, tags, location, given_to, given_at)
 on table good to person;
 
 alter table good enable row level security;
 create policy "owner" on good for all to person using (true) with check (
     giver = current_person_id()
+);
+
+create table good_media (
+    content_hash bytea primary key generated always as (sha256(content)) stored,
+    good_id uuid not null references good (good_id) on delete cascade,
+    content bytea not null,
+    content_type text not null,
+    name text not null
+);
+
+grant select, insert, delete, update on table good_media to person;
+
+alter table good_media enable row level security;
+create policy "owner" on good_media for all to person
+using (true)
+with check (
+    exists (
+        select from good
+        where good.giver = current_person_id()
+        and good.good_id = good_media.good_id
+    )
 );
 
 create function geojson(point point, props jsonb = '{}') returns jsonb
@@ -186,11 +206,15 @@ select geojson(base.location, jsonb_build_object(
         ),
         xmlelement(name div, format('by %s', giver.name)),
         xmlelement(name div, format('distance %s km', round(bird_distance_km::numeric, 2))),
-        (select xmlagg(
-            xmlelement(name a, xmlattributes(media as href),
-                xmlelement(name img, xmlattributes(media as src))
+        (
+            select xmlagg(
+                xmlelement(name a, xmlattributes(name as href),
+                    xmlelement(name img, xmlattributes(name as src))
+                )
             )
-        ) from unnest(medias) media)
+            from good_media
+            where good_id = base.good_id
+        )
     ),
     'bird_distance_km', bird_distance_km
 )) geojson
@@ -281,7 +305,7 @@ xmlconcat(
     ),
     (
         select xmlagg(xmlconcat(
-            xmlelement(name img, xmlattributes(value as src, 'lazy' as loading)),
+            xmlelement(name img, xmlattributes(content_hash as src, 'lazy' as loading)),
             xmlelement(name form, xmlattributes(
                 'POST' as method,
                 '/query' as action
@@ -294,15 +318,14 @@ xmlconcat(
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'params[]' as name,
-                     value
+                     encode(content_hash, 'base64') as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'sql' as name,
                     format($$
-                        update cpres.good
-                        set medias = array_remove(medias, $1)
-                        where good_id = %L
+                        delete from cpres.good_media
+                        where content_hash = decode($1::text, 'base64')
                     $$, good_id) as value
                 )),
                 xmlelement(name input, xmlattributes(
@@ -311,11 +334,12 @@ xmlconcat(
                 ))
             )
         ))
-        from unnest(medias) as _(value)
+        from good_media
+        where good_id = good.good_id
     ),
     xmlelement(name form, xmlattributes(
         'POST' as method,
-        '/query' as action,
+        '/upload' as action,
         'multipart/form-data' as enctype
     ),
         xmlelement(name input, xmlattributes(
@@ -327,16 +351,7 @@ xmlconcat(
             'hidden' as type,
             'sql' as name,
             format($$
-                with upload (upload) as (
-                    select array_agg('data:image/svg+xml;base64,' || value)
-                    from jsonb_each_text(
-                        current_setting('httpg.query')::jsonb->'files'
-                    )
-                )
-                update cpres.good
-                set medias = medias || upload
-                from upload
-                where good_id = %L
+                insert into cpres.good_media (good_id, name, content, content_type) values (%L, 'test', $1, 'test')
             $$, good_id) as value
         )),
         xmlelement(name input, xmlattributes(
@@ -584,8 +599,12 @@ insert into person (person_id, name, email, location, login_challenge) values
     (uuidv7(), 'p2', 'p2@example.org', '(56.073448, 2.666524)', uuidv4()),
     (uuidv7(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', uuidv4());
 
-insert into good (title, description, location, giver, medias)
-select format('good %s %s', name, i), format('good %s %s', name, i), format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point, person_id, array[format('https://lipsum.app/id/%s/800x900', i)]
+insert into good (title, description, location, giver)
+select
+    format('good %s %s', name, i),
+    format('good %s %s', name, i),
+    format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
+    person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
 from generate_series(1, 100) i, person
 where name <> 'p3';
 

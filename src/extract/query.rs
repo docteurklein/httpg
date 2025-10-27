@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    extract::{FromRequest, Multipart, Request}, http::{header::{ACCEPT, CONTENT_TYPE, REFERER}, StatusCode}, response::{IntoResponse, Response}, Json,
+    extract::{multipart::Field, FromRequest, Multipart, Request}, http::{header::{ACCEPT, CONTENT_TYPE, REFERER}, StatusCode}, response::{IntoResponse, Response}, Json,
 };
 use base64::{prelude::BASE64_STANDARD, Engine};
 use bytes::Bytes;
@@ -10,6 +10,13 @@ use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 
 use crate::sql::VisitOrderBy;
 
+
+#[derive(Debug, Default, PartialEq, Clone)]
+pub struct File {
+    pub content: Bytes,
+    pub content_type: String,
+    pub file_name: String,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
@@ -35,11 +42,12 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub body: serde_json::Map<String, serde_json::Value>,
-    pub files: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub files: Vec<File>,
 }
 
 impl Query {
-    fn new(qs: serde_json::Map<String, serde_json::Value>, body: serde_json::Map<String, serde_json::Value>, files: BTreeMap<String, Bytes>, referer: Option<&str>, accept: Option<&str>) -> Self {
+    fn new(qs: serde_json::Map<String, serde_json::Value>, body: serde_json::Map<String, serde_json::Value>, files: Vec<File>, referer: Option<&str>, accept: Option<&str>) -> Self {
         let order = match qs.get("order") {
             Some(serde_json::Value::Object(order)) => Some(order.to_owned()),
             _ => match &body.get("order") {
@@ -100,7 +108,7 @@ impl Query {
             accept: accept.map(str::to_string),
             qs,
             body,
-            files: files.iter().map(|(name, bytes)| {(name.to_string(), BASE64_STANDARD.encode(bytes))}).collect(),
+            files, //: files.iter().map(|(name, bytes)| {(name.to_string(), BASE64_STANDARD.encode(bytes))}).collect(),
             on_error,
         }
     }
@@ -129,13 +137,13 @@ where
         let content_type_header = headers.get(CONTENT_TYPE);
         let content_type = content_type_header.and_then(|value| value.to_str().ok());
 
-        let (body, files): (serde_json::Map<String, serde_json::Value>, BTreeMap<String, Bytes>) = match content_type {
+        let (body, files): (serde_json::Map<String, serde_json::Value>, Vec<File>) = match content_type {
             Some(ct) if ct.starts_with("application/json") => {
                 (
                     Json::<serde_json::Map<String, serde_json::Value>>::from_request(req, state)
                         .await
                         .or(Err(StatusCode::BAD_REQUEST.into_response()))?.0,
-                    BTreeMap::new()
+                    vec![]
                 )
 
             },
@@ -144,32 +152,33 @@ where
                     serde_qs.deserialize_bytes::<serde_json::Map<String, serde_json::Value>>(
                         &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
                     ).unwrap(),
-                    BTreeMap::new()
+                    vec![]
                 )
             },
             Some(ct) if ct.starts_with("multipart/form-data") => {
                 let mut body = serde_json::Map::new();
-                let mut files: BTreeMap<String, Bytes> = BTreeMap::new();
+                let mut files: Vec<File> = vec![];
                 let mut multipart = Multipart::from_request(req, state)
                     .await
                     .or(Err(StatusCode::BAD_REQUEST.into_response()))?
                 ;
+
                 while let Some(field) = multipart.next_field().await.unwrap() {
-                    match field.file_name() {
-                        Some(filename) => {
-                            files.insert(filename.to_string(), field.bytes().await.unwrap());
-                        },
-                        None => {
-                            let name = field.name().unwrap().to_string();
-                            body.insert(name, serde_json::json!(field.text().await.unwrap()));
-                        },
-                    };
+                    if field.file_name().is_some() {
+                        // let name = field.name().unwrap().to_string();
+                        let file_name = field.file_name().unwrap().to_string();
+                        let content_type = field.content_type().unwrap().to_string();
+                        let content = field.bytes().await.unwrap();
+                        files.push(File { content, content_type, file_name });
+                    } else {
+                        body.insert(field.name().unwrap().to_string(), serde_json::json!(&field.text().await.unwrap()));
+                    }
 
                 }
                 (body, files)
                 
             },
-            _ => (serde_json::Map::new(), BTreeMap::new())
+            _ => (serde_json::Map::new(), vec![])
         };
 
         let referer_header = headers.get(REFERER);
