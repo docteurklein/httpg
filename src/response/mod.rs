@@ -1,15 +1,49 @@
-use axum::{body::Body, response::{Html, IntoResponse, Redirect, Response}};
+
+use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{IntoResponse, Redirect, Response}};
+use bytes::Bytes;
+use serde::{Deserialize, Serialize};
+use tokio_postgres::RowStream;
+use tokio_stream::StreamExt;
 
 use crate::extract::query::Query;
 
 pub enum Rows {
-    Stream(Body),
-    Vec(Vec<String>),
+    Stream(RowStream),
+    // Vec(Vec<Row>),
+    Raw(Vec<Raw>),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Raw {
+    Status(u16),
+    Header(String, String),
+    Body(String),
 }
 
 pub struct Result {
     pub query: Query,
     pub rows: Rows,
+}
+
+fn from_raw(rows: Vec<Raw>) -> Response {
+    let mut builder = Response::builder();
+    let mut body = "".to_string();
+    for row in rows.iter() {
+        match row {
+            Raw::Status(status) => {
+                builder = builder.status(StatusCode::from_u16(status.to_owned()).unwrap());
+            },
+            Raw::Header(k, v) => {
+                builder = builder.header(HeaderName::from_bytes(k.as_bytes()).unwrap(), HeaderValue::from_str(v).unwrap());
+            },
+            Raw::Body(content) => {
+                body.push('\n');
+                body.push_str(content);
+            }
+        }
+    }
+    builder.body(Body::from(body)).unwrap()
 }
 
 impl IntoResponse for Result {
@@ -20,19 +54,54 @@ impl IntoResponse for Result {
         match self.query.accept { // @TODO real negotation parsing
             Some(a) if a == "application/json" => {
                 match self.rows {
-                    Rows::Stream(rows) =>  ([("content-type", "application/json")], rows).into_response(),
-                    Rows::Vec(rows) => Html(
-                        rows.into_iter().map(|r| r.to_string()).collect::<Vec<String>>().join(" \n")
-                    ).into_response()
+                    Rows::Stream(rows) =>  (
+                        [("content-type", "application/json")],
+                        Body::from_stream(rows
+                            .map(|row| Bytes::from(row.unwrap().get::<usize, String>(0) + "\n"))
+                            .map(Ok::<_, axum::Error>)
+                        ),
+                    ).into_response(),
+                    Rows::Raw(rows) => {
+                        from_raw(rows)
+                    }
                 }
-                    
+            },
+            Some(a) if a.starts_with("text/html") => {
+                match self.rows {
+                    Rows::Stream(rows) => (
+                        [("content-type", "text/html; charset=utf-8")],
+                        Body::from_stream(rows.map(move |row|
+                            // match self.query.out_type {
+                            //     crate::extract::query::Type::Text =>
+                                    Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
+                            //     ,
+                            //     crate::extract::query::Type::Bytea => {
+                            //         Bytes::from(row.unwrap().get::<usize, Vec<u8>>(0))
+                            //     },
+                            //     crate::extract::query::Type::Jsonb => todo!(),
+                            //     crate::extract::query::Type::Unknown => todo!(),
+                            // })
+                            )
+                            .map(Ok::<_, axum::Error>)
+                        ),
+                    ).into_response(),
+                    Rows::Raw(rows) => {
+                        from_raw(rows)
+                    }
+                }
             },
             _ => {
                 match self.rows {
-                    Rows::Stream(rows) => Html(rows).into_response(),
-                    Rows::Vec(rows) => Html(
-                        rows.into_iter().map(|r| r.to_string()).collect::<Vec<String>>().join(" \n")
+                    Rows::Stream(rows) => (
+                        [("content-type", self.query.content_type)],
+                        Body::from_stream(rows
+                            .map(|row| row.unwrap().get::<usize, Vec<u8>>(0))
+                            .map(Ok::<_, axum::Error>)
+                        ),
                     ).into_response(),
+                    Rows::Raw(rows) => {
+                        from_raw(rows)
+                    }
                 }
             },
         }

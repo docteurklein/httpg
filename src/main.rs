@@ -1,5 +1,5 @@
 use axum::{
-    body::{Body, Bytes}, extract::{DefaultBodyLimit, State}, http::{
+    extract::{DefaultBodyLimit, State}, http::{
         header::SET_COOKIE,
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
@@ -13,7 +13,6 @@ use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs;
-use tokio_stream::StreamExt;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
@@ -26,6 +25,8 @@ use tokio_postgres::types::{ToSql, Type};
 use deadpool_postgres::{Pool, Runtime};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
+
+use crate::response::Raw;
 
 mod extract;
 mod sql;
@@ -98,6 +99,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .route("/login", post(login))
         .route("/query", get(stream_query).post(post_query))
         .route("/upload", post(upload_query))
+        .route("/raw", get(raw_http).post(raw_http))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
@@ -127,7 +129,7 @@ async fn main() -> Result<(), anyhow::Error> {
 async fn login(
     State(AppState {pool, login_proc, anon_role, private_key, ..}): State<AppState>,
     query: extract::query::Query,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<Response, Response> {
     let root = KeyPair::from(&private_key);
 
     let mut conn = pool.get().await.map_err(internal_error)?;
@@ -173,7 +175,7 @@ async fn stream_query(
     State(AppState {pool, anon_role, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<Response, (StatusCode, String)> {
+) -> Result<Response, Response> {
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
         .read_only(true)
@@ -196,27 +198,17 @@ async fn stream_query(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params = query.params.iter().map(|param| {
-        (param, Type::UNKNOWN)
-    });
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param, param.to_owned().into())
+    }).collect();
+    dbg!(&sql_params);
 
-    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?
-        .map(|row|
-            row.map(|row|
-                row.get::<usize, String>(0)
-            )
-            .unwrap_or_else(|e| e.to_string())
-        )
-    ;
+    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
 
     Ok(response::Result {
-        query,
-        rows: response::Rows::Stream(
-            Body::from_stream(
-                rows.map(|row| Bytes::from(row + "\n"))
-                .map(Ok::<_, axum::Error>),
-            )
-        )
+        query: query.clone(),
+        rows: response::Rows::Stream(rows)
+        
     }.into_response())
 
 }
@@ -226,7 +218,7 @@ async fn post_query(
     State(AppState {pool, anon_role, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, Response> {
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
@@ -243,12 +235,12 @@ async fn post_query(
     }
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), Type::UNKNOWN)
+        (param, param.to_owned().into())
     }).collect();
 
-    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await;
+    let result = tx.query_typed_raw(&query.sql, sql_params).await;
 
-    let rows: Vec<String> = match result {
+    let rows = match result {
          Ok(rows) => {
             tx.commit().await.map_err(internal_error)?;
 
@@ -256,9 +248,7 @@ async fn post_query(
                 return Ok(Redirect::to(&redirect).into_response());
             }
 
-            rows.iter().map(|row| {
-                row.get(0)
-            }).collect()
+            rows
         },
         Err(err) => {
             dbg!(&err);
@@ -297,7 +287,7 @@ async fn post_query(
 
     Ok(response::Result {
         query,
-        rows: response::Rows::Vec(rows)
+        rows: response::Rows::Stream(rows)
     }.into_response())
 }
 
@@ -306,7 +296,7 @@ async fn upload_query(
     State(AppState {pool, anon_role, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
+) -> Result<impl IntoResponse, Response> {
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
@@ -322,38 +312,8 @@ async fn upload_query(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    // let sql_params: Vec<&(dyn ToSql + Sync)> = query.files.iter()
-    //     .map(|v| v.name)
-    //     // .flat_map(|v| vec![
-    //     //     // &v.content,
-    //     //     // (file.content_type, Type::TEXT),
-    //     // ])
-    //     // .map(|p| p as &(dyn ToSql + Sync))
-    //     // .flat_map(|file| {
-    //     //     // let content = file.content.to_vec();
-    //     //     let content = "".to_string();
-    //     //     &[
-    //     //         (content, Type::TEXT),
-    //     //         // (file.content_type, Type::TEXT),
-    //     //     ]
-    //     // })
-    //     .collect()
-    // ;
     let sql_params: Vec<(_, Type)> = query.files.iter()
         .map(|file| (file.content.as_ref(), Type::BYTEA))
-        // .flat_map(|v| {
-        //     let mut vec: Vec<(&(dyn ToSql + Sync), Type)> = Vec::new();
-        //     vec.push((&v.content.to_owned().as_ref(), Type::BYTEA));
-        //     vec.push((&v.file_name.to_owned(), Type::UNKNOWN));
-        //     vec
-        // })
-        // .flat_map(|param| {
-        // &[
-        //     // (&param.content.to_vec(), Type::BYTEA),
-        //     (&param.file_name, Type::TEXT),
-        //     // (&param.test, Type::INT8),
-        //     (&param.content_type, Type::TEXT),
-        // ]
     .collect();
 
     let result = tx.query_typed_raw(&query.sql, sql_params).await;
@@ -366,20 +326,7 @@ async fn upload_query(
                 return Ok(Redirect::to(&redirect).into_response());
             }
 
-            let rows = rows.map(|row|
-                    row.map(|row|
-                        row.get::<usize, String>(0)
-                    )
-                    .unwrap_or_else(|e| e.to_string())
-                )
-            ;
-
-            response::Rows::Stream(
-                Body::from_stream(
-                    rows.map(|row| Bytes::from(row + "\n"))
-                    .map(Ok::<_, axum::Error>),
-                )
-            )
+            response::Rows::Stream(rows)
         },
         Err(err) => {
             dbg!(&err);
@@ -422,7 +369,46 @@ async fn upload_query(
     }.into_response())
 }
 
-fn internal_error<E>(err: E) -> (StatusCode, String)
+#[debug_handler]
+async fn raw_http(
+    State(AppState {pool, anon_role, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    query: extract::query::Query,
+) -> Result<Response, Response> {
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
+
+    tx.query_typed("select set_config('httpg.query', $1, true)", &[
+        (&serde_json::to_string(&query).unwrap(), Type::TEXT)
+    ])
+    .await
+    .map_err(internal_error)?;
+
+    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
+        tx.batch_execute(&b).await.map_err(internal_error)?;
+    }
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().enumerate().map(|(_i, param)| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())//query.types.get(i).unwrap_or(&crate::extract::query::Type::Unknown).to_owned().into())
+    }).collect();
+
+    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?;
+
+    tx.commit().await.map_err(internal_error)?;
+
+    Ok(response::Result {
+        query,
+        rows: response::Rows::Raw(result.iter()
+            .map(|row| serde_json::from_str::<Raw>(row.get::<usize, String>(0).as_str()).unwrap())
+            .collect()
+        )
+    }.into_response())
+}
+
+
+fn internal_error<E>(err: E) -> Response
 where
     E: std::error::Error,
 {
@@ -430,7 +416,7 @@ where
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         err.to_string(),
-    )
+    ).into_response()
 }
 
 #[derive(Debug)]

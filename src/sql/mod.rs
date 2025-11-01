@@ -1,9 +1,9 @@
 use sqlparser::{ast::{Expr, Ident, OrderBy, OrderByExpr, Query, SetExpr, TableFactor, TableWithJoins, VisitorMut}, tokenizer::Location};
-use std::ops::ControlFlow;
+use std::{collections::BTreeMap, ops::{ControlFlow, Not}};
 
 // use crate::extract::query::Order;
 
-pub struct VisitOrderBy(pub serde_json::Map<String, serde_json::Value>);
+pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
 
 impl VisitorMut for VisitOrderBy {
   type Break = ();
@@ -50,7 +50,7 @@ impl VisitOrderBy {
                             quote_style: None,
                             span: sqlparser::tokenizer::Span { start: Location {line: 1, column: 1}, end: Location {line: 1, column: 1} }
                         }),
-                        asc: Some(!matches!(asc.as_str(), Some("desc"))),
+                        asc: Some(matches!(asc.as_str(), Some("desc")).not()),
                         nulls_first: None,
                         with_fill: None,
                     }

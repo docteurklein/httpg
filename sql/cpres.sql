@@ -162,7 +162,7 @@ using (
 )
 with check (author = current_person_id());
 
-create view nearby
+create view nearby (geojson)
 with (security_invoker)
 as with base as (
     select good.*, interest,
@@ -207,13 +207,20 @@ select geojson(base.location, jsonb_build_object(
         xmlelement(name div, format('by %s', giver.name)),
         xmlelement(name div, format('distance %s km', round(bird_distance_km::numeric, 2))),
         (
+            with url (url) as (
+                select url('/raw', jsonb_build_object(
+                    'sql', format($$values (jsonb_build_object('header', array['content-type', %L])) union all select content::text from cpres.good_media where content_hash = $1 $$, content_type),
+                    'params[]', content_hash
+                ))
+                from good_media
+                where good_id = base.good_id
+            )
             select xmlagg(
-                xmlelement(name a, xmlattributes(name as href),
-                    xmlelement(name img, xmlattributes(name as src))
+                xmlelement(name a, xmlattributes(url as href),
+                    xmlelement(name img, xmlattributes(url as src))
                 )
             )
-            from good_media
-            where good_id = base.good_id
+            from url
         )
     ),
     'bird_distance_km', bird_distance_km
@@ -285,7 +292,7 @@ end;
 alter function good_form owner to person;
 grant execute on function good_form to person;
 
-create view "my goods"
+create view "my goods" (html)
 with (security_invoker)
 as
 select xmlelement(name div, xmlattributes('new' as class),
@@ -305,7 +312,22 @@ xmlconcat(
     ),
     (
         select xmlagg(xmlconcat(
-            xmlelement(name img, xmlattributes(content_hash as src, 'lazy' as loading)),
+            (
+                with url (url) as (
+                    select url('/query', jsonb_build_object(
+                        'sql', format($$select content from cpres.good_media where content_hash = $1::text::bytea $$, content_type),
+                        'params[]', content_hash
+                    ))
+                    from good_media
+                    where good_id = good.good_id
+                )
+                select xmlagg(
+                    xmlelement(name a, xmlattributes(url as href),
+                        xmlelement(name img, xmlattributes(url as src))
+                    )
+                )
+                from url
+            ),
             xmlelement(name form, xmlattributes(
                 'POST' as method,
                 '/query' as action
@@ -535,7 +557,7 @@ end;
 alter function login owner to florian;
 grant execute on function login to person;
 
-create view head as
+create view head (html) as
 select $html$<!DOCTYPE html>
 <html>
 <head>
@@ -582,7 +604,7 @@ union all select xmlelement(name div,
 ;
 grant select on table head to person;
 
-create view map as
+create view map (html) as
 select $html$
   </main>
   <div id="map"></div>
