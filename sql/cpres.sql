@@ -162,6 +162,29 @@ using (
 )
 with check (author = current_person_id());
 
+create table search (
+    person_id uuid not null default current_person_id(),
+    terms text not null,
+    tags text[] not null default '{}',
+    primary key (person_id, terms, tags)
+);
+
+create trigger compare_search
+after update on good
+for each row
+execute procedure compare_search();
+
+create function compare_search() returns trigger
+as $$
+begin
+    insert into interest (good_id, person_id)
+    select new.good_id, person_id
+    from search
+    where (new.title <-> search.terms) > 0.8
+    or new.tags && search.tags
+end;
+$$ language plpgsl;
+
 create view nearby (geojson)
 with (security_invoker)
 as with base as (
