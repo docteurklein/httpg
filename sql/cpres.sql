@@ -14,6 +14,9 @@ grant execute on all functions in schema pg_catalog to person;
 create extension if not exists cube;
 create extension if not exists earthdistance;
 create extension if not exists moddatetime;
+create extension if not exists rag cascade;
+create extension if not exists rag_bge_small_en_v15 cascade; 
+create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
 create function current_person_id() returns uuid
 immutable strict parallel safe
@@ -49,6 +52,7 @@ create table good (
     good_id uuid primary key default uuidv7(),
     title text not null check (title <> ''),
     description text not null,
+    embedding vector(384) generated always as (rag_bge_small_en_v15.embedding_for_passage(title || ': ' || description)) stored,
     tags text[] not null default '{}',
     location point not null,
     giver uuid not null default current_person_id()
@@ -61,6 +65,8 @@ create table good (
     updated_at timestamptz default null,
     given_at timestamptz default null
 );
+
+create index on good using hnsw (embedding vector_cosine_ops);
 
 create trigger updated_at
 before update on good
@@ -164,7 +170,8 @@ with check (author = current_person_id());
 
 create table search (
     person_id uuid not null default current_person_id(),
-    terms text not null,
+    query text not null,
+    embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_query(query)) stored,
     tags text[] not null default '{}',
     primary key (person_id, terms, tags)
 );
@@ -177,11 +184,17 @@ execute procedure compare_search();
 create function compare_search() returns trigger
 as $$
 begin
+    with result as (
+        select new.good_id, person_id,
+            (new.title <=> search.terms) cosine_distance
+        from search
+        where (new.title <=> search.terms) < 0
+        or new.tags && search.tags
+        order by cosine_distance
+        limit 100
+    )
     insert into interest (good_id, person_id)
-    select new.good_id, person_id
-    from search
-    where (new.title <-> search.terms) > 0.8
-    or new.tags && search.tags
+    from result
 end;
 $$ language plpgsl;
 
