@@ -186,9 +186,9 @@ as $$
 begin
     with result as (
         select new.good_id, person_id,
-            (new.title <=> search.terms) cosine_distance
+            (new.embedding <=> search.embedding) cosine_distance
         from search
-        where (new.title <=> search.terms) < 0
+        where (new.embedding <=> search.embedding) < 0
         or new.tags && search.tags
         order by cosine_distance
         limit 100
