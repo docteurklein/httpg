@@ -121,6 +121,10 @@ end;
 alter function geojson(point, jsonb) owner to person;
 grant execute on function geojson to person;
 
+create domain interest_level as text
+default 'normal'
+check (value = any (array['low', 'normal', 'high']));
+    
 create table interest (
     good_id uuid not null
         references good (good_id)
@@ -128,6 +132,7 @@ create table interest (
     person_id uuid not null
         references person (person_id)
             on delete cascade,
+    level interest_level not null,
     price numeric default null,
     at timestamptz not null default now(),
     primary key (good_id, person_id)
@@ -173,6 +178,7 @@ create table search (
     query text not null,
     embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_query(query)) stored,
     tags text[] not null default '{}',
+    interest interest_level not null,
     primary key (person_id, terms, tags)
 );
 
@@ -185,7 +191,7 @@ create function compare_search() returns trigger
 as $$
 begin
     with result as (
-        select new.good_id, person_id,
+        select new.good_id, person_id, level
             (new.embedding <=> search.embedding) cosine_distance
         from search
         where (new.embedding <=> search.embedding) < 0
@@ -193,9 +199,9 @@ begin
         order by cosine_distance
         limit 100
     )
-    insert into interest (good_id, person_id)
-    select good_id, person_id
-    from result
+    insert into interest (good_id, person_id, level)
+    select good_id, person_id, level
+    from result;
 end;
 $$ language plpgsl;
 
