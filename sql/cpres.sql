@@ -194,6 +194,7 @@ begin
         limit 100
     )
     insert into interest (good_id, person_id)
+    select good_id, person_id
     from result
 end;
 $$ language plpgsl;
