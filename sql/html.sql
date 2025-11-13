@@ -1,63 +1,4 @@
-drop view if exists head;
-create or replace view head(html) as
-select $html$<!DOCTYPE html>
-<html>
-<head>
-    <style>
-        body {
-          max-width: 90%;
-          margin: auto;
-        }
-        .menu {
-            //display: flex;
-            //flex-wrap: wrap;
-            //gap: 1rem 2rem;
-        }
-    </style>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
-</head>
-<body>
-<script type="module">
-    console.log(document);
-    document.addEventListener('click', console.log);
-</script>
-$html$
-union all select $html$
-<form method="POST" action="/login">
-  <fieldset class="grid">
-    <input type="text" name="user" />
-    <input type="password" name="password" />
-    <input type="submit" value="login" />
-  </fieldset>
-</form>
-$html$
-where current_role = 'anon'
-union all select xmlelement(name ul, xmlattributes('menu' as class), (
-    select xmlagg(
-        xmlelement(name li,
-            xmlelement(name a, xmlattributes(
-                format(
-                    $$/query?sql=select html from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r limit 100)$$,
-                    fqn
-                ) as href
-            ), fqn)
-            -- , xmlelement(name a, xmlattributes(
-            --     format(
-            --         $sql$/query?sql=table head union all ( select html('%1$s', to_jsonb(r), $2) from %1$s r limit 100)$sql$,
-            --         fqn
-            --     ) as href,
-            --     'portal-' || fqn as target
-            -- ), 'in iframe')
-            -- , xmlelement(name iframe, xmlattributes(
-            --     'portal-' || fqn as name
-            -- ), '')
-            )
-        )
-        from rel
-    ), '')::text
-    where current_role <> 'anon'
-union all select xmlelement(name h1, coalesce(current_setting('httpg.query')::jsonb->'qs'->>'success'), '')::text
-;
+create extension if not exists plv8 schema pg_catalog;
 
 create or replace function url_encode (str text)
 returns text
@@ -69,7 +10,7 @@ $$;
 
 create or replace function url_decode (str text)
 returns text
-immutable strict parallel safe leakproof
+immutable strict parallel safe -- leakproof
 language plv8
 as $$
 return decodeURIComponent(String(str))
@@ -78,7 +19,7 @@ $$;
 create or replace function url(path text, params jsonb = '{}')
 returns text
 language sql
-immutable strict parallel safe leakproof
+immutable strict parallel safe -- leakproof
 begin atomic
 select format('%s?%s', path, (
     with recursive param(path, value) as (
@@ -105,7 +46,7 @@ end;
 create or replace function html(fqn_ text, r jsonb, query jsonb = '{}', errors jsonb = '{}')
 returns text
 language sql
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 begin atomic
 select xmlconcat(
     xmlelement(name pre, jsonb_pretty(query)), -- debug

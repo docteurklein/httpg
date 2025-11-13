@@ -1,22 +1,60 @@
-set search_path to cpres, pg_catalog, public;
+\set ON_ERROR_STOP on
 
 begin;
 
+set local search_path to cpres, pg_catalog, public;
+
 drop schema if exists cpres cascade;
+
+set neon.allow_unstable_extensions='true';
+-- drop extension if exists rag cascade;
+-- drop extension if not exists rag_bge_small_en_v15 cascade; 
+-- drop extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
+
+-- create extension if not exists rag cascade;
+-- create extension if not exists rag_bge_small_en_v15 cascade; 
+-- create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
+
+
 create schema cpres;
 
--- drop role if exists person;
--- create role person;
 
-grant usage on schema cpres, pg_catalog to person;
-grant execute on all functions in schema pg_catalog to person;
+create procedure try_as(text, text)
+language plpgsql
+as $$ begin
+    raise notice 'trying as %: %', $1, $2;
+    perform format('set role %s', $1);
+    perform $2;
+    exception when others then raise warning '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
+-- alter procedure try_as owner to httpg;
+
+call try_as('person', 'revoke connect on database neondb from person');
+
+revoke all on schema pg_catalog, public from person;
+
+drop role if exists httpg;
+drop role if exists person;
+create role person;
+
+select format('create user httpg with password %L noinherit', :'password')\gexec
+-- do $$ begin
+--     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+-- end $$;
+
+grant person to httpg;
+
+-- commit;
+-- begin;
+
+grant usage, create on schema cpres to person;
+grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
+-- grant execute on all functions in schema pg_catalog to person;
 
 create extension if not exists cube;
 create extension if not exists earthdistance;
 create extension if not exists moddatetime;
-create extension if not exists rag cascade;
-create extension if not exists rag_bge_small_en_v15 cascade; 
-create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
+create extension if not exists vector;
 
 create function current_person_id() returns uuid
 immutable strict parallel safe
@@ -30,11 +68,12 @@ exception when invalid_text_representation then
     return null;
 end;
 $$;
-alter function current_person_id() owner to person;
+
+-- alter function current_person_id() owner to person;
 grant execute on function current_person_id to person;
 
 create table person (
-    person_id uuid primary key default uuidv7(),
+    person_id uuid primary key default gen_random_uuid(),
     name text not null,
     email text not null unique,
     login_challenge uuid default null,
@@ -49,10 +88,10 @@ create policy "owner" on person for all to person using (true) with check (
 );
 
 create table good (
-    good_id uuid primary key default uuidv7(),
+    good_id uuid primary key default gen_random_uuid(),
     title text not null check (title <> ''),
     description text not null,
-    embedding vector(384) generated always as (rag_bge_small_en_v15.embedding_for_passage(title || ': ' || description)) stored,
+    embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_passage(title || ': ' || description)) stored,
     tags text[] not null default '{}',
     location point not null,
     giver uuid not null default current_person_id()
@@ -106,7 +145,8 @@ with check (
 
 create function geojson(point point, props jsonb = '{}') returns jsonb
 language sql 
-immutable strict leakproof
+immutable strict -- leakproof
+set search_path to cpres, pg_catalog
 begin atomic;
     select jsonb_build_object(
         'type', 'Feature',
@@ -118,7 +158,7 @@ begin atomic;
     );
 end;
 
-alter function geojson(point, jsonb) owner to person;
+-- alter function geojson(point, jsonb) owner to person;
 grant execute on function geojson to person;
 
 create domain interest_level as text
@@ -146,7 +186,7 @@ create policy "owner" on interest for all to person using (true) with check (
 );
 
 create table message (
-    message_id uuid primary key default uuidv7(),
+    message_id uuid primary key default gen_random_uuid(),
     good_id uuid not null
         references good (good_id)
             on delete cascade,
@@ -179,13 +219,19 @@ create table search (
     embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_query(query)) stored,
     tags text[] not null default '{}',
     interest interest_level not null,
-    primary key (person_id, terms, tags)
+    primary key (person_id, query, tags)
 );
 
-create trigger compare_search
-after update on good
-for each row
-execute procedure compare_search();
+grant select, insert, delete, update on table search to person;
+
+alter table search enable row level security;
+create policy "owner" on search for all to person
+using (
+    true
+    -- author = current_person_id()
+    -- or exists (select from good where message.good_id = good.good_id and giver = current_person_id())
+)
+with check (person_id = current_person_id());
 
 create function compare_search() returns trigger
 as $$
@@ -203,7 +249,12 @@ begin
     select good_id, person_id, level
     from result;
 end;
-$$ language plpgsl;
+$$ language plpgsql;
+
+create trigger compare_search
+after update on good
+for each row
+execute procedure compare_search();
 
 create view nearby (geojson)
 with (security_invoker)
@@ -332,7 +383,7 @@ select xmlelement(name form, xmlattributes(
 from query;
 end;
 
-alter function good_form owner to person;
+-- alter function good_form owner to person;
 grant execute on function good_form to person;
 
 create view "my goods" (html)
@@ -358,9 +409,13 @@ xmlconcat(
             (
                 with url (url) as (
                     select url('/query', jsonb_build_object(
-                        'sql', format($$select content from cpres.good_media where content_hash = $1::text::bytea $$, content_type),
+                        'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
                         'params[]', content_hash
                     ))
+                    -- select url('/raw', jsonb_build_object(
+                    --     'sql', format($$values (jsonb_build_object('header', array['content-type', %L])::text) union all select jsonb_build_object('body', content::text)::text from cpres.good_media where content_hash = $1::text::bytea $$, content_type),
+                    --     'params[]', content_hash
+                    -- ))
                     from good_media
                     where good_id = good.good_id
                 )
@@ -511,7 +566,7 @@ given_at = now()
 where good_id = _good_id;
 end;
 
-alter procedure give(uuid, uuid) owner to person;
+-- alter procedure give(uuid, uuid) owner to person;
 grant execute on procedure give to person;
 
 create procedure want(_good_id uuid)
@@ -522,7 +577,7 @@ begin atomic
     insert into interest (good_id, person_id) values (_good_id, current_person_id());
 end;
 
-alter procedure want(uuid) owner to person;
+-- alter procedure want(uuid) owner to person;
 grant execute on procedure want to person;
 
 create procedure unwant(_good_id uuid)
@@ -533,7 +588,7 @@ begin atomic
     delete from interest where (good_id, person_id) = (_good_id, current_person_id());
 end;
 
-alter procedure unwant(uuid) owner to person;
+-- alter procedure unwant(uuid) owner to person;
 grant execute on procedure unwant to person;
 
 create procedure send_login_email(text)
@@ -542,32 +597,33 @@ security definer
 set search_path to cpres, pg_catalog
 begin atomic
     with info (challenge, email) as (
-        select uuidv4(), $1
+        select gen_random_uuid(), $1
     ),
     response (res) as (
-        select http(('POST', 'https://send.api.mailtrap.io/api/send',
-            array[('Api-Token', current_setting('mailtrap.api_token', true))]::http_header[],
-            'application/json',
-            jsonb_build_object(
-                'from', jsonb_build_object(
-                    'email', 'flo@example.org',
-                    'name', 'Flo'
-                ),
-                'to', jsonb_build_array(jsonb_build_object(
-                    'email', 'florian.klein@free.fr',
-                    'name', 'Florian Klein'
-                )),
-                'subject', 'test from postgres!',
-                'html', format($html$
-                    <form method="POST" action="/login?redirect=referer">
-                        <input type="hidden" name="sql" value="" />
-                        <input type="hidden" name="challenge" value="%s" />
-                        <input type="submit" value="Login as %s" />
-                    </form>
-                $html$, challenge, email)
-            )
-        )::http_request)
-        from info
+        select null
+        -- select http(('POST', 'https://send.api.mailtrap.io/api/send',
+        --     array[('Api-Token', current_setting('mailtrap.api_token', true))]::http_header[],
+        --     'application/json',
+        --     jsonb_build_object(
+        --         'from', jsonb_build_object(
+        --             'email', 'flo@example.org',
+        --             'name', 'Flo'
+        --         ),
+        --         'to', jsonb_build_array(jsonb_build_object(
+        --             'email', 'florian.klein@free.fr',
+        --             'name', 'Florian Klein'
+        --         )),
+        --         'subject', 'test from postgres!',
+        --         'html', format($html$
+        --             <form method="POST" action="/login?redirect=referer">
+        --                 <input type="hidden" name="sql" value="" />
+        --                 <input type="hidden" name="challenge" value="%s" />
+        --                 <input type="submit" value="Login as %s" />
+        --             </form>
+        --         $html$, challenge, email)
+        --     )
+        -- )::http_request)
+        -- from info
     )
     insert into person (name, email, login_challenge)
     select email, email, challenge
@@ -579,7 +635,7 @@ begin atomic
     ;
 end;
 
-alter procedure send_login_email(text) owner to florian;
+-- alter procedure send_login_email(text) owner to neondb_owner;
 grant execute on procedure send_login_email(text) to person;
 
 create function login() returns setof text
@@ -593,11 +649,11 @@ begin atomic
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'body'->>'challenge')::uuid
         returning person_id
     )
-    select format($sql$set local "cpres.person_id" to %L$sql$, person_id)
+    select format($sql$set local role to person; set local "cpres.person_id" to %L$sql$, person_id)
     from "user";
 end;
 
-alter function login owner to florian;
+-- alter function login owner to neondb_owner;
 grant execute on function login to person;
 
 create view head (html) as
@@ -656,13 +712,10 @@ select $html$
 $html$;
 grant select on table map to person;
 
-commit;
-
-begin;
 insert into person (person_id, name, email, location, login_challenge) values
-    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', '(46.0734411, 3.666724)', uuidv4()),
-    (uuidv7(), 'p2', 'p2@example.org', '(56.073448, 2.666524)', uuidv4()),
-    (uuidv7(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', uuidv4());
+    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', '(46.0734411, 3.666724)', gen_random_uuid()),
+    (gen_random_uuid(), 'p2', 'p2@example.org', '(56.073448, 2.666524)', gen_random_uuid()),
+    (gen_random_uuid(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', gen_random_uuid());
 
 insert into good (title, description, location, giver)
 select

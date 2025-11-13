@@ -14,7 +14,11 @@ const map = new Map('map');
 map.on('locationfound', (event) => {
   let params = new URLSearchParams();
   params.append('location', `(${event.latlng.lat},${event.latlng.lng})`);
-  fetch(`/query?sql=select coalesce(jsonb_agg(geojson)::text, '[]') from cpres.nearby&${params}`)
+  fetch(`/query?sql=select coalesce(jsonb_agg(geojson)::text, '[]') from cpres.nearby&${params}`, {
+    headers: {
+      'accept': 'application/json'
+    }
+  })
     .then(res => res.json())
     .then(function(data) {
       var markers = L.markerClusterGroup({

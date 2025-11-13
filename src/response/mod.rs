@@ -1,6 +1,6 @@
 
 use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{IntoResponse, Redirect, Response}};
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::RowStream;
 use tokio_stream::StreamExt;
@@ -18,7 +18,7 @@ pub enum Rows {
 pub enum Raw {
     Status(u16),
     Header(String, String),
-    Body(String),
+    Body(Vec<u8>),
 }
 
 pub struct Result {
@@ -28,7 +28,7 @@ pub struct Result {
 
 fn from_raw(rows: Vec<Raw>) -> Response {
     let mut builder = Response::builder();
-    let mut body = "".to_string();
+    let mut body = BytesMut::new();//"".to_string();
     for row in rows.iter() {
         match row {
             Raw::Status(status) => {
@@ -38,12 +38,12 @@ fn from_raw(rows: Vec<Raw>) -> Response {
                 builder = builder.header(HeaderName::from_bytes(k.as_bytes()).unwrap(), HeaderValue::from_str(v).unwrap());
             },
             Raw::Body(content) => {
-                body.push('\n');
-                body.push_str(content);
+                // body.push('\n');
+                body.put(content.as_slice());
             }
         }
     }
-    builder.body(Body::from(body)).unwrap()
+    builder.body(Body::from(body.to_vec())).unwrap()
 }
 
 impl IntoResponse for Result {
@@ -70,17 +70,9 @@ impl IntoResponse for Result {
                 match self.rows {
                     Rows::Stream(rows) => (
                         [("content-type", "text/html; charset=utf-8")],
-                        Body::from_stream(rows.map(move |row|
-                            // match self.query.out_type {
-                            //     crate::extract::query::Type::Text =>
-                                    Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
-                            //     ,
-                            //     crate::extract::query::Type::Bytea => {
-                            //         Bytes::from(row.unwrap().get::<usize, Vec<u8>>(0))
-                            //     },
-                            //     crate::extract::query::Type::Jsonb => todo!(),
-                            //     crate::extract::query::Type::Unknown => todo!(),
-                            // })
+                        Body::from_stream(rows
+                            .map(move |row|
+                                Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
                             )
                             .map(Ok::<_, axum::Error>)
                         ),

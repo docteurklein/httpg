@@ -13,6 +13,7 @@ use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs;
+use tokio_postgres_rustls::MakeRustlsConnect;
 // use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
@@ -72,18 +73,22 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let cfg = DeadPoolConfig::from_env();
 
-    let _tls_config = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-        .with_no_client_auth()
-    ;
-    // let tls = MakeRustlsConnect::new(tls_config.into());
-    
-    let pool = cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?;
+    let pool = match env::var("PG_SSLMODE") {
+        Ok(_) => {
+            let tls_config = rustls::ClientConfig::builder()
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+                .with_no_client_auth()
+            ;
+            let tls = MakeRustlsConnect::new(tls_config);
 
+            cfg.pg.create_pool(Some(Runtime::Tokio1), tls)?
+        },
+        _ => cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?,
+    };
+    
     let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
     let login_proc = env::var("HTTPG_LOGIN_PROC").expect("HTTPG_LOGIN_PROC");
-
     
     let state = AppState {
         login_proc,
@@ -107,18 +112,18 @@ async fn main() -> Result<(), anyhow::Error> {
         .layer(ServiceBuilder::new().layer(cors))
     ;
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
+    let addr = SocketAddr::from(([0, 0, 0, 0], env::var("PORT").unwrap_or("3000".to_string()).parse().unwrap_or(3000)));
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on https://{}", tcp.local_addr()?);
 
-    let config = RustlsConfig::from_pem_file(
-        "localhost+2.pem",
-        "localhost+2-key.pem"
-    )
-    .await?;
+    // let config = RustlsConfig::from_pem_file(
+    //     "localhost+2.pem",
+    //     "localhost+2-key.pem"
+    // )
+    // .await?;
     
-    // axum_server::from_tcp(tcp)
-    axum_server::from_tcp_rustls(tcp, config)
+    axum_server::from_tcp(tcp)
+    // axum_server::from_tcp_rustls(tcp, config)
         .serve(app.into_make_service())
         .await?
     ;
@@ -390,8 +395,8 @@ async fn raw_http(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params: Vec<(_, Type)> = query.params.iter().enumerate().map(|(_i, param)| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())//query.types.get(i).unwrap_or(&crate::extract::query::Type::Unknown).to_owned().into())
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
     let result = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?;
@@ -413,6 +418,7 @@ where
     E: std::error::Error,
 {
     eprintln!("{}", err);
+    dbg!(&err);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         err.to_string(),

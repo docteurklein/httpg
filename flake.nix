@@ -45,11 +45,38 @@
           ];
         };
 
+        # packages.pgrag = pkgs.buildPgrxExtension rec {
+        #   pname = "pgrag";
+        #   version = "0.1";
+        #   inherit system;
+        #   postgresql = pkgs.postgresql_18;
+        #   cargo-pgrx = pkgs.cargo-pgrx;
+
+        #   src = pkgs.fetchFromGitHub {
+        #     owner = "neondatabase-labs";
+        #     repo = pname;
+        #     rev = "main";
+        #     rootDir = "exts/rag_bge_small_en_v15";
+        #     hash = "sha256-ioD0DrZZOgIFfc5FtunsbvthAJmkA+VvzGAuaaD+xBE=";
+        #   };
+        #   cargoHash = "sha256-Xcr4/BsxQrau5Qxgz7iw9d+j1wwYoObhKRRrtUQpAlI=";
+        #   cargoPatches = [
+        #     ./add-cargo-rag-bge.patch
+        #   ];
+        # };
+
         packages.httpg = pkgs.rustPlatform.buildRustPackage {
           pname = "httpg";
           version = "0.1";
           cargoLock.lockFile = ./Cargo.lock;
           src = pkgs.lib.cleanSource ./.;
+          nativeBuildInputs = with pkgs; [
+            mold-wrapped clang pkg-config
+          ];
+          env = {
+            RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+          };
+          doCheck = false;
         };
 
         packages.default = self'.packages.httpg;
@@ -58,6 +85,11 @@
           name = "docteurklein/httpg";
           config = {
             entrypoint = ["${self'.packages.httpg}/bin/httpg"];
+          };
+          copyToRoot = pkgs.buildEnv {
+            name = "assets";
+            paths = [ ./. ];
+            pathsToLink = [ "/public" ];
           };
         };
 
@@ -71,7 +103,7 @@
           packages = with pkgs; [
             postgresql_18
             cargo cargo-watch clippy rustc rust-analyzer openssl.dev pkg-config
-            mold clang
+            mold-wrapped clang
             biscuit-cli
           ];
 
@@ -93,6 +125,7 @@
               plv8
               # pg_net
               pgsql-http
+              pgvector
             ];
             settings = {
               # "wal_level" = "logical";
@@ -104,6 +137,7 @@
               # "auto_explain.log_analyze" = true;
               # "auto_explain.log_triggers" = true;
               "log_statement" = "all";
+              "log_connections" = "on";
               "lc_messages" = "fr_FR.UTF-8";
             };
           };
