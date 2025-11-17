@@ -10,5 +10,5 @@ jobs:
           fetch-depth: 0
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      - run: nix run nixpkgs#skopeo -- login docker.io -u docteurklein -p ${{ secrets.DOCKER_PASSWORD }}
+      - run: nix run nixpkgs#skopeo -- login docker.io -u docteurklein -p $DOCKER_PASSWORD
       - run: nix run .#oci.copyToRegistry
