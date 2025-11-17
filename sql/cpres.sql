@@ -7,48 +7,54 @@ set local search_path to cpres, pg_catalog, public;
 drop schema if exists cpres cascade;
 
 set neon.allow_unstable_extensions='true';
+-- drop extension if exists vector cascade;
 -- drop extension if exists rag cascade;
 -- drop extension if not exists rag_bge_small_en_v15 cascade; 
 -- drop extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
--- create extension if not exists rag cascade;
--- create extension if not exists rag_bge_small_en_v15 cascade; 
--- create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
-
+create extension if not exists vector cascade;
+create extension if not exists rag cascade;
+create extension if not exists rag_bge_small_en_v15 cascade; 
+create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
 create schema cpres;
 
+create function cpres.embed_passage(content text)
+returns vector
+immutable parallel safe
+security definer
+language sql
+begin atomic
+    -- select '[1]'::vector;
+    select rag_bge_small_en_v15.embedding_for_passage(content);
+end;
 
-create procedure try_as(text, text)
-language plpgsql
-as $$ begin
-    raise notice 'trying as %: %', $1, $2;
-    perform format('set role %s', $1);
-    perform $2;
-    exception when others then raise warning '%, skipping', sqlerrm using errcode = sqlstate;
-end $$;
--- alter procedure try_as owner to httpg;
+create function cpres.embed_query(query text)
+returns vector
+immutable parallel safe
+security definer
+language sql
+begin atomic
+    -- select '[1]'::vector;
+    select rag_bge_small_en_v15.embedding_for_query(query);
+end;
 
-call try_as('person', 'revoke connect on database neondb from person');
 
-revoke all on schema pg_catalog, public from person;
+-- revoke all on schema pg_catalog, public from person;
+-- drop role if exists httpg;
+-- drop role if exists person;
 
-drop role if exists httpg;
-drop role if exists person;
-create role person;
+-- create role person;
 
-select format('create user httpg with password %L noinherit', :'password')\gexec
--- do $$ begin
---     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
--- end $$;
+-- select format('create user httpg with password %L noinherit', :'password')\gexec
+-- -- do $$ begin
+-- --     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+-- -- end $$;
 
-grant person to httpg;
-
--- commit;
--- begin;
+-- grant person to httpg;
 
 grant usage, create on schema cpres to person;
-grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
+-- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
 -- grant execute on all functions in schema pg_catalog to person;
 
 create extension if not exists cube;
@@ -80,7 +86,10 @@ create table person (
     location point default null
 );
 
-grant select, insert, delete, update on table person to person;
+grant select (person_id, name),
+    insert (name, email, location),
+    update (name, email, location),
+    delete on table person to person;
 
 alter table person enable row level security;
 create policy "owner" on person for all to person using (true) with check (
@@ -91,7 +100,7 @@ create table good (
     good_id uuid primary key default gen_random_uuid(),
     title text not null check (title <> ''),
     description text not null,
-    embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_passage(title || ': ' || description)) stored,
+    embedding vector(384) not null generated always as (embed_passage(title || ': ' || description)) stored,
     tags text[] not null default '{}',
     location point not null,
     giver uuid not null default current_person_id()
@@ -181,8 +190,9 @@ create table interest (
 grant select, insert, delete, update on table interest to person;
 
 alter table interest enable row level security;
-create policy "owner" on interest for all to person using (true) with check (
+create policy "owner" on interest for all to person using (
     person_id = current_person_id()
+    or exists (select from good where interest.good_id = good.good_id and giver = current_person_id())
 );
 
 create table message (
@@ -205,18 +215,22 @@ create table message (
 grant select, insert, delete, update on table message to person;
 
 alter table message enable row level security;
+
 create policy "owner" on message for all to person
 using (
-    true
-    -- author = current_person_id()
-    -- or exists (select from good where message.good_id = good.good_id and giver = current_person_id())
+    author = current_person_id()
+    or exists (
+        select
+        from interest
+        where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
+    )
 )
 with check (author = current_person_id());
 
 create table search (
     person_id uuid not null default current_person_id(),
     query text not null,
-    embedding vector(384) not null generated always as (rag_bge_small_en_v15.embedding_for_query(query)) stored,
+    embedding vector(384) not null generated always as (embed_query(query)) stored,
     tags text[] not null default '{}',
     interest interest_level not null,
     primary key (person_id, query, tags)
@@ -227,32 +241,33 @@ grant select, insert, delete, update on table search to person;
 alter table search enable row level security;
 create policy "owner" on search for all to person
 using (
-    true
-    -- author = current_person_id()
-    -- or exists (select from good where message.good_id = good.good_id and giver = current_person_id())
-)
-with check (person_id = current_person_id());
+    person_id = current_person_id()
+);
 
 create function compare_search() returns trigger
+security definer
+set search_path to cpres, pg_catalog
 as $$
 begin
     with result as (
-        select new.good_id, person_id, level
-            (new.embedding <=> search.embedding) cosine_distance
+        select new.good_id, person_id, interest, tags, (new.embedding <=> search.embedding) cosine_distance
         from search
-        where (new.embedding <=> search.embedding) < 0
-        or new.tags && search.tags
+        where person_id <> new.giver
         order by cosine_distance
-        limit 100
+        -- limit 100
     )
     insert into interest (good_id, person_id, level)
-    select good_id, person_id, level
-    from result;
+    select good_id, person_id, interest
+    from result
+    where cosine_distance < 0.2
+    or new.tags && result.tags;
+
+    return null;
 end;
 $$ language plpgsql;
 
 create trigger compare_search
-after update on good
+after insert or update of title, description on good
 for each row
 execute procedure compare_search();
 
@@ -302,8 +317,12 @@ select geojson(base.location, jsonb_build_object(
         xmlelement(name div, format('distance %s km', round(bird_distance_km::numeric, 2))),
         (
             with url (url) as (
-                select url('/raw', jsonb_build_object(
-                    'sql', format($$values (jsonb_build_object('header', array['content-type', %L])) union all select content::text from cpres.good_media where content_hash = $1 $$, content_type),
+                -- select url('/raw', jsonb_build_object(
+                --     'sql', format($$values (jsonb_build_object('header', array['content-type', %L])) union all select content::text from cpres.good_media where content_hash = $1 $$, content_type),
+                --     'params[]', content_hash
+                -- ))
+                select url('/query', jsonb_build_object(
+                    'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
                     'params[]', content_hash
                 ))
                 from good_media
@@ -390,10 +409,12 @@ create view "my goods" (html)
 with (security_invoker)
 as
 select xmlelement(name div, xmlattributes('new' as class),
+    xmlelement(name h2, 'New good'),
     good_form(
         coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'->'params',
         'insert into cpres.good (title, description, location) values ($1::text, $2::text, $3::text::point)'
-    )
+    ),
+    xmlelement(name h2, 'Existing goods')
 )::text
 union all (
 select
@@ -416,13 +437,9 @@ xmlconcat(
                     --     'sql', format($$values (jsonb_build_object('header', array['content-type', %L])::text) union all select jsonb_build_object('body', content::text)::text from cpres.good_media where content_hash = $1::text::bytea $$, content_type),
                     --     'params[]', content_hash
                     -- ))
-                    from good_media
-                    where good_id = good.good_id
                 )
-                select xmlagg(
-                    xmlelement(name a, xmlattributes(url as href),
-                        xmlelement(name img, xmlattributes(url as src))
-                    )
+                select xmlelement(name a, xmlattributes(url as href),
+                    xmlelement(name img, xmlattributes(url as src))
                 )
                 from url
             ),
@@ -476,12 +493,12 @@ xmlconcat(
         )),
         xmlelement(name input, xmlattributes(
             'file' as type,
-            'file' as name,
-            true as multiple
+            'file' as name
+            -- true as multiple
         )),
         xmlelement(name input, xmlattributes(
             'submit' as type,
-            'Add images' as value
+            'Add image' as value
         ))
     )
 )::text
@@ -495,21 +512,19 @@ grant select on table "my goods" to person;
 create view "activity"
 with (security_invoker)
 as select xmlelement(name div,
-    format('%s is interested by %s', receiver.name, good.title),
+    format('%s is interested by %s from %s', receiver.name, good.title, giver.name),
     (
         with message as (
             select *
             from message
-            where good_id = interest.good_id
-            and person_id = interest.person_id
+            where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
             order by at asc
         )
         select xmlagg(xmlelement(name div,
-            'by ' || person.name || ': ',
-            content
+            'by ' || author.name || ': ' || content
         ))
         from message
-        join person on (person.person_id = author)
+        join person author on (author.person_id = message.author)
     ),
     xmlelement(name form, xmlattributes(
         'POST' as method,
@@ -543,13 +558,59 @@ as select xmlelement(name div,
     )
 )::text
 from interest
-join person receiver using (person_id)
 join good using (good_id)
+join person receiver using (person_id)
+join person giver on (giver.person_id = good.giver)
 where giver = current_person_id()
 or interest.person_id = current_person_id()
-order by (select max(at) from message where message.good_id = interest.good_id and message.person_id = interest.person_id) desc, interest.at desc;
+order by (select max(at) from message where message.good_id = interest.good_id and message.person_id = interest.person_id) desc nulls last, interest.at desc;
 
 grant select on table "activity" to person;
+
+create view "findings" (html)
+with (security_invoker)
+as with q (q) as (
+    select current_setting('httpg.query', true)::jsonb->'qs'->>'q'
+)
+select xmlelement(name div,
+    xmlelement(name h2, 'Search'),
+    xmlelement(name form, xmlattributes(
+        'GET' as method,
+        url('/query', jsonb_build_object(
+            -- 'redirect', 'referer'
+            'sql', current_setting('httpg.query', true)::jsonb->'qs'->>'sql'
+        )) as action),
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
+            'sql' as name,
+            'table cpres.head union all select html from cpres."findings"' as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'q' as name,
+            'text' as type,
+            'query' as placeholder,
+            q as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'submit' as type,
+            'Search' as value
+        ))
+    ),
+    (
+        with result as (
+            select q, good_id, title, (embedding <=> embed_query(q)) cosine_distance
+            from good
+            where giver <> current_person_id()
+            order by 3
+            limit 100
+        )
+        select xmlagg(xmlelement(name div, format('%s: %s', title, cosine_distance)) order by cosine_distance)
+        from result
+    )
+)::text
+from q;
+
+grant select on table "findings" to person;
 
 create procedure give(_good_id uuid, receiver uuid)
 language sql
@@ -635,7 +696,7 @@ begin atomic
     ;
 end;
 
--- alter procedure send_login_email(text) owner to neondb_owner;
+-- alter procedure send_login_email(text) owner to person;
 grant execute on procedure send_login_email(text) to person;
 
 create function login() returns setof text
@@ -645,7 +706,8 @@ security definer
 set search_path to cpres, pg_catalog
 begin atomic
     with "user" as (
-        update person set login_challenge = login_challenge
+        update person
+        set login_challenge = login_challenge -- TODO: set login_challenge = null
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'body'->>'challenge')::uuid
         returning person_id
     )
@@ -653,7 +715,7 @@ begin atomic
     from "user";
 end;
 
--- alter function login owner to neondb_owner;
+-- alter function login owner to person;
 grant execute on function login to person;
 
 create view head (html) as
@@ -661,14 +723,14 @@ select $html$<!DOCTYPE html>
 <html>
 <head>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
 </head>
 <body>
   <script type="module" src="/cpres.js"></script>
-  <main class="container">
+  <main>
     <form method="POST" action="/query?redirect=referer">
       <fieldset class="grid">
         <input type="hidden" name="sql" value="call cpres.send_login_email($1::text)" />
@@ -686,18 +748,24 @@ union all (select format($html$
 $html$, login_challenge, name)
 from person
 where login_challenge is not null
+and (current_setting('httpg.query', true)::jsonb->'qs'->>'debug') is not null
 order by name)
 union all select xmlelement(name div,
     (select format('Welcome %s!', name) from person where person_id = current_person_id()),
-    xmlelement(name ul,
-        xmlelement(name li, xmlelement(name a, xmlattributes('/query?sql=table cpres.head union all table cpres.map' as href), 'map')),
-        (
-            select xmlelement(name li, xmlelement(name a, xmlattributes('/query?sql=table cpres.head union all table cpres."activity"' as href), 'activity'))
-            where current_person_id() is not null),
-        (
-            select xmlelement(name li, xmlelement(name a, xmlattributes('/query?sql=table cpres.head union all table cpres."my goods"' as href), 'my goods'))
-            where current_person_id() is not null
-        )
+    xmlelement(name nav,
+        xmlelement(name ul, (
+            with menu (name, sql, visible) as (values
+                ('map', 'table cpres.head union all table cpres.map', true),
+                ('search', 'table cpres.head union all table cpres."findings"', current_person_id() is not null),
+                ('activity', 'table cpres.head union all table cpres."activity"', current_person_id() is not null),
+                ('my goods', 'table cpres.head union all table cpres."my goods"', current_person_id() is not null)
+            )
+            select xmlagg(
+                xmlelement(name li, xmlelement(name a, xmlattributes(url('/query', jsonb_build_object('sql', sql)) as href), name))
+            )
+            from menu
+            where visible
+        ))
     )
 )::text
 ;
@@ -714,26 +782,30 @@ grant select on table map to person;
 
 insert into person (person_id, name, email, location, login_challenge) values
     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', '(46.0734411, 3.666724)', gen_random_uuid()),
-    (gen_random_uuid(), 'p2', 'p2@example.org', '(56.073448, 2.666524)', gen_random_uuid()),
+    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', '(56.073448, 2.666524)', gen_random_uuid()),
     (gen_random_uuid(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', gen_random_uuid());
 
-insert into good (title, description, location, giver)
-select
-    format('good %s %s', name, i),
-    format('good %s %s', name, i),
-    format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
-    person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
-from generate_series(1, 100) i, person
-where name <> 'p3';
+-- insert into search (person_id, query, tags, interest) values
+--     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'chaise en bois', '{}', 'high'),
+--     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'chaise en metal', '{}', 'high');
 
-insert into interest (good_id, person_id, price)
-select good_id, person_id, random(1, 10)
-from person, good
-where person.person_id <> good.giver;
+-- insert into good (title, description, location, giver)
+-- select
+--     format('good %s %s', name, i),
+--     format('good %s %s', name, i),
+--     format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
+--     person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
+-- from generate_series(1, 100) i, person
+-- where name <> 'p3';
 
-insert into message (good_id, person_id, author, content)
-select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
-from interest, person, generate_series(1, 3) i
-where person.person_id = interest.person_id;
+-- insert into interest (good_id, person_id, price)
+-- select good_id, person_id, random(1, 10)
+-- from person, good
+-- where person.person_id <> good.giver;
+
+-- insert into message (good_id, person_id, author, content)
+-- select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
+-- from interest, person, generate_series(1, 3) i
+-- where person.person_id = interest.person_id;
 -- on conflict do nothing;
 commit;

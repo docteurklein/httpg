@@ -5,7 +5,7 @@ use axum::{
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
 };
 use axum_extra::extract::cookie::{Cookie, SameSite::Strict};
-use axum_server::tls_rustls::RustlsConfig;
+use axum_server::{accept::Accept, tls_rustls::RustlsConfig};
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
 
@@ -43,7 +43,7 @@ impl DeadPoolConfig {
     pub fn from_env() -> Self {
         let config = config::Config::builder()
             .add_source(config::Environment::default()
-                // .prefix("PG")
+                .prefix("PG")
                 .separator("_")
                 .keep_prefix(true))
             .build()
@@ -116,17 +116,24 @@ async fn main() -> Result<(), anyhow::Error> {
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on https://{}", tcp.local_addr()?);
 
-    // let config = RustlsConfig::from_pem_file(
-    //     "localhost+2.pem",
-    //     "localhost+2-key.pem"
-    // )
-    // .await?;
+    let config = RustlsConfig::from_pem_file(
+        "localhost+2.pem",
+        "localhost+2-key.pem"
+    )
+    .await;
     
-    axum_server::from_tcp(tcp)
-    // axum_server::from_tcp_rustls(tcp, config)
-        .serve(app.into_make_service())
-        .await?
-    ;
+    match config {
+        Ok(config) =>  {
+            axum_server::from_tcp_rustls(tcp, config)
+            .serve(app.into_make_service())
+            .await?
+        },
+        Err(_) => {
+            axum_server::from_tcp(tcp)
+            .serve(app.into_make_service())
+            .await?
+        },
+    };
     Ok(())
 }
 
@@ -206,7 +213,6 @@ async fn stream_query(
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
     }).collect();
-    dbg!(&sql_params);
 
     let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
 
