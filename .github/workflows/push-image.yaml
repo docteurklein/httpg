@@ -1,8 +1,10 @@
-name: "push docker image"
+name: "deploy"
 on:
   push:
 jobs:
   build:
+    outputs:
+      image_name: ${{ steps.image_name.outputs.image_name }}
     environment: production
     runs-on: ubuntu-latest
     steps:
@@ -16,3 +18,23 @@ jobs:
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       - run: nix run .#oci.copyToRegistry
+      - id: image_name
+        run: |
+          echo "image_name=$(nix eval .#oci.imageRefUnsafe --raw)" >> "GITHUB_OUTPUT"
+
+  Deploy-Render:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Render CLI
+        run: |
+          curl -L https://github.com/render-oss/cli/releases/download/v2.5.0/cli_2.5.0_linux_amd64.zip -o render.zip
+          unzip render.zip
+          sudo mv cli_v2.5.0 /usr/local/bin/render
+      - name: Trigger deploy with Render CLI
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          CI: true
+          IMAGE_NAME: ${{ needs.build.outputs.image_name }}
+        run: |
+          render deploys create ${{ secrets.RENDER_SERVICE_ID }} --output json --confirm --wait --image "$IMAGE_NAME"
