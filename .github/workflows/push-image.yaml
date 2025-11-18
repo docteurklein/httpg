@@ -3,6 +3,7 @@ on:
   push:
 jobs:
   build:
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -10,9 +11,8 @@ jobs:
           fetch-depth: 0
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
-      - shell: bash
-        run: |
-          nix run nixpkgs#skopeo -- login docker.io -u docteurklein --password "$DOCKER_PASSWORD"
+      - run: |
+          nix run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
       - run: nix run .#oci.copyToRegistry
