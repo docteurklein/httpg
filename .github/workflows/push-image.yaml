@@ -20,10 +20,11 @@ jobs:
       - run: nix run .#oci.copyToRegistry
       - id: image_name
         run: |
-          echo "image_name=$(nix eval .#oci.imageRefUnsafe --raw)" >> "GITHUB_OUTPUT"
+          echo "image_name=$(nix eval .#oci.imageRefUnsafe --raw --accept-flake-config)" >> "GITHUB_OUTPUT"
 
   Deploy-Render:
     needs: build
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: Install Render CLI
