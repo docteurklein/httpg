@@ -718,38 +718,43 @@ end;
 -- alter function login owner to person;
 grant execute on function login to person;
 
-create view head (html) as
-select $html$<!DOCTYPE html>
-<html>
+create view head (html)
+with (security_invoker)
+as select $html$<!DOCTYPE html>
+<html lang="en">
 <head>
+    <meta charset="utf-8" />
+    <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.classless.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
 </head>
 <body>
   <script type="module" src="/cpres.js"></script>
-  <main>
+  <main class="container">
     <form method="POST" action="/query?redirect=referer">
-      <fieldset class="grid">
+      <fieldset role="group">
         <input type="hidden" name="sql" value="call cpres.send_login_email($1::text)" />
         <input type="text" name="params[]" placeholder="email" />
         <input type="submit" value="Send login challenge" />
       </fieldset>
     </form>
 $html$
-union all (select format($html$
-    <form method="POST" action="/login?redirect=referer">
-        <input type="hidden" name="sql" value="" />
-        <input type="hidden" name="challenge" value="%s" />
-        <input type="submit" value="Login as %s" />
-    </form>
-$html$, login_challenge, name)
-from person
-where login_challenge is not null
-and (current_setting('httpg.query', true)::jsonb->'qs'->>'debug') is not null
-order by name)
+-- union all (
+--     select format($html$
+--         <form method="POST" action="/login?redirect=referer">
+--             <input type="hidden" name="sql" value="" />
+--             <input type="hidden" name="challenge" value="%s" />
+--             <input type="submit" value="Login as %s" />
+--         </form>
+--     $html$, login_challenge, name)
+--     from person
+--     where login_challenge is not null
+--     and (current_setting('httpg.query', true)::jsonb->'qs'->>'debug') is not null -- TODO remove
+--     order by name
+-- )
 union all select xmlelement(name div,
     (select format('Welcome %s!', name) from person where person_id = current_person_id()),
     xmlelement(name nav,
@@ -778,6 +783,7 @@ select $html$
   <script type="module" src="/cpres/map.js"></script>
 </body>
 $html$;
+
 grant select on table map to person;
 
 insert into person (person_id, name, email, location, login_challenge) values
