@@ -425,6 +425,30 @@ xmlconcat(
         jsonb_build_array(title, description, good.location),
         format('update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L', good_id)
     ),
+    xmlelement(name form, xmlattributes(
+        'POST' as method,
+        '/query' as action
+    ),
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
+            'redirect' as name,
+            'referer' as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
+            'sql' as name,
+            'delete from cpres.good where good_id = $1::uuid' as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
+            'params[]' as name,
+            good_id as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'submit' as type,
+            'Remove' as value
+        ))
+    ),
     (
         select xmlagg(xmlconcat(
             (
