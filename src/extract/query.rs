@@ -2,12 +2,9 @@
 use std::collections::BTreeMap;
 
 use axum::{
-    extract::{FromRequest, Multipart, Request},
-    http::{
-        header::{ACCEPT, CONTENT_TYPE, REFERER}, StatusCode
-    },
-    response::{IntoResponse, Response},
-    Json,
+    Json, extract::{FromRequest, Multipart, Request}, http::{
+        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, REFERER}
+    }, response::{IntoResponse, Response}
 };
 use bytes::Bytes;
 use postgres_types::{to_sql_checked, ToSql};
@@ -103,6 +100,7 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
+    pub accept_language: Option<String>,
     pub content_type: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -126,6 +124,7 @@ impl Query {
         files: Vec<File>,
         referer: Option<&str>,
         accept: Option<&str>,
+        accept_language: Option<&str>,
         // out_types: Vec<Type>,
     ) -> Result<Self, Response> {
         let qs = serde_json::from_value::<QueryPart>(serde_json::json!(raw_qs)).unwrap_or_default();
@@ -179,6 +178,7 @@ impl Query {
             redirect: redirect.map(str::to_string),
             content_type,
             accept: accept.map(str::to_string),
+            accept_language: accept_language.map(str::to_string),
             qs: raw_qs,
             body: raw_body,
             files,
@@ -263,10 +263,10 @@ where
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
 
-        let accept_header = headers.get(ACCEPT);
-        let accept = accept_header.and_then(|value| value.to_str().ok());
+        let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
+        let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok());
 
-        Query::new(raw_qs.unwrap_or_default(), raw_body, files, referer, accept)
+        Query::new(raw_qs.unwrap_or_default(), raw_body, files, referer, accept, accept_language)
     }
 }
 

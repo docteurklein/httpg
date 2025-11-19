@@ -134,6 +134,7 @@ insert into translation (id, lang, text) values
 , ('Remove', 'fr', 'Supprimer')
 , ('Are you sure?', 'fr', 'En êtes-vous sûr?')
 , ('Give to %s', 'fr', 'Donner à %s')
+, ('Given to %s', 'fr', 'Donné à %s')
 ;
 
 
@@ -146,9 +147,12 @@ language sql
 begin atomic
     select coalesce(
         (
+            with a (accept_language) as (
+                select substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-\w+,.*')
+            )
             select text
-            from translation
-            where (id, lang) = (id_, coalesce(lang_, coalesce(current_setting('cpres.accept_language', true), 'fr')))
+            from translation, a
+            where (id, lang) = (id_, coalesce(lang_, coalesce(accept_language, 'fr')))
             limit 1
         ),
         id_
@@ -205,9 +209,10 @@ before update on good
 for each row
 execute procedure moddatetime (updated_at);
 
-grant select, delete,
+grant select, --(good_id, title, description, tags, location, giver, created_at, updated_at, given_at),
     insert(good_id, title, description, tags, location, receiver, given_at),
-    update(good_id, title, description, tags, location, receiver, given_at)
+    update(good_id, title, description, tags, location, receiver, given_at),
+    delete
 on table good to person;
 
 alter table good enable row level security;
@@ -358,7 +363,7 @@ execute procedure compare_search();
 create view nearby (geojson)
 with (security_invoker)
 as with base as (
-    select good.*, interest,
+    select good, interest,
     (location <@> (current_setting('httpg.query', true)::jsonb->'qs'->>'location')::point) * 1.609347 as bird_distance_km
     from good
     left join interest on (
@@ -367,13 +372,13 @@ as with base as (
     )
     where receiver is null
 )
-select geojson(base.location, jsonb_build_object(
+select geojson((base.good).location, jsonb_build_object(
     'description', xmlconcat(
-        xmlelement(name h3, base.title),
-        xmlelement(name p, base.description),
+        xmlelement(name h3, (base.good).title),
+        xmlelement(name p, (base.good).description),
         (
             select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.want(%L)', base.good_id),
+                    'sql', format('call cpres.want(%L)', (base.good).good_id),
                     'redirect', 'referer'
                 )) as action),
                 xmlelement(name input, xmlattributes(
@@ -383,11 +388,11 @@ select geojson(base.location, jsonb_build_object(
             )
             where (interest).good_id is null 
             and current_person_id() is not null
-            and current_person_id() <> base.giver
+            and current_person_id() <> (base.good).giver
         ),
         (
             select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.unwant(%L)', base.good_id),
+                    'sql', format('call cpres.unwant(%L)', (base.good).good_id),
                     'redirect', 'referer'
                 )) as action),
                 xmlelement(name input, xmlattributes(
@@ -397,7 +402,7 @@ select geojson(base.location, jsonb_build_object(
             )
             where (interest).good_id is not null 
             and current_person_id() is not null
-            and current_person_id() <> base.giver
+            and current_person_id() <> (base.good).giver
         ),
         xmlelement(name div, format(_('by %s'), giver.name)),
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
@@ -413,7 +418,7 @@ select geojson(base.location, jsonb_build_object(
                     'content_type', content_type
                 ))
                 from good_media
-                where good_id = base.good_id
+                where good_id = (base.good).good_id
             )
             select xmlagg(
                 xmlelement(name a, xmlattributes(url as href),
@@ -426,7 +431,7 @@ select geojson(base.location, jsonb_build_object(
     'bird_distance_km', bird_distance_km
 )) geojson
 from base
-join person giver on (base.giver = giver.person_id)
+join person giver on ((base.good).giver = giver.person_id)
 where bird_distance_km < 100;
 
 grant select on table nearby to person;
@@ -534,6 +539,7 @@ select xmlelement(name div, xmlattributes('new' as class),
     xmlelement(name h2, _('Existing goods'))
 )::text
 union all (
+with result as (
 select
 xmlconcat(
     xmlelement(name hr),
@@ -650,13 +656,16 @@ xmlconcat(
 from good
 left join person receiver on (good.receiver = receiver.person_id)
 where giver = current_person_id()
-order by updated_at desc nulls last, title);
+order by updated_at desc nulls last, title
+)
+select coalesce((select * from result), 'no good yet.'));
 
 grant select on table "my goods" to person;
 
-create view "activity"
+create view "activity" (html)
 with (security_invoker)
-as select xmlelement(name div,
+as with result (html) as (
+select xmlelement(name div,
     format(_('%s is interested by '), receiver.name),
     xmlelement(name a, xmlattributes(
         url('/query', jsonb_build_object(
@@ -720,7 +729,9 @@ order by (
     from message
     where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
 ) desc nulls last,
-interest.at desc;
+interest.at desc
+)
+select coalesce((select html from result), _('no activity yet.'));
 
 grant select on table "activity" to person;
 
