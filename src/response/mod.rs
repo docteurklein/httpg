@@ -51,8 +51,8 @@ impl IntoResponse for Result {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
         }
-        match self.query.accept { // @TODO real negotation parsing
-            Some(a) if a == "application/json" => {
+        match self.query.accept() { // @TODO real negotation parsing
+            a if a == "application/json" => {
                 match self.rows {
                     Rows::Stream(rows) =>  (
                         [("content-type", "application/json")],
@@ -66,7 +66,7 @@ impl IntoResponse for Result {
                     }
                 }
             },
-            Some(a) if a.starts_with("text/html") => {
+            a if a.starts_with("text/html") => {
                 match self.rows {
                     Rows::Stream(rows) => (
                         [("content-type", "text/html; charset=utf-8")],
@@ -82,10 +82,10 @@ impl IntoResponse for Result {
                     }
                 }
             },
-            _ => {
+            a => {
                 match self.rows {
                     Rows::Stream(rows) => (
-                        [("content-type", self.query.content_type)],
+                        [("content-type", a)],
                         Body::from_stream(rows
                             .map(|row| row.unwrap().get::<usize, Vec<u8>>(0))
                             .map(Ok::<_, axum::Error>)

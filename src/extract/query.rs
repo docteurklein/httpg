@@ -103,7 +103,7 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
-    pub content_type: String,
+    pub content_type: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
@@ -167,7 +167,7 @@ impl Query {
             }
         }).collect();
 
-        let content_type = qs.content_type.or(body.content_type).unwrap_or("application/octet-stream".to_string());
+        let content_type = qs.content_type.or(body.content_type);
 
         let out_types = qs.out_types.or(body.out_types).unwrap_or_default();
 
@@ -185,6 +185,11 @@ impl Query {
             on_error,
             out_types,
         })
+    }
+
+    pub fn accept(self) -> String
+    {
+        self.content_type.or(self.accept).unwrap_or("application/octet-stream".to_string())
     }
 }
 

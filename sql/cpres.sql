@@ -133,6 +133,7 @@ insert into translation (id, lang, text) values
 , ('Add image', 'fr', 'Ajouter cette image')
 , ('Remove', 'fr', 'Supprimer')
 , ('Are you sure?', 'fr', 'En êtes-vous sûr?')
+, ('Give to %s', 'fr', 'Donner à %s')
 ;
 
 
@@ -408,7 +409,8 @@ select geojson(base.location, jsonb_build_object(
                 -- ))
                 select url('/query', jsonb_build_object(
                     'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
-                    'params[]', content_hash
+                    'params[]', content_hash,
+                    'content_type', content_type
                 ))
                 from good_media
                 where good_id = base.good_id
@@ -503,7 +505,8 @@ select xmlelement(name div,
         with url (url) as (
             select url('/query', jsonb_build_object(
                 'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
-                'params[]', content_hash
+                'params[]', content_hash,
+                'content_type', content_type
             ))
             from good_media
             where good_media.good_id = good.good_id
@@ -545,12 +548,9 @@ xmlconcat(
                 with url (url) as (
                     select url('/query', jsonb_build_object(
                         'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
-                        'params[]', content_hash
+                        'params[]', content_hash,
+                        'content_type', content_type
                     ))
-                    -- select url('/raw', jsonb_build_object(
-                    --     'sql', format($$values (jsonb_build_object('header', array['content-type', %L])::text) union all select jsonb_build_object('body', content::text)::text from cpres.good_media where content_hash = $1::text::bytea $$, content_type),
-                    --     'params[]', content_hash
-                    -- ))
                 )
                 select xmlelement(name a, xmlattributes(url as href),
                     xmlelement(name img, xmlattributes(url as src))
@@ -1011,31 +1011,31 @@ insert into person (person_id, name, email, location, login_challenge) values
 --     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'chaise en bois', '{}', 'high'),
 --     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'chaise en metal', '{}', 'high');
 
-CREATE OR REPLACE FUNCTION random_string(int)
-RETURNS text
-AS $$ 
-  SELECT array_to_string(
-    ARRAY (
-      SELECT substring(
-        '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ ' 
-        FROM (random() *37)::int FOR 1)
-      FROM generate_series(1, $1) ), '' ) 
-$$ LANGUAGE sql;
+-- create or replace function random_string(int)
+-- returns text
+-- as $$ 
+--   select array_to_string(
+--     array (
+--       select substring(
+--         '0123456789abcdefghijklmnopqrstuvwxyz ' 
+--         from (random() *37)::int for 1)
+--       from generate_series(1, $1) ), '' ) 
+-- $$ language sql;
 
-insert into good (title, description, location, giver)
-select
-    -- format('good %s %s', name, i),
-    random_string(random(5, 10)),
-    random_string(random(50, 100)),
-    format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
-    person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
-from generate_series(1, 10) i, person
-where name <> 'p3';
+-- insert into good (title, description, location, giver)
+-- select
+--     -- format('good %s %s', name, i),
+--     random_string(random(5, 10)),
+--     random_string(random(50, 100)),
+--     format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
+--     person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
+-- from generate_series(1, 10) i, person
+-- where name <> 'p3';
 
-insert into interest (good_id, person_id, price, origin)
-select good_id, person_id, random(1, 10), 'manual'
-from person, good
-where person.person_id <> good.giver;
+-- insert into interest (good_id, person_id, price, origin)
+-- select good_id, person_id, random(1, 10), 'manual'
+-- from person, good
+-- where person.person_id <> good.giver;
 
 -- insert into message (good_id, person_id, author, content)
 -- select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
