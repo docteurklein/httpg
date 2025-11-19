@@ -109,6 +109,7 @@
 
           env = {
             PG_DBNAME = "httpg";
+            PG_USER = "httpg";
             HTTPG_LOGIN_PROC="select cpres.login()";
             HTTPG_PRIVATE_KEY = "private-key-file";
             HTTPG_ANON_ROLE = "person";
@@ -131,12 +132,12 @@
               # "wal_level" = "logical";
               "app.tenant" = "tenant#1";
               "shared_preload_libraries" = "auto_explain";
-              "auto_explain.log_min_duration" = "0ms";
-              "auto_explain.log_nested_statements" = true;
+              # "auto_explain.log_min_duration" = "0ms";
+              # "auto_explain.log_nested_statements" = true;
               # "auto_explain.log_timing" = true;
               # "auto_explain.log_analyze" = true;
               "auto_explain.log_triggers" = true;
-              # "log_statement" = "all";
+              "log_statement" = "all";
               "log_connections" = "on";
               "lc_messages" = "fr_FR.UTF-8";
             };

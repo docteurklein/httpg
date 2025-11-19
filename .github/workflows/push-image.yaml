@@ -7,6 +7,9 @@ jobs:
       image_name: ${{ steps.image_name.outputs.image_name }}
     environment: production
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v4
         with:
