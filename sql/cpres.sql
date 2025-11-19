@@ -100,6 +100,60 @@ $$;
 -- alter function current_person_id() owner to person;
 grant execute on function current_person_id to person;
 
+create table translation (
+    id text not null,
+    lang text not null,
+    text text not null,
+    primary key (id, lang)
+);
+
+create index on translation (id, lang);
+
+insert into translation (id, lang, text) values
+  ('Welcome %s!', 'fr', 'Bienvenue %s!')
+, ('Interested!', 'fr', 'Intéressé!')
+, ('Not interested anymore!', 'fr', 'Plus intéressé!')
+, ('Send login challenge', 'fr', 'Envoyer un lien de login')
+, ('map', 'fr', 'carte')
+, ('search', 'fr', 'Rechercher')
+, ('activity', 'fr', 'Notifications')
+, ('my goods', 'fr', 'Mes biens')
+, ('by %s', 'fr', 'Par %s')
+, ('Search', 'fr', 'Chercher')
+, ('query', 'fr', 'Requête')
+, ('title', 'fr', 'Titre')
+, ('Create alert', 'fr', 'Créer une alerte')
+, ('Remove alert', 'fr', 'Supprimer cette alerte')
+, ('%s is interested by ', 'fr', '%s est intéressé par ')
+, (' from %s', 'fr', ' de %s')
+, ('Send message', 'fr', 'Envoyer')
+, ('New good', 'fr', 'Créér un nouveau bien')
+, ('Existing goods', 'fr', 'Mes biens')
+, ('Submit', 'fr', 'Enregistrer')
+, ('Add image', 'fr', 'Ajouter cette image')
+, ('Remove', 'fr', 'Supprimer')
+, ('Are you sure?', 'fr', 'En êtes-vous sûr?')
+;
+
+
+create function cpres._(id_ text, lang_ text = null)
+returns text
+immutable parallel safe
+security definer
+set search_path to cpres, pg_catalog
+language sql
+begin atomic
+    select coalesce(
+        (
+            select text
+            from translation
+            where (id, lang) = (id_, coalesce(lang_, coalesce(current_setting('cpres.accept_language', true), 'fr')))
+            limit 1
+        ),
+        id_
+    );
+end;
+
 create table person (
     person_id uuid primary key default gen_random_uuid(),
     name text not null,
@@ -290,8 +344,6 @@ begin
     select good_id, person_id, interest, 'automatic', query
     from result
     where rerank_distance < 0;
-    -- or new.tags && result.tags
-    -- order by rerank_distance;
 
     return null;
 end;
@@ -325,7 +377,7 @@ select geojson(base.location, jsonb_build_object(
                 )) as action),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
-                    'Interested!' as value
+                    _('Interested!') as value
                 ))
             )
             where (interest).good_id is null 
@@ -339,15 +391,15 @@ select geojson(base.location, jsonb_build_object(
                 )) as action),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
-                    'Not interested anymore!' as value
+                    _('Not interested anymore!') as value
                 ))
             )
             where (interest).good_id is not null 
             and current_person_id() is not null
             and current_person_id() <> base.giver
         ),
-        xmlelement(name div, format('by %s', giver.name)),
-        xmlelement(name div, format('distance %s km', round(bird_distance_km::numeric, 2))),
+        xmlelement(name div, format(_('by %s'), giver.name)),
+        xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
         (
             with url (url) as (
                 -- select url('/raw', jsonb_build_object(
@@ -410,7 +462,7 @@ select xmlelement(name form, xmlattributes(
         xmlelement(name input, xmlattributes(
             'text' as type,
             'params[]' as name,
-            'title' as placeholder,
+            _('title') as placeholder,
             true as required,
             params->>0 as value
         )),
@@ -421,14 +473,15 @@ select xmlelement(name form, xmlattributes(
         xmlelement(name input, xmlattributes(
             'text' as type,
             'params[]' as name,
-            'location: (lat,lng)' as placeholder,
+            _('location: (lat,lng)') as placeholder,
             'location' as class,
             '\(.+,.+\)' as pattern,
             true as required,
             params->>2 as value
         )),
         xmlelement(name input, xmlattributes(
-            'submit' as type
+            'submit' as type,
+            _('Submit') as value
         ))
     )
 )
@@ -444,7 +497,7 @@ with (security_invoker)
 as
 select xmlelement(name div,
     xmlelement(name h2, good.title),
-    xmlelement(name span, format('by %s', giver.name)),
+    xmlelement(name span, format(_('by %s'), giver.name)),
     xmlelement(name p, good.description),
     (
         with url (url) as (
@@ -470,18 +523,18 @@ create view "my goods" (html)
 with (security_invoker)
 as
 select xmlelement(name div, xmlattributes('new' as class),
-    xmlelement(name h2, 'New good'),
+    xmlelement(name h2, _('New good')),
     good_form(
         coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'->'params',
         'insert into cpres.good (title, description, location) values ($1::text, $2::text, $3::text::point)'
     ),
-    xmlelement(name h2, 'Existing goods')
+    xmlelement(name h2, _('Existing goods'))
 )::text
 union all (
 select
 xmlconcat(
     xmlelement(name hr),
-    case when receiver.name is not null then xmltext(format('Given to %s', receiver.name)) end,
+    case when receiver.name is not null then xmltext(format(_('Given to %s'), receiver.name)) end,
     good_form(
         jsonb_build_array(title, description, good.location),
         format('update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L', good_id)
@@ -529,8 +582,8 @@ xmlconcat(
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
                     'pico-background-red' as class,
-                    'return confirm("Are you sure?")' as onclick,
-                    'Remove' as value
+                    format('return confirm(%L)', _('Are you sure?')) as onclick,
+                    _('Remove') as value
                 ))
             )
         ))
@@ -551,7 +604,10 @@ xmlconcat(
             'hidden' as type,
             'sql' as name,
             format($$
-                insert into cpres.good_media (good_id, name, content, content_type) values (%L, 'test', $1, 'test')
+                insert into cpres.good_media (good_id, name, content, content_type)
+                select %L, convert_from($2, 'UTF8'), $1, convert_from($3, 'UTF8')
+                where $1 <> ''
+                on conflict (content_hash) do nothing
             $$, good_id) as value
         )),
         xmlelement(name input, xmlattributes(
@@ -561,7 +617,7 @@ xmlconcat(
         )),
         xmlelement(name input, xmlattributes(
             'submit' as type,
-            'Add image' as value
+            _('Add image') as value
         ))
     ),
     xmlelement(name form, xmlattributes(
@@ -586,8 +642,8 @@ xmlconcat(
         xmlelement(name input, xmlattributes(
             'submit' as type,
             'pico-background-red' as class,
-            'return confirm("Are you sure?")' as onclick,
-            'Remove' as value
+            format('return confirm(%L)', _('Are you sure?')) as onclick,
+            _('Remove') as value
         ))
     )
 )::text
@@ -601,14 +657,14 @@ grant select on table "my goods" to person;
 create view "activity"
 with (security_invoker)
 as select xmlelement(name div,
-    format('%s is interested by ', receiver.name),
+    format(_('%s is interested by '), receiver.name),
     xmlelement(name a, xmlattributes(
         url('/query', jsonb_build_object(
             'sql', 'table cpres.head union all select html from cpres."goods" where good_id = $1::uuid',
             'params[]', good.good_id
         )) as href
     ), good.title),
-    format(' from %s', giver.name),
+    format(_(' from %s'), giver.name),
     (
         with message as (
             select *
@@ -617,7 +673,7 @@ as select xmlelement(name div,
             order by at asc
         )
         select xmlagg(xmlelement(name div,
-            'by ' || author.name || ': ' || content
+            format(_('by %s'), author.name) || ': ' || content
         ))
         from message
         join person author on (author.person_id = message.author)
@@ -638,7 +694,7 @@ as select xmlelement(name div,
         ), ''),
         xmlelement(name input, xmlattributes(
             'submit' as type,
-            'Send message' as value
+            _('Send message') as value
         ))
     ),
     (select xmlelement(name form, xmlattributes(
@@ -649,7 +705,7 @@ as select xmlelement(name div,
         )) as action),
         xmlelement(name input, xmlattributes(
             'submit' as type,
-            format('Give to %s', receiver.name) as value
+            format(_('Give to %s'), receiver.name) as value
         ))
     ) where interest.person_id <> current_person_id())
 )::text
@@ -674,7 +730,7 @@ as with q (q) as (
     select current_setting('httpg.query', true)::jsonb->'qs'->>'q'
 )
 select xmlelement(name div,
-    xmlelement(name h2, 'Search'),
+    xmlelement(name h2, _('Search')),
     xmlelement(name nav, xmlelement(name ul, (
         select xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
             url('/query', jsonb_build_object(
@@ -690,7 +746,7 @@ select xmlelement(name div,
         xmlelement(name input, xmlattributes(
             'q' as name,
             'text' as type,
-            'query' as placeholder,
+            _('query') as placeholder,
             q as value
         )),
         xmlelement(name input, xmlattributes(
@@ -700,7 +756,7 @@ select xmlelement(name div,
         )),
         xmlelement(name input, xmlattributes(
             'submit' as type,
-            'Search' as value
+            _('Search') as value
         ))
     ),
     (
@@ -721,7 +777,7 @@ select xmlelement(name div,
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
-                'Create alert' as value
+                _('Create alert') as value
             ))
         )
         where q <> ''
@@ -747,7 +803,7 @@ select xmlelement(name div,
                 'submit' as type,
                 'pico-background-red' as class,
                 'return confirm("Are you sure?")' as onclick,
-                'Remove alert' as value
+                _('Remove alert') as value
             ))
         )
         where exists (select from search where query = q)
@@ -892,14 +948,17 @@ as select $html$<!DOCTYPE html>
 <body>
   <script type="module" src="/cpres.js"></script>
   <main class="container">
-    <form method="POST" action="/query?redirect=referer">
-      <fieldset role="group">
-        <input type="hidden" name="sql" value="call cpres.send_login_email($1::text)" />
-        <input type="text" name="params[]" placeholder="email" />
-        <input type="submit" value="Send login challenge" />
-      </fieldset>
-    </form>
 $html$
+union all (
+    select xmlelement(name form, xmlattributes('POST' as method, '/query?redirect=referer' as action),
+        xmlelement(name fieldset, xmlattributes('group' as role),
+            xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'call cpres.send_login_email($1::text)' as value)),
+            xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, 'email' as placeholder)),
+            xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
+
+        )
+    )::text
+)
 union all (
     select format($html$
         <form method="POST" action="/login?redirect=referer">
@@ -913,14 +972,14 @@ union all (
     order by name
 )
 union all select xmlelement(name div,
-    (select format('Welcome %s!', name) from person where person_id = current_person_id()),
+    (select format(_('Welcome %s!'), name) from person where person_id = current_person_id()),
     xmlelement(name nav,
         xmlelement(name ul, (
             with menu (name, sql, visible) as (values
-                ('map', 'table cpres.head union all table cpres.map', true),
-                ('search', 'table cpres.head union all table cpres."findings"', current_person_id() is not null),
-                ('activity', 'table cpres.head union all table cpres."activity"', current_person_id() is not null),
-                ('my goods', 'table cpres.head union all table cpres."my goods"', current_person_id() is not null)
+                (_('map'), 'table cpres.head union all table cpres.map', true),
+                (_('search'), 'table cpres.head union all table cpres."findings"', current_person_id() is not null),
+                (_('activity'), 'table cpres.head union all table cpres."activity"', current_person_id() is not null),
+                (_('my goods'), 'table cpres.head union all table cpres."my goods"', current_person_id() is not null)
             )
             select xmlagg(
                 xmlelement(name li, xmlelement(name a, xmlattributes(url('/query', jsonb_build_object('sql', sql)) as href), name))

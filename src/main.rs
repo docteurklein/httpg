@@ -325,7 +325,11 @@ async fn upload_query(
     }
 
     let sql_params: Vec<(_, Type)> = query.files.iter()
-        .map(|file| (file.content.as_ref(), Type::BYTEA))
+        .flat_map(|file| vec!(
+            (file.content.as_ref(), Type::BYTEA),
+            (file.file_name.as_ref(), Type::BYTEA),
+            (file.content_type.as_ref(), Type::BYTEA),
+        ))
     .collect();
 
     let result = tx.query_typed_raw(&query.sql, sql_params).await;
@@ -342,7 +346,7 @@ async fn upload_query(
         },
         Err(err) => {
             dbg!(&err);
-            let errors = json!({"error": &err.as_db_error().unwrap().message()});
+            let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
 
             let mut conn = pool.get().await.map_err(internal_error)?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
