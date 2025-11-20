@@ -876,52 +876,30 @@ end;
 -- alter procedure unwant(uuid) owner to person;
 grant execute on procedure unwant to person;
 
-create procedure send_login_email(text)
+create function send_login_email(text)
+returns table (sender text, "to" text, subject text, plain text, html text)
 language sql
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
-    with info (challenge, email) as (
-        select gen_random_uuid(), $1
-    ),
-    response (res) as (
-        select null
-        -- select http(('POST', 'https://send.api.mailtrap.io/api/send',
-        --     array[('Api-Token', current_setting('mailtrap.api_token', true))]::http_header[],
-        --     'application/json',
-        --     jsonb_build_object(
-        --         'from', jsonb_build_object(
-        --             'email', 'flo@example.org',
-        --             'name', 'Flo'
-        --         ),
-        --         'to', jsonb_build_array(jsonb_build_object(
-        --             'email', 'florian.klein@free.fr',
-        --             'name', 'Florian Klein'
-        --         )),
-        --         'subject', 'test from postgres!',
-        --         'html', format($html$
-        --             <form method="POST" action="/login?redirect=referer">
-        --                 <input type="hidden" name="sql" value="" />
-        --                 <input type="hidden" name="challenge" value="%s" />
-        --                 <input type="submit" value="Login as %s" />
-        --             </form>
-        --         $html$, challenge, email)
-        --     )
-        -- )::http_request)
-        -- from info
-    )
-    insert into person (name, email, login_challenge)
-    select email, email, challenge
-    from response, info
-    -- where response.status = 200
+    insert into cpres.person (name, email, login_challenge)
+    values ($1, $1, gen_random_uuid())
     on conflict (email) do update
         set login_challenge = excluded.login_challenge
-        -- name = excluded.name
+    returning 'florian.klein@free.fr', email, 'test', login_challenge,
+        xmlelement(name form, xmlattributes(
+            'POST' as method,
+            url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object('redirect', 'referer')) as action,
+            '_blank' as target
+        ),
+            xmlelement(name input, xmlattributes('hidden' as type, 'challenge' as name, login_challenge as value)),
+            xmlelement(name input, xmlattributes('submit' as type, format(_('Login as %s'), name) as value))
+        )
     ;
 end;
 
 -- alter procedure send_login_email(text) owner to person;
-grant execute on procedure send_login_email(text) to person;
+grant execute on function send_login_email(text) to person;
 
 create function login() returns setof text
 volatile strict parallel safe
@@ -961,9 +939,9 @@ as select $html$<!DOCTYPE html>
   <main class="container">
 $html$
 union all (
-    select xmlelement(name form, xmlattributes('POST' as method, '/query?redirect=referer' as action),
+    select xmlelement(name form, xmlattributes('POST' as method, '/email?redirect=referer' as action),
         xmlelement(name fieldset, xmlattributes('group' as role),
-            xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'call cpres.send_login_email($1::text)' as value)),
+            xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from cpres.send_login_email($1)' as value)),
             xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, 'email' as placeholder)),
             xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
 

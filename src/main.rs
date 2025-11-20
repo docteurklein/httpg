@@ -9,6 +9,8 @@ use axum_server::{accept::Accept, tls_rustls::RustlsConfig};
 use axum_macros::debug_handler;
 // use axum_server::tls_rustls::RustlsConfig;
 
+use email_clients::{clients::{get_email_client, smtp::SmtpConfig}, configuration::EmailConfiguration, email::{EmailAddress, EmailObject}};
+use futures::StreamExt;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -105,6 +107,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .route("/query", get(stream_query).post(post_query))
         .route("/upload", post(upload_query))
         .route("/raw", get(raw_http).post(raw_http))
+        .route("/email", post(email))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
@@ -114,11 +117,11 @@ async fn main() -> Result<(), anyhow::Error> {
 
     let addr = SocketAddr::from(([0, 0, 0, 0], env::var("PORT").unwrap_or("3000".to_string()).parse().unwrap_or(3000)));
     let tcp = TcpListener::bind(addr)?;
-    tracing::debug!("listening on https://{}", tcp.local_addr()?);
+    tracing::debug!("listening on {}", tcp.local_addr()?);
 
     let config = RustlsConfig::from_pem_file(
-        "localhost+2.pem",
-        "localhost+2-key.pem"
+        env::var("HTTPG_PEM").unwrap_or("".to_string()),
+        env::var("HTTPG_PEM_KEY").unwrap_or("".to_string()),
     )
     .await;
     
@@ -180,6 +183,64 @@ async fn login(
         )],
         Redirect::to(&query.redirect.unwrap())
     ).into_response())
+}
+
+#[debug_handler]
+async fn email(
+    State(AppState {pool, anon_role, ..}): State<AppState>,
+    query: extract::query::Query,
+) -> Result<Response, Response> {
+
+    let mut conn = pool.get().await.map_err(internal_error)?;
+    let tx = conn.build_transaction()
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await
+    .map_err(internal_error)?;
+
+    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(internal_error)?;
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
+        (
+            serde_json::to_string(&query).map_err(internal_error)?,
+            Type::TEXT
+        )
+    ])
+    .await
+    .map_err(internal_error)?;
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param, param.to_owned().into())
+    }).collect();
+
+    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
+
+    let smtp_config = SmtpConfig::default()
+        .sender("florian.klein@free.fr")
+        .username(env::var("HTTPG_SMTP_USER").unwrap())
+        .password(env::var("HTTPG_SMTP_PASSWORD").unwrap())
+        .relay(env::var("HTTPG_SMTP_RELAY").unwrap())
+        .tls(email_clients::clients::smtp::TlsMode::StartTls)
+        .port(587)
+    ;
+    let email_configuration: EmailConfiguration = smtp_config.into();
+    let client = get_email_client(email_configuration);
+
+    rows.for_each(async |row| {
+        if let Ok(row) = row {
+           let mail = EmailObject {
+               sender: row.get::<&str, &str>("sender").into(),
+               to: vec![EmailAddress { name: row.get::<&str, &str>("to").into(), email: row.get::<&str, &str>("to").into() }],
+               subject: row.get::<&str, &str>("subject").into(),
+               plain: row.get::<&str, &str>("plain").into(),
+               html: row.get::<&str, &str>("html").into(),
+            };
+            dbg!(&mail);
+            client.clone().unwrap().send_emails(mail).await.expect("Unable to send email");
+        }
+    }).await;
+
+    tx.commit().await.map_err(internal_error)?;
+
+    Ok(Redirect::to(&query.redirect.unwrap()).into_response())
 }
 
 #[debug_handler]

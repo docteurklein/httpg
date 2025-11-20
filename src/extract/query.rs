@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use axum::{
     Json, extract::{FromRequest, Multipart, Request}, http::{
-        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, REFERER}
+        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER}
     }, response::{IntoResponse, Response}
 };
 use bytes::Bytes;
@@ -94,18 +94,16 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<Param>,
-    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
     pub accept_language: Option<String>,
     pub content_type: Option<String>,
-    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
-    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
     #[serde(default)]
@@ -124,6 +122,7 @@ impl Query {
         files: Vec<File>,
         referer: Option<&str>,
         accept: Option<&str>,
+        host: Option<&str>,
         accept_language: Option<&str>,
         // out_types: Vec<Type>,
     ) -> Result<Self, Response> {
@@ -175,6 +174,7 @@ impl Query {
             sql: sql.unwrap_or_default(),
             order: order.cloned(),
             params,
+            host: host.map(str::to_string),
             redirect: redirect.map(str::to_string),
             content_type,
             accept: accept.map(str::to_string),
@@ -201,9 +201,10 @@ where
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let headers = req.headers().clone();
+        let uri = req.uri().clone();
         let serde_qs = serde_qs::Config::new(5, false); // non-strict for browsers
 
-        let raw_qs = match req.uri().query() {
+        let raw_qs = match uri.query() {
             Some(qs) => match serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(qs) {
                 Ok(qs) => Ok(qs),
                 Err(e) => {
@@ -266,7 +267,14 @@ where
         let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
         let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok());
 
-        Query::new(raw_qs.unwrap_or_default(), raw_body, files, referer, accept, accept_language)
+        let host = match uri.authority() {
+            Some(authority) => Some(authority.as_str()),
+            None => headers
+                .get(HOST)
+                .and_then(|host| host.to_str().ok()),
+        };
+
+        Query::new(raw_qs.unwrap_or_default(), raw_body, files, referer, accept, host, accept_language)
     }
 }
 

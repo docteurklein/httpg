@@ -41,3 +41,4 @@ sqlparser = { version = "0.53.0", features = ["visitor"] }
 bunner_qs_rs = "0.1.1"
 cookie = "0.18.1"
 base64 = "0.22.1"
+email-clients = { version = "0.2.0", features = ["smtp"] }
