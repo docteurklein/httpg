@@ -887,14 +887,13 @@ begin atomic
     on conflict (email) do update
         set login_challenge = excluded.login_challenge
     returning 'florian.klein@free.fr', email, 'test', login_challenge,
-        xmlelement(name form, xmlattributes(
-            'POST' as method,
-            url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object('redirect', 'referer')) as action,
-            '_blank' as target
-        ),
-            xmlelement(name input, xmlattributes('hidden' as type, 'challenge' as name, login_challenge as value)),
-            xmlelement(name input, xmlattributes('submit' as type, format(_('Login as %s'), name) as value))
-        )
+        xmlelement(name a, xmlattributes(
+            url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
+                'redirect', url('/query', jsonb_build_object('sql', 'table cpres.head union all table cpres.map')),
+                'challenge', login_challenge,
+                'sql', 'select'
+            )) as href
+        ), format(_('Login as %s'), name))
     ;
 end;
 
@@ -909,8 +908,8 @@ set search_path to cpres, pg_catalog
 begin atomic
     with "user" as (
         update person
-        set login_challenge = login_challenge -- TODO: set login_challenge = null
-        where login_challenge = (current_setting('httpg.query', true)::jsonb->'body'->>'challenge')::uuid
+        set login_challenge = null
+        where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'challenge')::uuid
         returning person_id
     )
     select format($sql$set local role to person; set local "cpres.person_id" to %L$sql$, person_id)
@@ -938,6 +937,7 @@ as select $html$<!DOCTYPE html>
   <script type="module" src="/cpres.js"></script>
   <main class="container">
 $html$
+union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
 union all (
     select xmlelement(name form, xmlattributes('POST' as method, '/email?redirect=referer' as action),
         xmlelement(name fieldset, xmlattributes('group' as role),
@@ -950,7 +950,7 @@ union all (
 )
 union all (
     select format($html$
-        <form method="POST" action="/login?redirect=referer">
+        <form method="GET" action="/login?redirect=referer">
             <input type="text" name="challenge" />
             <input type="submit" value="Login as %s" />
         </form>
@@ -961,7 +961,6 @@ union all (
     order by name
 )
 union all select xmlelement(name div,
-    (select format(_('Welcome %s!'), name) from person where person_id = current_person_id()),
     xmlelement(name nav,
         xmlelement(name ul, (
             with menu (name, sql, visible) as (values

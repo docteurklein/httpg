@@ -103,7 +103,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .allow_origin(Any);
 
     let app = Router::new()
-        .route("/login", post(login))
+        .route("/login", get(login).post(login))
         .route("/query", get(stream_query).post(post_query))
         .route("/upload", post(upload_query))
         .route("/raw", get(raw_http).post(raw_http))
@@ -177,7 +177,7 @@ async fn login(
         [(SET_COOKIE, Cookie::build(("auth", builder.build(&root).unwrap().to_base64().unwrap()))
             .http_only(true)
             .secure(true)
-            .same_site(Strict)
+            .same_site(cookie::SameSite::Lax) // Strict breaks sending cookie after email challenge redirect
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
