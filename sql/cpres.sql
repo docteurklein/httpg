@@ -630,7 +630,7 @@ xmlconcat(
             format($$
                 insert into cpres.good_media (good_id, name, content, content_type)
                 select %L, convert_from(f[2], 'UTF8'), f[1], convert_from(f[3], 'UTF8')
-                from (select $1::bytea[]) f(f)
+                from unnest($1::bytea[]) f(f)
                 where f[1] <> ''
                 on conflict (content_hash) do nothing
             $$, good_id) as value
@@ -677,7 +677,7 @@ left join person receiver on (good.receiver = receiver.person_id)
 where giver = current_person_id()
 order by updated_at desc nulls last, title
 )
-select coalesce((select * from result), 'no good yet.'));
+select * from result);
 
 grant select on table "my goods" to person;
 
@@ -750,7 +750,7 @@ order by (
 ) desc nulls last,
 interest.at desc
 )
-select coalesce((select html from result), _('no activity yet.'));
+select html from result;
 
 grant select on table "activity" to person;
 

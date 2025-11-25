@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
         StatusCode, header::SET_COOKIE,
@@ -226,9 +225,9 @@ async fn login(
     ).into_response())
 }
 
-async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), anyhow::Error> {
+async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
-    tx.batch_execute(&format!("set local role to {anon_role}")).await.map_err(|e| anyhow!(e))?;
+    tx.batch_execute(&format!("set local role to {anon_role}")).await?;//.map_err(HttpgError::No)?;
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
         (
@@ -394,6 +393,16 @@ async fn post_query(
     }.into_response())
 }
 
+#[derive(thiserror::Error, Debug)]
+enum HttpgError {
+    #[error("postgres")]
+    Postgres(#[from] tokio_postgres::Error),
+    #[error("deadpool")]
+    Deadpool(#[from] deadpool_postgres::PoolError),
+    #[error("serde")]
+    Serde(#[from] serde_json::Error),
+}
+
 #[debug_handler]
 async fn upload_query(
     State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
@@ -403,21 +412,22 @@ async fn upload_query(
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error)?;
 
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params: Vec<_> = query.files.iter()
-        .map(|file| vec!(
+    let sql_params: Vec<(_, Type)> = vec!((
+        query.files.iter().map(|file| vec!(
             file.content.as_ref(),
             file.file_name.as_ref(),
             file.content_type.as_ref()
         ))
-    .collect();
+        .collect::<Vec<_>>()
+    , Type::UNKNOWN));
 
-    let result = tx.query_raw(&query.sql, sql_params).await;
+    let result = tx.query_typed_raw(&query.sql, sql_params).await;
 
     let rows = match result {
          Ok(rows) => {
@@ -432,10 +442,12 @@ async fn upload_query(
         Err(err) => {
             dbg!(&err);
             let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
+            dbg!(&errors);
 
             let mut conn = pool.get().await.map_err(internal_error)?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
+            // pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error)?;
             tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
             tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
 
