@@ -37,3 +37,4 @@ sqlparser = { version = "^0.53", features = ["visitor"] }
 cookie = "^0.18"
 email-clients = { version = "^0.2", features = ["smtp"] }
 flate2 = "1.1.5"
+conf = "0.2.1"
