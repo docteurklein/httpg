@@ -90,8 +90,10 @@ language plpgsql
 security invoker
 set search_path to cpres, pg_catalog
 as $$
+declare person_id uuid;
 begin
-    return current_setting('cpres.person_id', true)::uuid;
+    select person.person_id into person_id from person where person.person_id = current_setting('cpres.person_id', true)::uuid limit 1;
+    return person_id;
 exception when invalid_text_representation then
     return null;
 end;
@@ -376,34 +378,6 @@ select geojson((base.good).location, jsonb_build_object(
     'description', xmlconcat(
         xmlelement(name h3, (base.good).title),
         xmlelement(name p, (base.good).description),
-        (
-            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.want(%L)', (base.good).good_id),
-                    'redirect', 'referer'
-                )) as action),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    _('Interested!') as value
-                ))
-            )
-            where (interest).good_id is null 
-            and current_person_id() is not null
-            and current_person_id() <> (base.good).giver
-        ),
-        (
-            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.unwant(%L)', (base.good).good_id),
-                    'redirect', 'referer'
-                )) as action),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    _('Not interested anymore!') as value
-                ))
-            )
-            where (interest).good_id is not null 
-            and current_person_id() is not null
-            and current_person_id() <> (base.good).giver
-        ),
         xmlelement(name div, format(_('by %s'), giver.name)),
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
         (
@@ -426,6 +400,45 @@ select geojson((base.good).location, jsonb_build_object(
                 )
             )
             from url
+        ),
+        (
+            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                    'sql', format('call cpres.want(%L, $1)', (base.good).good_id),
+                    'redirect', 'referer'
+                )) as action),
+                xmlelement(name button, xmlattributes(
+                    'params[]' as name,
+                    'low' as value,
+                    'submit' as type
+                ), _('A little Interested!')),
+                xmlelement(name button, xmlattributes(
+                    'params[]' as name,
+                    'normal' as value,
+                    'submit' as type
+                ), _('Interested!')),
+                xmlelement(name button, xmlattributes(
+                    'params[]' as name,
+                    'high' as value,
+                    'submit' as type
+                ), _('Highly Interested!'))
+            )
+            where (interest).good_id is null 
+            and current_person_id() is not null
+            and current_person_id() <> (base.good).giver
+        ),
+        (
+            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                    'sql', format('call cpres.unwant(%L)', (base.good).good_id),
+                    'redirect', 'referer'
+                )) as action),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    _('Not interested anymore!') as value
+                ))
+            )
+            where (interest).good_id is not null 
+            and current_person_id() is not null
+            and current_person_id() <> (base.good).giver
         )
     ),
     'bird_distance_km', bird_distance_km
@@ -854,12 +867,12 @@ end;
 -- alter procedure give(uuid, uuid) owner to person;
 grant execute on procedure give to person;
 
-create procedure want(_good_id uuid)
+create procedure want(_good_id uuid, level interest_level)
 language sql
 security invoker
 set search_path to cpres, pg_catalog
 begin atomic
-    insert into interest (good_id, person_id, origin) values (_good_id, current_person_id(), 'manual');
+    insert into interest (good_id, person_id, origin, level) values (_good_id, current_person_id(), 'manual', level);
 end;
 
 -- alter procedure want(uuid) owner to person;
@@ -889,7 +902,9 @@ begin atomic
     returning 'florian.klein@free.fr', email, 'test', login_challenge,
         xmlelement(name a, xmlattributes(
             url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
-                'redirect', url('/query', jsonb_build_object('sql', 'table cpres.head union all table cpres.map')),
+                'redirect', url('/query', jsonb_build_object(
+                    'sql', 'table cpres.head union all table cpres.map'
+                )),
                 'challenge', login_challenge,
                 'sql', 'select'
             )) as href
@@ -921,7 +936,10 @@ grant execute on function login to person;
 
 create view head (html)
 with (security_invoker)
-as select $html$<!DOCTYPE html>
+as with q (q) as (
+    select current_setting('httpg.query')::jsonb
+)
+select $html$<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="utf-8" />
@@ -939,7 +957,33 @@ as select $html$<!DOCTYPE html>
 $html$
 union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
 union all (
-    select xmlelement(name form, xmlattributes('POST' as method, '/email?redirect=referer' as action),
+    with m(m) as (select q->'qs'->>'success' from q)
+    select xmlelement(name dialog, xmlattributes(
+        true as open,
+        'pico-background-green' as class
+    ), m)::text
+    from m
+    where m is not null
+)
+union all (
+    with m(m) as (select q->'qs'->>'error' from q)
+    select xmlelement(name dialog, xmlattributes(
+        true as open,
+        'pico-background-red' as class
+    ), m)::text
+    from m
+    where m is not null
+)
+union all (
+    select xmlelement(name form, xmlattributes(
+        'POST' as method,
+        url('/email', jsonb_build_object(
+            'redirect', url('/query', jsonb_build_object(
+                'sql', q->>'sql',
+                'success', _('Check your emails')
+            ))
+        )) as action
+    ),
         xmlelement(name fieldset, xmlattributes('group' as role),
             xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from cpres.send_login_email($1)' as value)),
             xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, 'email' as placeholder)),
@@ -947,6 +991,7 @@ union all (
 
         )
     )::text
+    from q
 )
 union all (
     select format($html$
@@ -955,9 +1000,9 @@ union all (
             <input type="submit" value="Login as %s" />
         </form>
     $html$, name)
-    from person
+    from person, q
     where true -- login_challenge is not null
-    and (current_setting('httpg.query', true)::jsonb->'qs'->>'debug') is not null -- TODO remove
+    and (q->'qs'->>'debug') is not null -- TODO remove
     order by name
 )
 union all select xmlelement(name div,
@@ -999,26 +1044,26 @@ insert into person (person_id, name, email, location, login_challenge) values
 --     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'chaise en bois', '{}', 'high'),
 --     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'chaise en metal', '{}', 'high');
 
--- create or replace function random_string(int)
--- returns text
--- as $$ 
---   select array_to_string(
---     array (
---       select substring(
---         '0123456789abcdefghijklmnopqrstuvwxyz ' 
---         from (random() *37)::int for 1)
---       from generate_series(1, $1) ), '' ) 
--- $$ language sql;
+create or replace function random_string(int)
+returns text
+as $$ 
+  select array_to_string(
+    array (
+      select substring(
+        '0123456789abcdefghijklmnopqrstuvwxyz ' 
+        from (random() *37)::int for 1)
+      from generate_series(1, $1) ), '' ) 
+$$ language sql;
 
--- insert into good (title, description, location, giver)
--- select
---     -- format('good %s %s', name, i),
---     random_string(random(5, 10)),
---     random_string(random(50, 100)),
---     format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
---     person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
--- from generate_series(1, 10) i, person
--- where name <> 'p3';
+insert into good (title, description, location, giver)
+select
+    -- format('good %s %s', name, i),
+    random_string(random(5, 10)),
+    random_string(random(50, 100)),
+    format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
+    person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
+from generate_series(1, 10) i, person
+where name <> 'p3';
 
 -- insert into interest (good_id, person_id, price, origin)
 -- select good_id, person_id, random(1, 10), 'manual'

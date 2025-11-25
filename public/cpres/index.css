@@ -10,3 +10,6 @@ html, body, #map {
     }
 }
 
+dialog {
+    height: unset;
+}
