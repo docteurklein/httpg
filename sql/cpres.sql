@@ -75,6 +75,8 @@ end;
 
 grant person to httpg;
 
+revoke usage on language plpgsql from public, httpg, person;
+
 grant usage, create on schema cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
 -- grant execute on all functions in schema pg_catalog to person;
@@ -624,8 +626,9 @@ xmlconcat(
             'sql' as name,
             format($$
                 insert into cpres.good_media (good_id, name, content, content_type)
-                select %L, convert_from($2, 'UTF8'), $1, convert_from($3, 'UTF8')
-                where $1 <> ''
+                select %L, convert_from(f[2], 'UTF8'), f[1], convert_from(f[3], 'UTF8')
+                from (select $1::bytea[]) f(f)
+                where f[1] <> ''
                 on conflict (content_hash) do nothing
             $$, good_id) as value
         )),
@@ -766,7 +769,7 @@ select xmlelement(name div,
     ))),
     xmlelement(name form, xmlattributes(
         'GET' as method,
-        url('/query') as action),
+        '/query' as action),
         xmlelement(name input, xmlattributes(
             'q' as name,
             'text' as type,
@@ -995,8 +998,9 @@ union all (
 )
 union all (
     select format($html$
-        <form method="GET" action="/login?redirect=referer">
+        <form method="GET" action="/login">
             <input type="text" name="challenge" />
+            <input type="hiddenr" name="redirect" value="referer" />
             <input type="submit" value="Login as %s" />
         </form>
     $html$, name)

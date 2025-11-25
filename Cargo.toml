@@ -16,29 +16,23 @@ tower = "^0.5"
 tower-http = { version = "^0.6", features = ["cors", "fs", "compression-br"] }
 serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
-handlebars = { version = "^4", features = ["dir_source"] }
 tokio = { version = "^1.0", features = ["full"] }
-tokio-postgres = { version = "^0.7", features= ["with-serde_json-1"] }
+tokio-postgres = { version = "^0.7", features= ["with-serde_json-1", "array-impls"] }
 tracing = "^0.1"
 tracing-subscriber = { version = "^0.3", features = ["env-filter"] }
 postgres-types = { version = "^0.2", features = ["derive"] }
 deadpool-postgres = { version = "^0.14", features = ["serde"] }
 biscuit-auth = "5.0.0"
 hex = "^0.4"
-headers = "^0.4"
 config = "^0.14"
 tokio-postgres-rustls = "^0.13"
 rustls = "^0.23"
 anyhow = "^1.0"
 axum-server = { version = "^0.7", features = ["tls-rustls"] }
-futures-core = "0.3.31"
 futures = "0.3.31"
 tokio-stream = "0.1.16"
-futures-util = "0.3.31"
 serde_qs = "0.13.0"
 bytes = "1.8.0"
 sqlparser = { version = "0.53.0", features = ["visitor"] }
-bunner_qs_rs = "0.1.1"
 cookie = "0.18.1"
-base64 = "0.22.1"
 email-clients = { version = "0.2.0", features = ["smtp"] }

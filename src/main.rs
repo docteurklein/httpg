@@ -89,14 +89,14 @@ async fn main() -> Result<(), anyhow::Error> {
         _ => cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?,
     };
     
-    let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await?;
+    let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await.expect("file present at HTTP_PRIVATE_KEY");
     let login_proc = env::var("HTTPG_LOGIN_PROC").expect("HTTPG_LOGIN_PROC");
     
     let state = AppState {
         login_proc,
         pool,
         anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
-        private_key: PrivateKey::from_bytes(&hex::decode(pkey)?)?,
+        private_key: PrivateKey::from_bytes(&hex::decode(pkey).expect("valid private key hex"))?,
     };
 
     let cors = CorsLayer::new()
@@ -385,15 +385,15 @@ async fn upload_query(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params: Vec<(_, Type)> = query.files.iter()
-        .flat_map(|file| vec!(
-            (file.content.as_ref(), Type::BYTEA),
-            (file.file_name.as_ref(), Type::BYTEA),
-            (file.content_type.as_ref(), Type::BYTEA),
+    let sql_params: Vec<_> = query.files.iter()
+        .map(|file| vec!(
+            file.content.as_ref(),
+            file.file_name.as_ref(),
+            file.content_type.as_ref()
         ))
     .collect();
 
-    let result = tx.query_typed_raw(&query.sql, sql_params).await;
+    let result = tx.query_raw(&query.sql, sql_params).await;
 
     let rows = match result {
          Ok(rows) => {

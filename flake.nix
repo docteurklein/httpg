@@ -102,7 +102,7 @@
           # https://devenv.sh/reference/options/
           packages = with pkgs; [
             postgresql_18
-            cargo cargo-watch clippy rustc rust-analyzer openssl.dev pkg-config
+            cargo cargo-watch cargo-shear clippy rustc rust-analyzer openssl.dev pkg-config
             mold-wrapped clang
             biscuit-cli
           ];
