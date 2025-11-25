@@ -80,7 +80,6 @@ pub struct QueryPart {
     pub sql: Option<String>,
     pub params: Option<Vec<serde_json::Value>>,
     pub in_types: Option<Vec<Type>>,
-    pub out_types: Option<Vec<Type>>,
     pub content_type: Option<String>,
     pub redirect: Option<String>,
     pub order: Option<BTreeMap<String, serde_json::Value>>,
@@ -112,7 +111,6 @@ pub struct Query {
     pub body: serde_json::Map<String, serde_json::Value>,
     #[serde(skip)]
     pub files: Vec<File>,
-    pub out_types: Vec<Type>,
 }
 
 impl Query {
@@ -167,7 +165,7 @@ impl Query {
 
         let content_type = qs.content_type.or(body.content_type);
 
-        let out_types = qs.out_types.or(body.out_types).unwrap_or_default();
+        // let out_types = qs.out_types.or(body.out_types).unwrap_or_default();
 
         Ok(Self {
             // sql: sql.ok_or((StatusCode::BAD_REQUEST, "missing sql field".to_string()).into_response())?,
@@ -183,7 +181,6 @@ impl Query {
             body: raw_body,
             files,
             on_error,
-            out_types,
         })
     }
 

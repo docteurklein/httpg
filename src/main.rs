@@ -1,24 +1,23 @@
 use axum::{
-    extract::{DefaultBodyLimit, State}, http::{
-        header::SET_COOKIE,
-        StatusCode,
-    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
+    Router, extract::{DefaultBodyLimit, State}, http::{
+        StatusCode, header::SET_COOKIE,
+    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 
+use config::ConfigError;
 use email_clients::{clients::{get_email_client, smtp::SmtpConfig}, configuration::EmailConfiguration, email::{EmailAddress, EmailObject}};
 use futures::StreamExt;
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio::fs;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use core::{panic};
-use std::{net::TcpListener, sync::Arc};
+use std::{collections::HashMap, net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
@@ -46,21 +45,57 @@ impl DeadPoolConfig {
             .add_source(config::Environment::default()
                 .prefix("PG")
                 .separator("_")
-                .keep_prefix(true))
+                .keep_prefix(true)
+            )
             .build()
-            .unwrap();
-        let cfg = config;
+            .unwrap()
+        ;
 
-        cfg.try_deserialize::<Self>().unwrap()
+        config.try_deserialize::<Self>().unwrap()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct TlsConfig {
+    pem: String,
+    pem_key: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct HttpgConfig {
+    private_key: String,
+    smtp_user: String,
+    smtp_password: String,
+    smtp_relay: String,
+    anon_role: String,
+    login_proc: String,
+    tls: Option<TlsConfig>,
+    port: u16,
+}
+
+impl HttpgConfig {
+    pub fn from_env() -> Result<Self, ConfigError> {
+        let port = env::var("PORT").unwrap_or("3000".to_string());
+        let config = config::Config::builder()
+            .add_source(
+                config::Environment::default()
+                .source(Some(HashMap::from([("port".to_string(), port.to_string())])))
+            )
+            .add_source(config::Environment::default()
+                .prefix("HTTPG")
+            )
+            .build()
+            .unwrap()
+        ;
+
+        config.try_deserialize::<Self>()
     }
 }
 
 #[derive(Clone)]
 struct AppState {
     pool: Pool,
-    anon_role: String,
-    private_key: PrivateKey,
-    login_proc: String,
+    config: HttpgConfig,
 }
 
 #[tokio::main]
@@ -87,15 +122,12 @@ async fn main() -> Result<(), anyhow::Error> {
         },
         _ => cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?,
     };
-    
-    let pkey = fs::read(env::var("HTTPG_PRIVATE_KEY").expect("HTTPG_PRIVATE_KEY")).await.expect("file present at HTTP_PRIVATE_KEY");
-    let login_proc = env::var("HTTPG_LOGIN_PROC").expect("HTTPG_LOGIN_PROC");
+
+    let httpg_config = HttpgConfig::from_env()?;
     
     let state = AppState {
-        login_proc,
         pool,
-        anon_role: env::var("HTTPG_ANON_ROLE").expect("HTTPG_ANON_ROLE"),
-        private_key: PrivateKey::from_bytes(&hex::decode(pkey).expect("valid private key hex"))?,
+        config: httpg_config.clone(),
     };
 
     let cors = CorsLayer::new()
@@ -114,26 +146,30 @@ async fn main() -> Result<(), anyhow::Error> {
         .layer(ServiceBuilder::new().layer(cors))
     ;
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], env::var("PORT").unwrap_or("3000".to_string()).parse().unwrap_or(3000)));
+    let addr = SocketAddr::from((
+        [0, 0, 0, 0],
+        httpg_config.port,
+    ));
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on {}", tcp.local_addr()?);
 
-    let config = RustlsConfig::from_pem_file(
-        env::var("HTTPG_PEM").unwrap_or("".to_string()),
-        env::var("HTTPG_PEM_KEY").unwrap_or("".to_string()),
-    )
-    .await;
     
-    match config {
-        Ok(config) =>  {
-            axum_server::from_tcp_rustls(tcp, config)
-            .serve(app.into_make_service())
-            .await?
+    match httpg_config.tls {
+        Some(tls) =>  {
+            let config = RustlsConfig::from_pem_file(
+                tls.pem,
+                tls.pem_key,
+            )
+            .await;
+
+            axum_server::from_tcp_rustls(tcp, config?)
+                .serve(app.into_make_service())
+                .await?
         },
-        Err(_) => {
+        None => {
             axum_server::from_tcp(tcp)
-            .serve(app.into_make_service())
-            .await?
+                .serve(app.into_make_service())
+                .await?
         },
     };
     Ok(())
@@ -141,10 +177,10 @@ async fn main() -> Result<(), anyhow::Error> {
 
 #[debug_handler]
 async fn login(
-    State(AppState {pool, login_proc, anon_role, private_key, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig { login_proc, anon_role, private_key, ..}}): State<AppState>,
     query: extract::query::Query,
 ) -> Result<Response, Response> {
-    let root = KeyPair::from(&private_key);
+    let root = KeyPair::from(&PrivateKey::from_bytes(&hex::decode(private_key).unwrap()).unwrap());
 
     let mut conn = pool.get().await.map_err(internal_error)?;
     let tx = conn.build_transaction()
@@ -186,7 +222,7 @@ async fn login(
 
 #[debug_handler]
 async fn email(
-    State(AppState {pool, anon_role, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig { smtp_user, smtp_password, smtp_relay, anon_role, ..}}): State<AppState>,
     query: extract::query::Query,
 ) -> Result<Response, Response> {
 
@@ -214,9 +250,9 @@ async fn email(
 
     let smtp_config = SmtpConfig::default()
         .sender("florian.klein@free.fr")
-        .username(env::var("HTTPG_SMTP_USER").unwrap())
-        .password(env::var("HTTPG_SMTP_PASSWORD").unwrap())
-        .relay(env::var("HTTPG_SMTP_RELAY").unwrap())
+        .username(smtp_user)
+        .password(smtp_password)
+        .relay(smtp_relay)
         .tls(email_clients::clients::smtp::TlsMode::StartTls)
         .port(587)
     ;
@@ -244,7 +280,7 @@ async fn email(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, anon_role, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<Response, Response> {
@@ -286,7 +322,7 @@ async fn stream_query(
 
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, anon_role, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, Response> {
@@ -365,7 +401,7 @@ async fn post_query(
 
 #[debug_handler]
 async fn upload_query(
-    State(AppState {pool, anon_role, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, Response> {
@@ -447,7 +483,7 @@ async fn upload_query(
 
 #[debug_handler]
 async fn raw_http(
-    State(AppState {pool, anon_role, ..}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<Response, Response> {
