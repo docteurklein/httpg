@@ -76,6 +76,8 @@ end;
 grant person to httpg;
 
 revoke usage on language plpgsql from public, httpg, person;
+revoke usage on language sql from public, httpg, person;
+revoke usage on language plv8 from public, httpg, person;
 
 grant usage, create on schema cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
@@ -139,6 +141,7 @@ insert into translation (id, lang, text) values
 , ('Are you sure?', 'fr', 'En êtes-vous sûr?')
 , ('Give to %s', 'fr', 'Donner à %s')
 , ('Given to %s', 'fr', 'Donné à %s')
+, ('Check your emails', 'fr', 'Vérifiez vos emails et clickez sur le lien reçu.')
 ;
 
 
@@ -940,7 +943,7 @@ grant execute on function login to person;
 create view head (html)
 with (security_invoker)
 as with q (q) as (
-    select current_setting('httpg.query')::jsonb
+    select current_setting('httpg.query', true)::jsonb
 )
 select $html$<!DOCTYPE html>
 <html lang="en">
@@ -960,19 +963,10 @@ select $html$<!DOCTYPE html>
 $html$
 union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
 union all (
-    with m(m) as (select q->'qs'->>'success' from q)
-    select xmlelement(name dialog, xmlattributes(
+    with m (color, m) as (select m.* from q, jsonb_each_text(q->'qs'->'flash') m)
+    select xmlelement(name div, xmlattributes(
         true as open,
-        'pico-background-green' as class
-    ), m)::text
-    from m
-    where m is not null
-)
-union all (
-    with m(m) as (select q->'qs'->>'error' from q)
-    select xmlelement(name dialog, xmlattributes(
-        true as open,
-        'pico-background-red' as class
+        'pico-background-' || color as class
     ), m)::text
     from m
     where m is not null
@@ -983,7 +977,7 @@ union all (
         url('/email', jsonb_build_object(
             'redirect', url('/query', jsonb_build_object(
                 'sql', q->>'sql',
-                'success', _('Check your emails')
+                'flash[green]', _('Check your emails')
             ))
         )) as action
     ),

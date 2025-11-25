@@ -4,10 +4,9 @@ use axum::{
         StatusCode,
     }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}, Router
 };
-use axum_extra::extract::cookie::{Cookie, SameSite::Strict};
-use axum_server::{accept::Accept, tls_rustls::RustlsConfig};
+use axum_extra::extract::cookie::Cookie;
+use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
-// use axum_server::tls_rustls::RustlsConfig;
 
 use email_clients::{clients::{get_email_client, smtp::SmtpConfig}, configuration::EmailConfiguration, email::{EmailAddress, EmailObject}};
 use futures::StreamExt;
@@ -16,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs;
 use tokio_postgres_rustls::MakeRustlsConnect;
-// use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use core::{panic};
@@ -30,6 +28,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 use crate::response::Raw;
+use crate::response::compress_stream;
 
 mod extract;
 mod sql;
@@ -111,7 +110,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
-        // .layer(CompressionLayer::new().br(true)) //nope with stream
+        .layer(axum::middleware::from_fn(compress_stream::compress_stream)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
     ;
 

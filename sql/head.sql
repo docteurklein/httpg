@@ -37,7 +37,7 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         xmlelement(name li,
             xmlelement(name a, xmlattributes(
                 format(
-                    $$/query?sql=select html from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r limit 100)$$,
+                    $$/query?sql=select html from head union all ( select html('%1$s', to_jsonb(r), current_setting('httpg.query', true)::jsonb) from %1$s r limit 100)$$,
                     fqn
                 ) as href
             ), fqn)
@@ -56,5 +56,4 @@ union all select xmlelement(name ul, xmlattributes('menu' as class), (
         from rel
     ), '')::text
     where current_role <> 'anon'
-union all select xmlelement(name h1, coalesce(current_setting('httpg.query')::jsonb->'qs'->>'success'), '')::text
 ;

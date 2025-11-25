@@ -123,8 +123,8 @@ select xmlelement(name card
                                 select html(
                                     %1$L,
                                     to_jsonb(r),
-                                    current_setting('httpg.query')::jsonb,
-                                    current_setting('httpg.errors')::jsonb || jsonb_build_object(
+                                    current_setting('httpg.query', true)::jsonb,
+                                    current_setting('httpg.errors', true)::jsonb || jsonb_build_object(
                                         'field', '%3$s'
                                     )
                                 )

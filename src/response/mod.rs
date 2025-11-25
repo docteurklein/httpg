@@ -7,6 +7,8 @@ use tokio_stream::StreamExt;
 
 use crate::extract::query::Query;
 
+pub mod compress_stream;
+
 pub enum Rows {
     Stream(RowStream),
     // Vec(Vec<Row>),
