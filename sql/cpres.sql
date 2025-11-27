@@ -677,7 +677,9 @@ left join person receiver on (good.receiver = receiver.person_id)
 where giver = current_person_id()
 order by updated_at desc nulls last, title
 )
-select * from result);
+select * from result
+union all select _('Nothing yet.') where not exists (select from result limit 1)
+);
 
 grant select on table "my goods" to person;
 
@@ -750,7 +752,9 @@ order by (
 ) desc nulls last,
 interest.at desc
 )
-select html from result;
+select html from result
+union all select _('Nothing yet.') where not exists (select from result limit 1)
+;
 
 grant select on table "activity" to person;
 
@@ -838,7 +842,7 @@ select xmlelement(name div,
         )
         where exists (select from search where query = q)
     ),
-    (
+    coalesce((
         with result as (
             select q, good_id, title, passage
             from good
@@ -846,12 +850,13 @@ select xmlelement(name div,
             order by embedding <=> embed_query(q)
             limit 100
         )
-        select xmlagg(html::xml) -- xmlagg(xmlelement(name div, format('%s: %s', title, rerank_distance(q, passage))) order by rerank_distance(q, passage))
+        select xmlagg(html::xml)
         from result
         join "goods" using (good_id)
-    )
+    ), _('Nothing yet.')::xml)
 )::text
-from q;
+from q
+;
 
 grant select on table "findings" to person;
 
@@ -1045,12 +1050,10 @@ insert into person (person_id, name, email, location, login_challenge) values
 create or replace function random_string(int)
 returns text
 as $$ 
-  select array_to_string(
-    array (
-      select substring(
-        '0123456789abcdefghijklmnopqrstuvwxyz ' 
-        from (random() *37)::int for 1)
-      from generate_series(1, $1) ), '' ) 
+    select array_to_string(array(
+        select substring('0123456789abcdefghijklmnopqrstuvwxyz ' from (random() *37)::int for 1)
+        from generate_series(1, $1)
+    ), '')
 $$ language sql;
 
 insert into good (title, description, location, giver)

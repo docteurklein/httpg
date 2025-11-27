@@ -1,17 +1,17 @@
 
-use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{IntoResponse, Redirect, Response}};
+use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
-use tokio_postgres::RowStream;
+use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
 use crate::extract::query::Query;
 
-pub mod compress_stream;
+// pub mod compress_stream;
 
 pub enum Rows {
     Stream(RowStream),
-    // Vec(Vec<Row>),
+    Vec(Vec<Row>),
     Raw(Vec<Raw>),
 }
 
@@ -30,7 +30,7 @@ pub struct Result {
 
 fn from_raw(rows: Vec<Raw>) -> Response {
     let mut builder = Response::builder();
-    let mut body = BytesMut::new();//"".to_string();
+    let mut body = BytesMut::new();
     for row in rows.iter() {
         match row {
             Raw::Status(status) => {
@@ -40,7 +40,6 @@ fn from_raw(rows: Vec<Raw>) -> Response {
                 builder = builder.header(HeaderName::from_bytes(k.as_bytes()).unwrap(), HeaderValue::from_str(v).unwrap());
             },
             Raw::Body(content) => {
-                // body.push('\n');
                 body.put(content.as_slice());
             }
         }
@@ -53,8 +52,8 @@ impl IntoResponse for Result {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
         }
-        match self.query.accept() { // @TODO real negotation parsing
-            a if a == "application/json" => {
+        match self.query.accept() {
+            Some(a) if a == "application/json" => {
                 match self.rows {
                     Rows::Stream(rows) =>  (
                         [("content-type", "application/json")],
@@ -63,22 +62,31 @@ impl IntoResponse for Result {
                             .map(Ok::<_, axum::Error>)
                         ),
                     ).into_response(),
+
+                    Rows::Vec(rows) => Body::from(
+                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                    ).into_response(),
+
                     Rows::Raw(rows) => {
                         from_raw(rows)
                     }
                 }
             },
-            a if a.starts_with("text/html") => {
+            Some(a) if a.starts_with("text/html") => {
                 match self.rows {
-                    Rows::Stream(rows) => (
-                        [("content-type", "text/html; charset=utf-8")],
-                        Body::from_stream(rows
-                            .map(move |row|
+                    Rows::Stream(rows) => Html(
+                        Body::from_stream(
+                            rows.map(move |row|
                                 Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
                             )
                             .map(Ok::<_, axum::Error>)
-                        ),
+                        ).into_response()
                     ).into_response(),
+
+                    Rows::Vec(rows) => Html(
+                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                    ).into_response(),
+
                     Rows::Raw(rows) => {
                         from_raw(rows)
                     }
@@ -87,12 +95,17 @@ impl IntoResponse for Result {
             a => {
                 match self.rows {
                     Rows::Stream(rows) => (
-                        [("content-type", a)],
+                        [("content-type", a.unwrap_or("application/octet-stream".to_string()))],
                         Body::from_stream(rows
                             .map(|row| row.unwrap().get::<usize, Vec<u8>>(0))
                             .map(Ok::<_, axum::Error>)
                         ),
                     ).into_response(),
+
+                    Rows::Vec(rows) => Body::from(
+                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                    ).into_response(),
+
                     Rows::Raw(rows) => {
                         from_raw(rows)
                     }

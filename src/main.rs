@@ -261,7 +261,7 @@ async fn email(
     let _ = pre(&tx, &biscuit, &anon_role, &query).await;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param, param.to_owned().into())
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
     let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
@@ -337,13 +337,13 @@ async fn post_query(
     let _ = pre(&tx, &biscuit, &anon_role, &query).await;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param, param.to_owned().into())
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let result = tx.query_typed_raw(&query.sql, sql_params).await;
+    let result = tx.query_typed(&query.sql, &sql_params).await;
 
     let rows = match result {
-         Ok(rows) => {
+        Ok(rows) => {
             tx.commit().await.map_err(internal_error)?;
 
             if let Some(redirect) = query.redirect {
@@ -389,7 +389,7 @@ async fn post_query(
 
     Ok(response::Result {
         query,
-        rows: response::Rows::Stream(rows)
+        rows: response::Rows::Vec(rows)
     }.into_response())
 }
 

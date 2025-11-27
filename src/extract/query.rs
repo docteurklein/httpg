@@ -93,6 +93,8 @@ pub struct Query {
     #[serde(default)]
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<Param>,
+    #[serde(skip)]
+    pub files: Vec<File>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
