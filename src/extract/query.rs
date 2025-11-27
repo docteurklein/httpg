@@ -14,9 +14,9 @@ use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 use crate::sql::VisitOrderBy;
 
 
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct File {
-    pub content: Bytes,
+    pub content: Vec<u8>,
     pub content_type: String,
     pub file_name: String,
 }
@@ -27,6 +27,7 @@ pub enum Param {
     Text(String),
     Bytea(Vec<u8>),
     Jsonb(serde_json::Value),
+    File(File),
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -34,6 +35,7 @@ pub enum Param {
 pub enum Type {
     Text,
     Bytea,
+    ByteaArray,
     Jsonb,
 }
 
@@ -43,6 +45,7 @@ impl From<Param> for Type {
             Param::Text(_) => Type::Text,
             Param::Bytea(_) => Type::Bytea,
             Param::Jsonb(_) => Type::Jsonb,
+            Param::File(_) => Type::ByteaArray,
         }
     }
 }
@@ -52,19 +55,37 @@ impl From<Param> for postgres_types::Type {
         match def {
             Param::Text(_) => postgres_types::Type::TEXT,
             Param::Bytea(_) => postgres_types::Type::BYTEA,
+            Param::File(_) => postgres_types::Type::BYTEA_ARRAY,
             Param::Jsonb(_) => postgres_types::Type::JSONB,
         }
     }
 }
 
+impl ToSql for File {
+    fn to_sql(&self, ty: &postgres_types::Type, out: &mut bytes::BytesMut) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>>
+    where
+        Self: Sized + Sync
+    {
+            [self.content.to_owned(), self.content_type.to_owned().into(), self.file_name.to_owned().into()].to_sql(ty, out)
+    }
+    fn accepts(_ty: &postgres_types::Type) -> bool
+    where
+        Self: Sized {
+            true
+    }
+    to_sql_checked!();
+}
+
 impl ToSql for Param {
     fn to_sql(&self, ty: &postgres_types::Type, out: &mut bytes::BytesMut) -> Result<postgres_types::IsNull, Box<dyn std::error::Error + Sync + Send>>
     where
-        Self: Sized {
+        Self: Sized + Sync,
+    {
         match self {
             Param::Text(val) => val.to_sql(ty, out),
             Param::Bytea(val) => val.to_sql(ty, out),
             Param::Jsonb(val) => val.to_sql(ty, out),
+            Param::File(val) => val.to_sql(ty, out),
         }
     }
     fn accepts(_ty: &postgres_types::Type) -> bool
@@ -77,12 +98,19 @@ impl ToSql for Param {
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct QueryPart {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sql: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub in_types: Option<Vec<Type>>,
-    pub content_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accept: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
 }
 
@@ -90,8 +118,7 @@ pub struct QueryPart {
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
     pub sql: String,
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(skip)]
     pub params: Vec<Param>,
     #[serde(skip)]
     pub files: Vec<File>,
@@ -101,95 +128,16 @@ pub struct Query {
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub accept_language: Option<String>,
-    pub content_type: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub qs: serde_json::Map<String, serde_json::Value>,
-    #[serde(default)]
+    #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub body: serde_json::Map<String, serde_json::Value>,
-    #[serde(skip)]
-    pub files: Vec<File>,
-}
-
-impl Query {
-    fn new(
-        raw_qs: serde_json::Map<String, serde_json::Value>,
-        raw_body: serde_json::Map<String, serde_json::Value>,
-        files: Vec<File>,
-        referer: Option<&str>,
-        accept: Option<&str>,
-        host: Option<&str>,
-        accept_language: Option<&str>,
-        // out_types: Vec<Type>,
-    ) -> Result<Self, Response> {
-        let qs = serde_json::from_value::<QueryPart>(serde_json::json!(raw_qs)).unwrap_or_default();
-        let body = serde_json::from_value::<QueryPart>(serde_json::json!(raw_body)).unwrap_or_default();
-
-        let order = qs.order.as_ref().or(body.order.as_ref());
-
-        let sql = qs.sql.as_ref().or(body.sql.as_ref())
-        .map(|sql| {
-            if let Some(order) = order {
-                match Parser::parse_sql(&PostgreSqlDialect{}, sql) {
-                    Ok(mut statements) => {
-                        let _ = statements.visit(&mut VisitOrderBy(order.to_owned()));
-                        statements[0].to_string()
-                    }
-                    _ => sql.to_string(),
-                }
-            }
-            else {sql.to_string()}
-        });
-
-        let redirect = match qs.redirect.as_ref().or(body.redirect.as_ref()) {
-            Some(a) if a == "referer" => referer,
-            Some(a) => Some(a.as_str()),
-            _ => None,
-        };
-
-        let on_error = qs.on_error.clone().or(body.on_error.clone());
-
-        let params: Vec<Param> = qs.params.clone().or(body.params.clone()).unwrap_or_default().iter().enumerate().map(|(i, param)| {
-            let t = match qs.in_types.clone().or(body.in_types.clone()) {
-                Some(t) => t.get(i).unwrap_or(&Type::Text).to_owned(),
-                None => Type::Text,
-            };
-            match t {
-                Type::Jsonb => Param::Jsonb(param.to_owned()),
-                Type::Bytea => Param::Bytea(serde_json::to_vec(param).unwrap()),
-                _ => Param::Text(param.as_str().unwrap().to_string()),
-            }
-        }).collect();
-
-        let content_type = qs.content_type.or(body.content_type);
-
-        // let out_types = qs.out_types.or(body.out_types).unwrap_or_default();
-
-        Ok(Self {
-            // sql: sql.ok_or((StatusCode::BAD_REQUEST, "missing sql field".to_string()).into_response())?,
-            sql: sql.unwrap_or_default(),
-            order: order.cloned(),
-            params,
-            host: host.map(str::to_string),
-            redirect: redirect.map(str::to_string),
-            content_type,
-            accept: accept.map(str::to_string),
-            accept_language: accept_language.map(str::to_string),
-            qs: raw_qs,
-            body: raw_body,
-            files,
-            on_error,
-        })
-    }
-
-    pub fn accept(self) -> String
-    {
-        self.content_type.or(self.accept).unwrap_or("application/octet-stream".to_string())
-    }
 }
 
 impl<S> FromRequest<S> for Query
@@ -199,8 +147,8 @@ where
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let headers = req.headers().clone();
-        let uri = req.uri().clone();
+        let headers = req.headers().to_owned();
+        let uri = req.uri().to_owned();
         let serde_qs = serde_qs::Config::new(5, false); // non-strict for browsers
 
         let raw_qs = match uri.query() {
@@ -211,7 +159,7 @@ where
                 }
             }
             None => Ok(serde_json::Map::new()),
-        };
+        }?;
 
         let content_type_header = headers.get(CONTENT_TYPE);
         let content_type = content_type_header.and_then(|value| value.to_str().ok());
@@ -243,12 +191,12 @@ where
                 ;
 
                 while let Some(field) = multipart.next_field().await.unwrap() {
-                    if field.file_name().is_some() {
+                    if field.content_type().is_some() {
                         // let name = field.name().unwrap().to_string();
                         let file_name = field.file_name().unwrap().to_string();
                         let content_type = field.content_type().unwrap().to_string();
                         let content = field.bytes().await.unwrap();
-                        files.push(File { content, content_type, file_name });
+                        files.push(File { content: content.to_vec(), content_type, file_name });
                     } else {
                         body.insert(field.name().unwrap().to_string(), serde_json::json!(&field.text().await.unwrap()));
                     }
@@ -260,11 +208,11 @@ where
             _ => (serde_json::Map::new(), vec![])
         };
 
+        let qs = serde_json::from_value::<QueryPart>(serde_json::json!(raw_qs)).unwrap_or_default();
+        let body = serde_json::from_value::<QueryPart>(serde_json::json!(raw_body)).unwrap_or_default();
+
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
-
-        let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
-        let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok());
 
         let host = match uri.authority() {
             Some(authority) => Some(authority.as_str()),
@@ -273,7 +221,60 @@ where
                 .and_then(|host| host.to_str().ok()),
         };
 
-        Query::new(raw_qs.unwrap_or_default(), raw_body, files, referer, accept, host, accept_language)
+        let order = qs.order.to_owned().or(body.order.to_owned());
+
+        let sql = qs.sql.as_ref().or(body.sql.as_ref())
+        .map(|sql| {
+            if let Some(order) = order.to_owned() {
+                match Parser::parse_sql(&PostgreSqlDialect{}, sql) {
+                    Ok(mut statements) => {
+                        let _ = statements.visit(&mut VisitOrderBy(order));
+                        statements[0].to_string()
+                    }
+                    _ => sql.to_string(),
+                }
+            }
+            else {sql.to_string()}
+        });
+
+        let redirect = match qs.redirect.as_ref().or(body.redirect.as_ref()) {
+            Some(a) if a == "referer" => referer,
+            Some(a) => Some(a.as_str()),
+            _ => None,
+        };
+
+        let on_error = qs.on_error.to_owned().or(body.on_error.to_owned());
+
+        let params: Vec<Param> = qs.params.to_owned().or(body.params.to_owned()).unwrap_or_default().iter().enumerate().map(|(i, param)| {
+            let t = match qs.in_types.to_owned().or(body.in_types.to_owned()) {
+                Some(t) => t.get(i).unwrap_or(&Type::Text).to_owned(),
+                None => Type::Text,
+            };
+            match t {
+                Type::Jsonb => Param::Jsonb(param.to_owned()),
+                Type::Bytea => Param::Bytea(serde_json::to_vec(param).unwrap()),
+                _ => Param::Text(param.as_str().unwrap().to_string()),
+            }
+        }).collect();
+
+        let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok()).map(str::to_string);
+
+        let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
+        let accept = qs.accept.to_owned().or(body.accept.to_owned()).or(accept.map(ToString::to_string));
+
+        Ok(Self {
+            sql: sql.unwrap_or_default(),
+            order,
+            params,
+            files,
+            qs: raw_qs,
+            body: raw_body,
+            host: host.map(str::to_string),
+            redirect: redirect.map(str::to_string),
+            accept,
+            accept_language,
+            on_error,
+        })
     }
 }
 

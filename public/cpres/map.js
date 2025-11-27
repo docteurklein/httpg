@@ -14,7 +14,8 @@ const map = new Map('map');
 map.on('locationfound', (event) => {
   let params = new URLSearchParams();
   params.append('location', `(${event.latlng.lat},${event.latlng.lng})`);
-  fetch(`/query?sql=select coalesce(jsonb_agg(geojson)::text, '[]') from cpres.nearby&${params}`, {
+  params.append('params[]', '5000');
+  fetch(`/query?sql=select coalesce(jsonb_agg(geojson)::text, '[]') from cpres.nearby where bird_distance_km < $1::double precision&${params}`, {
     headers: {
       'accept': 'application/json'
     }

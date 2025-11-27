@@ -1,3 +1,4 @@
+
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
         StatusCode, header::SET_COOKIE,
@@ -28,7 +29,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 use crate::{extract::query::Query, response::Raw};
-use crate::response::compress_stream;
+// use crate::response::compress_stream;
 
 mod extract;
 mod sql;
@@ -139,7 +140,7 @@ async fn main() -> Result<(), anyhow::Error> {
     
     let state = AppState {
         pool,
-        config: httpg_config.clone(),
+        config: httpg_config.to_owned(),
     };
 
     let cors = CorsLayer::new()
@@ -154,7 +155,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
-        .layer(axum::middleware::from_fn(compress_stream::compress_stream)) //nope with stream
+        // .layer(axum::middleware::from_fn(compress_stream::compress_stream)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
     ;
 
@@ -264,7 +265,7 @@ async fn email(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await.map_err(internal_error)?;
 
     let smtp_config = SmtpConfig::default()
         .sender("florian.klein@free.fr")
@@ -287,7 +288,7 @@ async fn email(
                html: row.get::<&str, &str>("html").into(),
             };
             dbg!(&mail);
-            client.clone().unwrap().send_emails(mail).await.expect("Unable to send email");
+            client.to_owned().unwrap().send_emails(mail).await.expect("Unable to send email");
         }
     }).await;
 
@@ -315,10 +316,10 @@ async fn stream_query(
         (param, param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.clone(), sql_params).await.map_err(internal_error)?;
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await.map_err(internal_error)?;
 
     Ok(response::Result {
-        query: query.clone(),
+        query: query.to_owned(),
         rows: response::Rows::Stream(rows)
         
     }.into_response())
@@ -420,9 +421,9 @@ async fn upload_query(
 
     let sql_params: Vec<(_, Type)> = vec!((
         query.files.iter().map(|file| vec!(
-            file.content.as_ref(),
-            file.file_name.as_ref(),
-            file.content_type.as_ref()
+            file.content.to_owned(),
+            file.file_name.to_owned().into(),
+            file.content_type.to_owned().into()
         ))
         .collect::<Vec<_>>()
     , Type::UNKNOWN));

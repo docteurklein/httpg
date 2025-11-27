@@ -52,7 +52,7 @@ impl IntoResponse for Result {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
         }
-        match self.query.accept() {
+        match self.query.accept {
             Some(a) if a == "application/json" => {
                 match self.rows {
                     Rows::Stream(rows) =>  (

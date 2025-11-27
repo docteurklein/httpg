@@ -142,6 +142,7 @@ insert into translation (id, lang, text) values
 , ('Give to %s', 'fr', 'Donner à %s')
 , ('Given to %s', 'fr', 'Donné à %s')
 , ('Check your emails', 'fr', 'Vérifiez vos emails et clickez sur le lien reçu.')
+, ('Nothing yet.', 'fr', 'Rien à lister.')
 ;
 
 
@@ -170,17 +171,31 @@ create table person (
     person_id uuid primary key default gen_random_uuid(),
     name text not null,
     email text not null unique,
-    login_challenge uuid default null,
-    location point default null
+    login_challenge uuid default null
 );
 
 grant select (person_id, name),
-    insert (name, email, location),
-    update (name, email, location),
+    insert (name, email),
+    update (name, email),
     delete on table person to person;
 
 alter table person enable row level security;
 create policy "owner" on person for all to person using (true) with check (
+    person_id = current_person_id()
+);
+
+create table person_location (
+    person_id uuid primary key default gen_random_uuid(),
+    location point not null
+);
+
+grant select (person_id, location),
+    insert (location),
+    update (location),
+    delete on table person_location to person;
+
+alter table person_location enable row level security;
+create policy "owner" on person_location for all to person using (true) with check (
     person_id = current_person_id()
 );
 
@@ -367,90 +382,101 @@ after insert or update of title, description on good
 for each row
 execute procedure compare_search();
 
-create view nearby (geojson)
+create view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
-as with base as (
-    select good, interest,
-    (location <@> (current_setting('httpg.query', true)::jsonb->'qs'->>'location')::point) * 1.609347 as bird_distance_km
-    from good
+as with q (location) as (
+    select (current_setting('httpg.query', true)::jsonb->'qs'->>'location')::point
+),
+base as (
+    select good.*, interest, giver.name as giver_name,
+        (good.location <@> q.location) * 1.609347 bird_distance_km
+    from q, good
+    join person giver on (good.giver = giver.person_id)
     left join interest on (
         good.good_id = interest.good_id
         and interest.person_id = current_person_id()
     )
-    where receiver is null
 )
-select geojson((base.good).location, jsonb_build_object(
-    'description', xmlconcat(
-        xmlelement(name h3, (base.good).title),
-        xmlelement(name p, (base.good).description),
-        xmlelement(name div, format(_('by %s'), giver.name)),
-        xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
-        (
-            with url (url) as (
-                -- select url('/raw', jsonb_build_object(
-                --     'sql', format($$values (jsonb_build_object('header', array['content-type', %L])) union all select content::text from cpres.good_media where content_hash = $1 $$, content_type),
-                --     'params[]', content_hash
-                -- ))
-                select url('/query', jsonb_build_object(
-                    'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
-                    'params[]', content_hash,
-                    'content_type', content_type
-                ))
-                from good_media
-                where good_id = (base.good).good_id
-            )
-            select xmlagg(
-                xmlelement(name a, xmlattributes(url as href),
-                    xmlelement(name img, xmlattributes(url as src))
-                )
-            )
-            from url
-        ),
-        (
-            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.want(%L, $1)', (base.good).good_id),
-                    'redirect', 'referer'
-                )) as action),
-                xmlelement(name button, xmlattributes(
-                    'params[]' as name,
-                    'low' as value,
-                    'submit' as type
-                ), _('A little Interested!')),
-                xmlelement(name button, xmlattributes(
-                    'params[]' as name,
-                    'normal' as value,
-                    'submit' as type
-                ), _('Interested!')),
-                xmlelement(name button, xmlattributes(
-                    'params[]' as name,
-                    'high' as value,
-                    'submit' as type
-                ), _('Highly Interested!'))
-            )
-            where (interest).good_id is null 
-            and current_person_id() is not null
-            and current_person_id() <> (base.good).giver
-        ),
-        (
-            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
-                    'sql', format('call cpres.unwant(%L)', (base.good).good_id),
-                    'redirect', 'referer'
-                )) as action),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    _('Not interested anymore!') as value
-                ))
-            )
-            where (interest).good_id is not null 
-            and current_person_id() is not null
-            and current_person_id() <> (base.good).giver
+select xmlelement(name div,
+    xmlelement(name h2, xmlelement(name a, xmlattributes(
+        url('/query', jsonb_build_object(
+            'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+            'params[]', good.good_id,
+            'location', q.location::text 
+        )) as href
+    ), good.title)),
+    xmlelement(name span, format(_('by %s'), giver_name)),
+    xmlelement(name p, good.description),
+    xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
+    (
+        with url (url) as (
+            select url('/query', jsonb_build_object(
+                'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
+                'params[]', content_hash,
+                'content_type', content_type
+            ))
+            from good_media
+            where good_media.good_id = good.good_id
         )
+        select xmlagg(xmlelement(name a, xmlattributes(url as href),
+            xmlelement(name img, xmlattributes(url as src))
+        ))
+        from url
     ),
+    (
+        select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                'sql', format('call cpres.want(%L, $1)', good.good_id),
+                'redirect', 'referer'
+            )) as action),
+            xmlelement(name button, xmlattributes(
+                'params[]' as name,
+                'low' as value,
+                'submit' as type
+            ), _('A little Interested!')),
+            xmlelement(name button, xmlattributes(
+                'params[]' as name,
+                'normal' as value,
+                'submit' as type
+            ), _('Interested!')),
+            xmlelement(name button, xmlattributes(
+                'params[]' as name,
+                'high' as value,
+                'submit' as type
+            ), _('Highly Interested!'))
+        )
+        where (interest).good_id is null 
+        and current_person_id() is not null
+        and current_person_id() <> good.giver
+    ),
+    (
+        select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                'sql', format('call cpres.unwant(%L)', good.good_id),
+                'redirect', 'referer'
+            )) as action),
+            xmlelement(name input, xmlattributes(
+                'submit' as type,
+                _('Not interested anymore!') as value
+            ))
+        )
+        where (interest).good_id is not null 
+        and current_person_id() is not null
+        and current_person_id() <> good.giver
+    )
+)::text, good.location, 0, good.good_id, good.receiver
+from base good, q
+where receiver is null;
+
+grant select on table "good_detail" to person;
+
+create view nearby (geojson, bird_distance_km)
+with (security_invoker)
+as select geojson(location, jsonb_build_object(
+    'description', html,
     'bird_distance_km', bird_distance_km
-)) geojson
-from base
-join person giver on ((base.good).giver = giver.person_id)
-where bird_distance_km < 100;
+)) geojson, bird_distance_km
+from "good_detail"
+where receiver is null;
+;
 
 grant select on table nearby to person;
 
@@ -515,35 +541,6 @@ end;
 
 -- alter function good_form owner to person;
 grant execute on function good_form to person;
-
-
-create view "goods" (html, good_id)
-with (security_invoker)
-as
-select xmlelement(name div,
-    xmlelement(name h2, good.title),
-    xmlelement(name span, format(_('by %s'), giver.name)),
-    xmlelement(name p, good.description),
-    (
-        with url (url) as (
-            select url('/query', jsonb_build_object(
-                'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
-                'params[]', content_hash,
-                'content_type', content_type
-            ))
-            from good_media
-            where good_media.good_id = good.good_id
-        )
-        select xmlagg(xmlelement(name a, xmlattributes(url as href),
-            xmlelement(name img, xmlattributes(url as src))
-        ))
-        from url
-    )
-)::text, good_id
-from good
-join person giver on (good.giver = giver.person_id);
-
-grant select on table "goods" to person;
 
 create view "my goods" (html)
 with (security_invoker)
@@ -690,8 +687,9 @@ select xmlelement(name div,
     format(_('%s is interested by '), receiver.name),
     xmlelement(name a, xmlattributes(
         url('/query', jsonb_build_object(
-            'sql', 'table cpres.head union all select html from cpres."goods" where good_id = $1::uuid',
-            'params[]', good.good_id
+            'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+            'params[]', good.good_id,
+            'location', receiver_location.location
         )) as href
     ), good.title),
     format(_(' from %s'), giver.name),
@@ -742,6 +740,7 @@ select xmlelement(name div,
 from interest
 join good using (good_id)
 join person receiver using (person_id)
+join person_location receiver_location using (person_id)
 join person giver on (giver.person_id = good.giver)
 where giver = current_person_id()
 or interest.person_id = current_person_id()
@@ -852,7 +851,7 @@ select xmlelement(name div,
         )
         select xmlagg(html::xml)
         from result
-        join "goods" using (good_id)
+        join "good_detail" using (good_id)
     ), _('Nothing yet.')::xml)
 )::text
 from q
@@ -1038,10 +1037,15 @@ $html$;
 
 grant select on table map to person;
 
-insert into person (person_id, name, email, location, login_challenge) values
-    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', '(46.0734411, 3.666724)', gen_random_uuid()),
-    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', '(56.073448, 2.666524)', gen_random_uuid()),
-    (gen_random_uuid(), 'p3', 'p3@example.org', '(26.073448, 5.666524)', gen_random_uuid());
+insert into person (person_id, name, email, login_challenge) values
+    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', gen_random_uuid()),
+    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', gen_random_uuid()),
+    (gen_random_uuid(), 'p3', 'p3@example.org', gen_random_uuid());
+
+insert into person_location (person_id, location) values
+    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2','(46.0734411, 3.666724)'),
+    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb','(56.073448, 2.666524)')
+;
 
 -- insert into search (person_id, query, tags, interest) values
 --     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'chaise en bois', '{}', 'high'),
@@ -1066,14 +1070,14 @@ select
 from generate_series(1, 10) i, person
 where name <> 'p3';
 
--- insert into interest (good_id, person_id, price, origin)
--- select good_id, person_id, random(1, 10), 'manual'
--- from person, good
--- where person.person_id <> good.giver;
+insert into interest (good_id, person_id, price, origin)
+select good_id, person_id, random(1, 10), 'manual'
+from person, good
+where person.person_id <> good.giver;
 
--- insert into message (good_id, person_id, author, content)
--- select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
--- from interest, person, generate_series(1, 3) i
--- where person.person_id = interest.person_id;
+insert into message (good_id, person_id, author, content)
+select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
+from interest, person, generate_series(1, 3) i
+where person.person_id = interest.person_id;
 -- on conflict do nothing;
 commit;
