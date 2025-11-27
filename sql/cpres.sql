@@ -1,10 +1,14 @@
 \set ON_ERROR_STOP on
 
+set search_path to cpres, pg_catalog, public;
+
 begin;
 
-set local search_path to cpres, pg_catalog, public;
-
 drop schema if exists cpres cascade;
+commit;
+
+\i sql/url.sql
+begin;
 
 set neon.allow_unstable_extensions='true';
 -- drop extension if exists vector cascade;
@@ -88,7 +92,7 @@ create extension if not exists earthdistance;
 create extension if not exists moddatetime;
 create extension if not exists vector;
 
-create function current_person_id() returns uuid
+create or replace function current_person_id() returns uuid
 immutable strict parallel safe
 language plpgsql
 security invoker
@@ -195,7 +199,7 @@ grant select (person_id, location),
     delete on table person_location to person;
 
 alter table person_location enable row level security;
-create policy "owner" on person_location for all to person using (true) with check (
+create policy "owner" on person_location for all to person using (
     person_id = current_person_id()
 );
 
@@ -385,17 +389,13 @@ execute procedure compare_search();
 create view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
 as with q (location) as (
-    select (current_setting('httpg.query', true)::jsonb->'qs'->>'location')::point
+    select (current_setting('httpg.query', true)::jsonb->'qs'->>'location')
 ),
 base as (
-    select good.*, interest, giver.name as giver_name,
-        (good.location <@> q.location) * 1.609347 bird_distance_km
+    select good.*, giver.name as giver_name,
+        case when q.location <> '' then (good.location <@> q.location::point) * 1.609347 end bird_distance_km
     from q, good
     join person giver on (good.giver = giver.person_id)
-    left join interest on (
-        good.good_id = interest.good_id
-        and interest.person_id = current_person_id()
-    )
 )
 select xmlelement(name div,
     xmlelement(name h2, xmlelement(name a, xmlattributes(
@@ -407,13 +407,15 @@ select xmlelement(name div,
     ), good.title)),
     xmlelement(name span, format(_('by %s'), giver_name)),
     xmlelement(name p, good.description),
-    xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2))),
+    case when bird_distance_km is not null then
+        xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
+    end,
     (
         with url (url) as (
             select url('/query', jsonb_build_object(
                 'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
                 'params[]', content_hash,
-                'content_type', content_type
+                'accept', content_type
             ))
             from good_media
             where good_media.good_id = good.good_id
@@ -444,7 +446,11 @@ select xmlelement(name div,
                 'submit' as type
             ), _('Highly Interested!'))
         )
-        where (interest).good_id is null 
+        where not exists (
+            select from interest
+            where good.good_id = interest.good_id
+            and interest.person_id = current_person_id()
+        )
         and current_person_id() is not null
         and current_person_id() <> good.giver
     ),
@@ -458,13 +464,16 @@ select xmlelement(name div,
                 _('Not interested anymore!') as value
             ))
         )
-        where (interest).good_id is not null 
+        where exists (
+            select from interest
+            where good.good_id = interest.good_id
+            and interest.person_id = current_person_id()
+        )
         and current_person_id() is not null
         and current_person_id() <> good.giver
     )
 )::text, good.location, 0, good.good_id, good.receiver
-from base good, q
-where receiver is null;
+from base good, q;
 
 grant select on table "good_detail" to person;
 
@@ -508,7 +517,7 @@ select xmlelement(name form, xmlattributes(
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'on_error' as name,
-            'table cpres.head union all table cpres."my goods"' as value
+            'table cpres.head union all table cpres."good admin"' as value
         )),
         xmlelement(name input, xmlattributes(
             'text' as type,
@@ -542,7 +551,7 @@ end;
 -- alter function good_form owner to person;
 grant execute on function good_form to person;
 
-create view "my goods" (html)
+create view "good admin" (html)
 with (security_invoker)
 as
 select xmlelement(name div, xmlattributes('new' as class),
@@ -570,7 +579,7 @@ xmlconcat(
                     select url('/query', jsonb_build_object(
                         'sql', 'select content from cpres.good_media where content_hash = $1::text::bytea',
                         'params[]', content_hash,
-                        'content_type', content_type
+                        'accept', content_type
                     ))
                 )
                 select xmlelement(name a, xmlattributes(url as href),
@@ -681,7 +690,7 @@ select * from result
 union all select _('Nothing yet.') where not exists (select from result limit 1)
 );
 
-grant select on table "my goods" to person;
+grant select on table "good admin" to person;
 
 create view "activity" (html)
 with (security_invoker)
@@ -742,8 +751,8 @@ select xmlelement(name div,
 )::text
 from interest
 join good using (good_id)
-join person receiver using (person_id)
-join person_location receiver_location using (person_id)
+join person receiver on (interest.person_id = receiver.person_id)
+left join person_location receiver_location on (receiver_location.person_id = receiver.person_id)
 join person giver on (giver.person_id = good.giver)
 where giver = current_person_id()
 or interest.person_id = current_person_id()
@@ -762,16 +771,15 @@ grant select on table "activity" to person;
 
 create view "findings" (html)
 with (security_invoker)
-as with q (q) as (
-    select current_setting('httpg.query', true)::jsonb->'qs'->>'q'
+as with q (qs) as (
+    select current_setting('httpg.query', true)::jsonb->'qs'
 )
 select xmlelement(name div,
     xmlelement(name h2, _('Search')),
     xmlelement(name nav, xmlelement(name ul, (
         select xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
-            url('/query', jsonb_build_object(
-                'q', query,
-                'sql', current_setting('httpg.query', true)::jsonb->'qs'->>'sql'
+            url('/query', qs || jsonb_build_object(
+                'q', query
             )) as href
         ), query)))
         from search
@@ -783,12 +791,12 @@ select xmlelement(name div,
             'q' as name,
             'text' as type,
             _('query') as placeholder,
-            q as value
+            qs->>'q' as value
         )),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'sql' as name,
-            current_setting('httpg.query', true)::jsonb->'qs'->>'sql' as value
+            qs->>'sql' as value
         )),
         xmlelement(name input, xmlattributes(
             'submit' as type,
@@ -809,15 +817,15 @@ select xmlelement(name div,
             xmlelement(name input, xmlattributes(
                 'params[]' as name,
                 'hidden' as type,
-                q as value
+                qs->>'q' as value
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
                 _('Create alert') as value
             ))
         )
-        where q <> ''
-        and not exists (select from search where query = q)
+        where qs->>'q' <> ''
+        and not exists (select from search where query = qs->>'q')
     ),
     (
         select xmlelement(name form, xmlattributes(
@@ -833,7 +841,7 @@ select xmlelement(name div,
             xmlelement(name input, xmlattributes(
                 'params[]' as name,
                 'hidden' as type,
-                q as value
+                qs->>'q' as value
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
@@ -842,14 +850,14 @@ select xmlelement(name div,
                 _('Remove alert') as value
             ))
         )
-        where exists (select from search where query = q)
+        where exists (select from search where query = qs->>'q')
     ),
     coalesce((
         with result as (
-            select q, good_id, title, passage
+            select qs->>'q', good_id, title, passage
             from good
             where giver <> current_person_id()
-            order by embedding <=> embed_query(q)
+            order by embedding <=> embed_query(qs->>'q')
             limit 100
         )
         select xmlagg(html::xml)
@@ -958,15 +966,12 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <meta name="color-scheme" content="light dark" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.fluid.classless.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.colors.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
 </head>
-<body>
-  <script type="module" src="/cpres.js"></script>
-  <main class="container">
 $html$
 union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
 union all (
@@ -1017,12 +1022,22 @@ union all select xmlelement(name div,
                 (_('map'), 'table cpres.head union all table cpres.map', true),
                 (_('search'), 'table cpres.head union all table cpres."findings"', current_person_id() is not null),
                 (_('activity'), 'table cpres.head union all table cpres."activity"', current_person_id() is not null),
-                (_('my goods'), 'table cpres.head union all table cpres."my goods"', current_person_id() is not null)
+                (_('my goods'), 'table cpres.head union all table cpres."good admin"', current_person_id() is not null)
             )
             select xmlagg(
-                xmlelement(name li, xmlelement(name a, xmlattributes(url('/query', jsonb_build_object('sql', sql)) as href), name))
+                xmlelement(name li,
+                    xmlelement(name a, xmlattributes(
+                        url('/query', jsonb_build_object(
+                            'sql', sql,
+                            'location', coalesce(
+                                nullif(q->'qs'->>'location', ''),
+                                (select location::text from person_location where person_id = current_person_id() limit 1)
+                            )
+                        )) as href
+                    ), name)
+                )
             )
-            from menu
+            from menu, q
             where visible
         ))
     )
@@ -1032,55 +1047,10 @@ grant select on table head to person;
 
 create view map (html) as
 select $html$
-  </main>
   <div id="map"></div>
   <script type="module" src="/cpres/map.js"></script>
-</body>
 $html$;
 
 grant select on table map to person;
 
-insert into person (person_id, name, email, login_challenge) values
-    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', gen_random_uuid()),
-    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', gen_random_uuid()),
-    (gen_random_uuid(), 'p3', 'p3@example.org', gen_random_uuid());
-
-insert into person_location (person_id, location) values
-    ('13a00cef-59d8-4849-b33f-6ce5af85d3d2','(46.0734411, 3.666724)'),
-    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb','(56.073448, 2.666524)')
-;
-
--- insert into search (person_id, query, tags, interest) values
---     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'chaise en bois', '{}', 'high'),
---     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'chaise en metal', '{}', 'high');
-
-create or replace function random_string(int)
-returns text
-as $$ 
-    select array_to_string(array(
-        select substring('0123456789abcdefghijklmnopqrstuvwxyz ' from (random() *37)::int for 1)
-        from generate_series(1, $1)
-    ), '')
-$$ language sql;
-
-insert into good (title, description, location, giver)
-select
-    -- format('good %s %s', name, i),
-    random_string(random(5, 10)),
-    random_string(random(50, 100)),
-    format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
-    person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
-from generate_series(1, 10) i, person
-where name <> 'p3';
-
-insert into interest (good_id, person_id, price, origin)
-select good_id, person_id, random(1, 10), 'manual'
-from person, good
-where person.person_id <> good.giver;
-
-insert into message (good_id, person_id, author, content)
-select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
-from interest, person, generate_series(1, 3) i
-where person.person_id = interest.person_id;
--- on conflict do nothing;
 commit;

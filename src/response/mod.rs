@@ -1,6 +1,7 @@
 
 use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
+use futures::stream;
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
@@ -53,10 +54,10 @@ impl IntoResponse for Result {
             return Redirect::to(&redirect).into_response();
         }
         match self.query.accept {
-            Some(a) if a == "application/json" => {
+            Some(a) if a.starts_with("application/json") => {
                 match self.rows {
                     Rows::Stream(rows) =>  (
-                        [("content-type", "application/json")],
+                        [("content-type",a)],
                         Body::from_stream(rows
                             .map(|row| Bytes::from(row.unwrap().get::<usize, String>(0) + "\n"))
                             .map(Ok::<_, axum::Error>)
@@ -97,7 +98,7 @@ impl IntoResponse for Result {
                     Rows::Stream(rows) => (
                         [("content-type", a.unwrap_or("application/octet-stream".to_string()))],
                         Body::from_stream(rows
-                            .map(|row| row.unwrap().get::<usize, Vec<u8>>(0))
+                            .map(|row| [row.unwrap().get::<usize, Vec<u8>>(0), "\n".as_bytes().to_vec()].concat())
                             .map(Ok::<_, axum::Error>)
                         ),
                     ).into_response(),

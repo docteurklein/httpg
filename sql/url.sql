@@ -1,8 +1,14 @@
+\set ON_ERROR_STOP on
+
+begin; 
+
+set local search_path to cpres, pg_catalog;
+
 create extension if not exists plv8 schema pg_catalog;
 
 create or replace function url_encode (str text)
 returns text
-immutable strict parallel safe
+immutable strict parallel safe leakproof
 language plv8
 as $$
 return encodeURIComponent(String(str))
@@ -42,3 +48,4 @@ select format('%s?%s', path, (
 ));
 end;
 
+commit;
