@@ -419,14 +419,15 @@ async fn upload_query(
         tx.batch_execute(&b).await.map_err(internal_error)?;
     }
 
-    let sql_params: Vec<(_, Type)> = vec!((
-        query.files.iter().map(|file| vec!(
+    let sql_params: Vec<(_, Type)> = 
+        query.files.iter().map(|file| (vec!(
             file.content.to_owned(),
             file.file_name.to_owned().into(),
             file.content_type.to_owned().into()
-        ))
-        .collect::<Vec<_>>()
-    , Type::UNKNOWN));
+        )
+        , Type::BYTEA_ARRAY))
+
+    .collect::<Vec<_>>();
 
     let result = tx.query_typed_raw(&query.sql, sql_params).await;
 

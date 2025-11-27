@@ -625,10 +625,13 @@ xmlconcat(
             'hidden' as type,
             'sql' as name,
             format($$
+                with f(f) as (
+                    select $1::bytea[]
+                    where array_length($1, 1) is not null
+                )
                 insert into cpres.good_media (good_id, name, content, content_type)
                 select %L, convert_from(f[2], 'UTF8'), f[1], convert_from(f[3], 'UTF8')
-                from unnest($1::bytea[]) f(f)
-                where f[1] <> ''
+                from f
                 on conflict (content_hash) do nothing
             $$, good_id) as value
         )),
