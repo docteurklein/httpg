@@ -9,7 +9,3 @@ html, body, #map {
         /* height: 100%; */
     }
 }
-
-dialog {
-    height: unset;
-}
