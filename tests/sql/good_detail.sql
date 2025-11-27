@@ -25,8 +25,12 @@ assert (
 );
 
 assert (
-    select xpath_exists('//script', (string_agg(html, '') || '</main></body></html>')::xml)
-    from cpres.head
+    with html (html) as (
+        select html from cpres.head
+        union all select '</main></body></html>'
+    )
+    select xpath_exists('//script', (string_agg(html, ''))::xml)
+    from html
 );
 rollback;
 
