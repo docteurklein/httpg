@@ -115,6 +115,8 @@
             HTTPG_ANON_ROLE = "person";
           };
           
+          processes.postgres.process-compose.readiness_probe.exec.command = with pkgs.lib; mkForce "pg_isready -d template1";
+
           services.postgres = {
             enable = true;
             package = pkgs.postgresql_18;
@@ -130,16 +132,23 @@
             ];
             settings = {
               # "wal_level" = "logical";
-              "app.tenant" = "tenant#1";
-              "shared_preload_libraries" = "auto_explain";
-              # "auto_explain.log_min_duration" = "0ms";
+              # "app.tenant" = "tenant#1";
+              shared_preload_libraries = "auto_explain";
+              "auto_explain.log_min_duration" = "0ms";
               "auto_explain.log_nested_statements" = true;
-              # "auto_explain.log_timing" = true;
-              # "auto_explain.log_analyze" = true;
+              "auto_explain.log_timing" = true;
+              "auto_explain.log_analyze" = true;
+              "auto_explain.log_buffers" = true;
+              "auto_explain.log_settings" = true;
+              "auto_explain.log_format" = "json";
               "auto_explain.log_triggers" = true;
-              "log_statement" = "all";
-              "log_connections" = "on";
-              "lc_messages" = "en_US.UTF-8";
+              log_statement = "all";
+              log_filename = "postgresql.log";
+              log_destination = "stderr";
+              logging_collector = true;
+              # log_connections = true;
+              # log_disconnections = true;
+              lc_messages = "en_US.UTF-8";
             };
           };
         };

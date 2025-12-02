@@ -2,11 +2,9 @@
 
 begin; 
 
-set local search_path to cpres, pg_catalog;
-
 create extension if not exists plv8 schema pg_catalog;
 
-create or replace function url_encode (str text)
+create or replace function public.url_encode (str text)
 returns text
 immutable strict parallel safe leakproof
 language plv8
@@ -14,18 +12,18 @@ as $$
 return encodeURIComponent(String(str))
 $$;
 
-create or replace function url_decode (str text)
+create or replace function public.url_decode (str text)
 returns text
-immutable strict parallel safe -- leakproof
+immutable strict parallel safe leakproof
 language plv8
 as $$
 return decodeURIComponent(String(str))
 $$;
 
-create or replace function url(path text, params jsonb = '{}')
+create or replace function public.url(path text, params jsonb = '{}')
 returns text
 language sql
-immutable strict parallel safe -- leakproof
+immutable strict parallel safe leakproof
 begin atomic
 select format('%s?%s', path, (
     with recursive param(path, value) as (

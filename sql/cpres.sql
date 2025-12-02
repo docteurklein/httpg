@@ -7,7 +7,7 @@ begin;
 drop schema if exists cpres cascade;
 commit;
 
-\i sql/url.sql
+\ir url.sql
 begin;
 
 set neon.allow_unstable_extensions='true';
@@ -29,7 +29,7 @@ create schema cpres;
 
 create function cpres.embed_passage(content text)
 returns vector
-immutable parallel safe
+immutable parallel safe leakproof
 security definer
 language sql
 begin atomic
@@ -42,7 +42,7 @@ end;
 
 create function cpres.embed_query(query text)
 returns vector
-immutable parallel safe
+immutable parallel safe leakproof
 security definer
 language sql
 begin atomic
@@ -55,7 +55,7 @@ end;
 
 create function cpres.rerank_distance(query text, content text)
 returns real
-immutable parallel safe
+immutable parallel safe leakproof
 security definer
 language sql
 begin atomic
@@ -70,12 +70,14 @@ end;
 -- drop role if exists httpg;
 -- drop role if exists person;
 
--- create role person noinherit;
 
--- select format('create user httpg with password %L noinherit', :'password')\gexec
--- -- do $$ begin
--- --     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
--- -- end $$;
+\if :{?password}
+select format('create user httpg with password %L noinherit', :'password')\gexec
+\endif
+do $$ begin
+    create role person noinherit;
+    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
 
 grant person to httpg;
 
@@ -87,13 +89,13 @@ grant usage, create on schema cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
 -- grant execute on all functions in schema pg_catalog to person;
 
-create extension if not exists cube;
-create extension if not exists earthdistance;
-create extension if not exists moddatetime;
-create extension if not exists vector;
+create extension if not exists cube schema public;
+create extension if not exists earthdistance schema public;
+create extension if not exists moddatetime schema public;
+create extension if not exists vector schema public;
 
 create or replace function current_person_id() returns uuid
-immutable strict parallel safe
+immutable strict parallel safe leakproof
 language plpgsql
 security invoker
 set search_path to cpres, pg_catalog
@@ -121,7 +123,9 @@ create index on translation (id, lang);
 
 insert into translation (id, lang, text) values
   ('Welcome %s!', 'fr', 'Bienvenue %s!')
+, ('A little interested!', 'fr', 'Un peu intéressé!')
 , ('Interested!', 'fr', 'Intéressé!')
+, ('Highly interested!', 'fr', 'Très intéressé!')
 , ('Not interested anymore!', 'fr', 'Plus intéressé!')
 , ('Send login challenge', 'fr', 'Envoyer un lien de login')
 , ('map', 'fr', 'carte')
@@ -152,7 +156,7 @@ insert into translation (id, lang, text) values
 
 create function cpres._(id_ text, lang_ text = null)
 returns text
-immutable parallel safe
+immutable parallel safe leakproof
 security definer
 set search_path to cpres, pg_catalog
 language sql
@@ -247,9 +251,9 @@ create policy "owner" on good for all to person using (true) with check (
 );
 
 create table good_media (
-    content_hash bytea primary key generated always as (sha256(content)) stored,
     good_id uuid not null references good (good_id) on delete cascade,
     content bytea not null,
+    content_hash bytea primary key generated always as (sha256(content)) stored,
     content_type text not null,
     name text not null
 );
@@ -269,7 +273,7 @@ with check (
 
 create function geojson(point point, props jsonb = '{}') returns jsonb
 language sql 
-immutable strict -- leakproof
+immutable strict parallel safe leakproof
 set search_path to cpres, pg_catalog
 begin atomic;
     select jsonb_build_object(
@@ -361,6 +365,7 @@ using (
 );
 
 create function compare_search() returns trigger
+volatile strict parallel safe leakproof
 security definer
 set search_path to cpres, pg_catalog
 as $$
@@ -426,15 +431,19 @@ select xmlelement(name div,
         from url
     ),
     (
-        select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+        select xmlelement(name form, xmlattributes(
+            'POST' as method,
+            url('/query', jsonb_build_object(
                 'sql', format('call cpres.want(%L, $1)', good.good_id),
                 'redirect', 'referer'
-            )) as action),
+            )) as action,
+            'grid' as class
+        ),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
                 'low' as value,
                 'submit' as type
-            ), _('A little Interested!')),
+            ), _('A little interested!')),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
                 'normal' as value,
@@ -444,7 +453,7 @@ select xmlelement(name div,
                 'params[]' as name,
                 'high' as value,
                 'submit' as type
-            ), _('Highly Interested!'))
+            ), _('Highly interested!'))
         )
         where not exists (
             select from interest
@@ -491,7 +500,7 @@ grant select on table nearby to person;
 
 create function good_form(params jsonb, sql text) returns xml
 security invoker
-immutable parallel safe
+immutable parallel safe leakproof
 language sql
 begin atomic
 with query (redirect, errors) as (
@@ -523,7 +532,7 @@ select xmlelement(name form, xmlattributes(
             'text' as type,
             'params[]' as name,
             _('title') as placeholder,
-            true as required,
+            -- true as required,
             params->>0 as value
         )),
         xmlelement(name textarea, xmlattributes(
@@ -684,7 +693,7 @@ xmlconcat(
 from good
 left join person receiver on (good.receiver = receiver.person_id)
 where giver = current_person_id()
-order by updated_at desc nulls last, title
+order by coalesce(updated_at, created_at) desc, title
 )
 select * from result
 union all select _('Nothing yet.') where not exists (select from result limit 1)
@@ -910,9 +919,10 @@ end;
 -- alter procedure unwant(uuid) owner to person;
 grant execute on procedure unwant to person;
 
-create function send_login_email(text)
+create function send_login_email(email_ text)
 returns table (sender text, "to" text, subject text, plain text, html text)
 language sql
+volatile parallel safe not leakproof
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
@@ -937,7 +947,7 @@ end;
 grant execute on function send_login_email(text) to person;
 
 create function login() returns setof text
-volatile strict parallel safe
+volatile strict parallel safe leakproof
 language sql
 security definer
 set search_path to cpres, pg_catalog
