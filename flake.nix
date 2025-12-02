@@ -71,7 +71,10 @@
           cargoLock.lockFile = ./Cargo.lock;
           src = pkgs.lib.cleanSource ./.;
           nativeBuildInputs = with pkgs; [
-            mold-wrapped clang pkg-config
+            mold-wrapped clang pkg-config openssl.dev
+          ];
+          buildInputs = with pkgs; [
+            pkg-config openssl.dev
           ];
           env = {
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
