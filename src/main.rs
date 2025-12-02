@@ -229,6 +229,11 @@ async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscui
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;//.map_err(HttpgError::No)?;
 
+    if let Some(lang) = &query.accept_language {
+        let lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
+        tx.batch_execute(&format!("set local lc_time to \"{}.UTF8\"", lang)).await?;//.map_err(HttpgError::No)?;
+    }
+
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
         (
             serde_json::to_string(&query)?,

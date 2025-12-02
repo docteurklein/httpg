@@ -29,7 +29,7 @@ create schema cpres;
 
 create function cpres.embed_passage(content text)
 returns vector
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
@@ -42,7 +42,7 @@ end;
 
 create function cpres.embed_query(query text)
 returns vector
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
@@ -55,7 +55,7 @@ end;
 
 create function cpres.rerank_distance(query text, content text)
 returns real
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
@@ -95,7 +95,7 @@ create extension if not exists moddatetime schema public;
 create extension if not exists vector schema public;
 
 create or replace function current_person_id() returns uuid
-immutable strict parallel safe leakproof
+immutable strict parallel safe -- leakproof
 language plpgsql
 security invoker
 set search_path to cpres, pg_catalog
@@ -133,6 +133,8 @@ insert into translation (id, lang, text) values
 , ('activity', 'fr', 'Notifications')
 , ('my goods', 'fr', 'Mes biens')
 , ('by %s', 'fr', 'Par %s')
+, ('%s at %s: ', 'fr', '%s le %s: ')
+, ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
 , ('Search', 'fr', 'Chercher')
 , ('query', 'fr', 'Requête')
 , ('title', 'fr', 'Titre')
@@ -156,7 +158,7 @@ insert into translation (id, lang, text) values
 
 create function cpres._(id_ text, lang_ text = null)
 returns text
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 security definer
 set search_path to cpres, pg_catalog
 language sql
@@ -273,7 +275,7 @@ with check (
 
 create function geojson(point point, props jsonb = '{}') returns jsonb
 language sql 
-immutable strict parallel safe leakproof
+immutable strict parallel safe -- leakproof
 set search_path to cpres, pg_catalog
 begin atomic;
     select jsonb_build_object(
@@ -365,7 +367,7 @@ using (
 );
 
 create function compare_search() returns trigger
-volatile strict parallel safe leakproof
+volatile strict parallel safe -- leakproof
 security definer
 set search_path to cpres, pg_catalog
 as $$
@@ -500,7 +502,7 @@ grant select on table nearby to person;
 
 create function good_form(params jsonb, sql text) returns xml
 security invoker
-immutable parallel safe leakproof
+immutable parallel safe -- leakproof
 language sql
 begin atomic
 with query (redirect, errors) as (
@@ -722,7 +724,7 @@ select xmlelement(name div,
             order by at asc
         )
         select xmlagg(xmlelement(name div,
-            format(_('by %s'), author.name) || ': ' || content
+            format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
         ))
         from message
         join person author on (author.person_id = message.author)
@@ -947,7 +949,7 @@ end;
 grant execute on function send_login_email(text) to person;
 
 create function login() returns setof text
-volatile strict parallel safe leakproof
+volatile strict parallel safe -- leakproof
 language sql
 security definer
 set search_path to cpres, pg_catalog
