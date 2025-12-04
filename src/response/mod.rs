@@ -1,4 +1,5 @@
 
+use anyhow::anyhow;
 use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
 use futures::stream;
@@ -6,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
-use crate::extract::query::Query;
+use crate::{extract::query::Query, internal_error};
 
 // pub mod compress_stream;
 
@@ -78,7 +79,9 @@ impl IntoResponse for Result {
                     Rows::Stream(rows) => Html(
                         Body::from_stream(
                             rows.map(move |row|
-                                Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
+                                Bytes::from(row.unwrap().try_get::<usize, String>(0)
+                                    .map_or_else(|e| e.to_string(), |r| r + "\n")
+                                )
                             )
                             .map(Ok::<_, axum::Error>)
                         ).into_response()
@@ -98,7 +101,9 @@ impl IntoResponse for Result {
                     Rows::Stream(rows) => (
                         [("content-type", a.unwrap_or("application/octet-stream".to_string()))],
                         Body::from_stream(rows
-                            .map(|row| [row.unwrap().get::<usize, Vec<u8>>(0), "\n".as_bytes().to_vec()].concat())
+                            .map(|row|
+                                row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
+                            )
                             .map(Ok::<_, axum::Error>)
                         ),
                     ).into_response(),

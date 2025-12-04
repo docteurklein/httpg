@@ -199,11 +199,12 @@ async fn login(
     let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
-    .map_err(internal_error)?;
+        .map_err(internal_error)?
+    ;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    let _ = pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error);
 
-    let row = tx.query_opt(&login_proc, &[]).await;
+    let row = tx.query_opt(&login_proc, &[]).await.map_err(internal_error);
 
     let mut builder = Biscuit::builder();
     if let Ok(Some(row)) = row {
@@ -227,11 +228,11 @@ async fn login(
 
 async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
-    tx.batch_execute(&format!("set local role to {anon_role}")).await?;//.map_err(HttpgError::No)?;
+    tx.batch_execute(&format!("set local role to {anon_role}")).await?;
 
     if let Some(lang) = &query.accept_language {
         let lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
-        tx.batch_execute(&format!("set local lc_time to \"{}.UTF8\"", lang)).await?;//.map_err(HttpgError::No)?;
+        tx.batch_execute(&format!("set local lc_time to \"{}.UTF8\"", lang)).await?;
     }
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
@@ -312,9 +313,10 @@ async fn stream_query(
         .read_only(true)
         .isolation_level(IsolationLevel::Serializable)
         .start().await
-    .map_err(internal_error)?;
+        .map_err(internal_error)?
+    ;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    let _ = pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error);
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
@@ -365,7 +367,10 @@ async fn post_query(
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
 
             let _ = pre(&tx, &biscuit, &anon_role, &query).await;
-            tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+            tx.query_typed_raw(
+                "select set_config('httpg.errors', $1, true)",
+                vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)])
+            .await.map_err(internal_error)?;
 
             match query.on_error {
                 Some(on_error) => {
@@ -521,7 +526,6 @@ fn internal_error<E>(err: E) -> Response
 where
     E: std::error::Error,
 {
-    eprintln!("{}", err);
     dbg!(&err);
     (
         StatusCode::INTERNAL_SERVER_ERROR,

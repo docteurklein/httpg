@@ -16,14 +16,17 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - run: |
-          nix run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
+          nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      - run: nix run .#oci.copyToRegistry
+      - run: |
+          nix --accept-flake-config build .#httpg --print-build-logs
+
+      - run: nix --accept-flake-config run .#oci.copyToRegistry
       - id: image_name
         run: |
-          echo "image_name=docker.io/$(nix eval .#oci.imageRefUnsafe --raw --accept-flake-config)" | tee "$GITHUB_OUTPUT"
+          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee "$GITHUB_OUTPUT"
 
       - name: Install Render CLI
         run: |
