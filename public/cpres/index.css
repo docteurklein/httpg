@@ -2,6 +2,13 @@ html, body, #map {
     height: 95%;
     width: 100vw;
 }
+
+@media (min-width: 768px) {
+    .grid.interest {
+        grid-template-columns: repeat(auto-fit,minmax(20%, 1fr));
+    }
+}
+
 .leaflet-popup-content {
     overflow: scroll;
     & img {

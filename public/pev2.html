@@ -1,28 +1,35 @@
-<script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
-<script src="https://unpkg.com/pev2/dist/pev2.umd.js"></script>
-<link
-  href="https://unpkg.com/bootstrap@5/dist/css/bootstrap.min.css"
-  rel="stylesheet"
-/>
-<link rel="stylesheet" href="https://unpkg.com/pev2/dist/pev2.css" />
-
+<!DOCTYPE html>
+<head>
+  <link href="https://unpkg.com/bootstrap@5/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/pev2/dist/pev2.css" />
+</head>
 
 <div id="app" class="d-flex flex-column vh-100">
   <textarea v-model="plan"></textarea>
   <pev2-plan v-if="plan" :plan-source="plan" plan-query="" />
 </div>
 
-<script>
-  const { createApp, inject } = Vue
+<script type="importmap">
+  {
+    "imports": {
+      "vue": "https://unpkg.com/vue@3/dist/vue.esm-browser.prod.js",
+      "pev2": "https://unpkg.com/pev2/dist/pev2.es.js"
+    }
+  }
+</script>
+
+<script type="module">
+  import { createApp, ref } from 'vue';
+  import { Plan } from 'pev2';
 
   let app = createApp({
     data() {
       return {
-        plan: inject('plan')
+        plan: ref()
       }
     },
   })
-  app.component('pev2-plan', pev2.Plan)
-  app.mount("#app")
+  app.component('pev2-plan', Plan);
+  app.mount("#app");
 
 </script>

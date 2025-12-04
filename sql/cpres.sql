@@ -21,8 +21,8 @@ select current_setting('neon.project_id', true) is not null as is_neon \gset
 create extension if not exists vector cascade;
 \if :is_neon
 create extension if not exists rag cascade;
-create extension if not exists rag_bge_small_en_v15 cascade; 
-create extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
+create extension if not exists rag_bge_small_en_v15 cascade;
+create extension if not exists rag_jina_reranker_v1_tiny_en cascade;
 \endif
 
 create schema cpres;
@@ -132,7 +132,7 @@ insert into translation (id, lang, text) values
 , ('search', 'fr', 'Rechercher')
 , ('activity', 'fr', 'Notifications')
 , ('my goods', 'fr', 'Mes biens')
-, ('by %s', 'fr', 'Par %s')
+, ('By %s', 'fr', 'Par %s')
 , ('%s at %s: ', 'fr', '%s le %s: ')
 , ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
 , ('Search', 'fr', 'Chercher')
@@ -140,7 +140,6 @@ insert into translation (id, lang, text) values
 , ('title', 'fr', 'Titre')
 , ('Create alert', 'fr', 'Créer une alerte')
 , ('Remove alert', 'fr', 'Supprimer cette alerte')
-, ('%s is interested by ', 'fr', '%s est intéressé par ')
 , (' from %s', 'fr', ' de %s')
 , ('Send message', 'fr', 'Envoyer')
 , ('New good', 'fr', 'Créér un nouveau bien')
@@ -292,8 +291,8 @@ end;
 grant execute on function geojson to person;
 
 create domain interest_level as text
-default 'normal'
-check (value = any (array['low', 'normal', 'high']));
+default 'interested'
+check (value = any (array['a little interested', 'interested', 'highly interested']));
     
 create table interest (
     good_id uuid not null
@@ -412,7 +411,7 @@ select xmlelement(name div,
             'location', q.location::text 
         )) as href
     ), good.title)),
-    xmlelement(name span, format(_('by %s'), giver_name)),
+    xmlelement(name span, format(_('By %s'), giver_name)),
     xmlelement(name p, good.description),
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
@@ -443,17 +442,17 @@ select xmlelement(name div,
         ),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
-                'low' as value,
+                'a little interested' as value,
                 'submit' as type
             ), _('A little interested!')),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
-                'normal' as value,
+                'interested' as value,
                 'submit' as type
             ), _('Interested!')),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
-                'high' as value,
+                'highly interested' as value,
                 'submit' as type
             ), _('Highly interested!'))
         )
@@ -703,82 +702,163 @@ union all select _('Nothing yet.') where not exists (select from result limit 1)
 
 grant select on table "good admin" to person;
 
+create view "giving activity" (html)
+with (security_invoker)
+as with data (good_id, title) as (
+    select good_id, title
+    from good
+    -- join interest using (good_id)
+    where giver = current_person_id()
+    and exists (select from interest where good_id = good.good_id)
+    order by
+        coalesce(good.updated_at, good.created_at) desc
+),
+html (html) as (
+    select xmlelement(name div,
+        xmlelement(name a, xmlattributes(
+            url('/query', jsonb_build_object(
+                'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+                'params[]', good_id
+            )) as href
+        ), title),
+        xmlelement(name div, xmlattributes('grid interest' as class), (
+            select xmlagg(xmlelement(name div,
+            xmlelement(name div, format(_('%s is %s'), receiver.name, interest.level)),
+            (
+                with message as (
+                    select *
+                    from message
+                    where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
+                    order by at asc
+                )
+                select xmlagg(xmlelement(name div,
+                    format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
+                ))
+                from message
+                join person author on (author.person_id = message.author)
+            ),
+            xmlelement(name form, xmlattributes(
+                'POST' as method,
+                url('/query', jsonb_build_object(
+                    'redirect', 'referer'
+                )) as action),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'sql' as name,
+                    format('insert into cpres.message (good_id, person_id, content) values(%L, %L, $1)', interest.good_id, interest.person_id) as value
+                )),
+                xmlelement(name textarea, xmlattributes(
+                    'params[]' as name,
+                    'message' as placeholder
+                ), ''),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    _('Send message') as value
+                ))
+            ),
+            xmlelement(name form, xmlattributes(
+                'POST' as method,
+                url('/query', jsonb_build_object(
+                    'sql', format('call cpres.give(%L, %L)', interest.good_id, interest.person_id),
+                    'redirect', 'referer'
+                )) as action
+            ),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    format(_('Give to %s'), receiver.name) as value
+                ))
+            )))
+            from interest
+            join person receiver on (interest.person_id = receiver.person_id)
+            left join person_location receiver_location on (receiver_location.person_id = receiver.person_id)
+            where interest.good_id = data.good_id
+        ))
+    )::text
+    from data
+)
+select xmlelement(name h1, _('Giving activity'))::text
+union all select html::text from html
+union all select _('Nothing yet.') where not exists (select from html limit 1)
+;
+
+grant select on table "giving activity" to person;
+
+create view "receiving activity" (html)
+with (security_invoker)
+as with data (good, giver_name, receiver_location, interest) as (
+    select good, giver.name, receiver_location, interest
+    from interest
+    join good using (good_id)
+    join person giver on (good.giver = giver.person_id)
+    left join person_location receiver_location on (receiver_location.person_id = interest.person_id)
+    where interest.person_id = current_person_id()
+    order by
+        coalesce(good.updated_at, good.created_at) desc
+),
+html (html) as (
+    select xmlelement(name div,
+        xmlelement(name a, xmlattributes(
+            url('/query', jsonb_build_object(
+                'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+                'params[]', (good).good_id,
+                'location', (receiver_location).location
+            )) as href
+        ), (good).title),
+        xmlelement(name div, format(_('By %s'), giver_name)),
+        (
+            with message as (
+                select *
+                from message
+                where (message.good_id, message.person_id) = ((interest).good_id, (interest).person_id)
+                order by at asc
+            )
+            select xmlagg(xmlelement(name div,
+                format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
+            ))
+            from message
+            join person author on (author.person_id = message.author)
+        ),
+        xmlelement(name form, xmlattributes(
+            'POST' as method,
+            url('/query', jsonb_build_object(
+                'redirect', 'referer'
+            )) as action),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'sql' as name,
+                format('insert into cpres.message (good_id, person_id, content) values(%L, %L, $1)', (interest).good_id, (interest).person_id) as value
+            )),
+            xmlelement(name textarea, xmlattributes(
+                'params[]' as name,
+                'message' as placeholder
+            ), ''),
+            xmlelement(name input, xmlattributes(
+                'submit' as type,
+                _('Send message') as value
+            ))
+        )
+    )::text
+    from data
+)
+select xmlelement(name h1, _('Receiving activity'))::text
+union all select html::text from html
+union all select _('Nothing yet.') where not exists (select from html limit 1)
+;
+
+grant select on table "receiving activity" to person;
+
 create view "activity" (html)
 with (security_invoker)
 as with result (html) as (
-select xmlelement(name div,
-    format(_('%s is interested by '), receiver.name),
-    xmlelement(name a, xmlattributes(
-        url('/query', jsonb_build_object(
-            'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
-            'params[]', good.good_id,
-            'location', receiver_location.location
-        )) as href
-    ), good.title),
-    format(_(' from %s'), giver.name),
-    (
-        with message as (
-            select *
-            from message
-            where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
-            order by at asc
-        )
-        select xmlagg(xmlelement(name div,
-            format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
-        ))
-        from message
-        join person author on (author.person_id = message.author)
-    ),
-    xmlelement(name form, xmlattributes(
-        'POST' as method,
-        url('/query', jsonb_build_object(
-            'redirect', 'referer'
-        )) as action),
-        xmlelement(name input, xmlattributes(
-            'hidden' as type,
-            'sql' as name,
-            format('insert into cpres.message (good_id, person_id, content) values(%L, %L, $1)', interest.good_id, interest.person_id) as value
-        )),
-        xmlelement(name textarea, xmlattributes(
-            'params[]' as name,
-            'message' as placeholder
-        ), ''),
-        xmlelement(name input, xmlattributes(
-            'submit' as type,
-            _('Send message') as value
-        ))
-    ),
-    (select xmlelement(name form, xmlattributes(
-        'POST' as method,
-        url('/query', jsonb_build_object(
-            'sql', format('call cpres.give(%L, %L)', interest.good_id, interest.person_id),
-            'redirect', 'referer'
-        )) as action),
-        xmlelement(name input, xmlattributes(
-            'submit' as type,
-            format(_('Give to %s'), receiver.name) as value
-        ))
-    ) where interest.person_id <> current_person_id())
-)::text
-from interest
-join good using (good_id)
-join person receiver on (interest.person_id = receiver.person_id)
-left join person_location receiver_location on (receiver_location.person_id = receiver.person_id)
-join person giver on (giver.person_id = good.giver)
-where giver = current_person_id()
-or interest.person_id = current_person_id()
-order by (
-    select max(at)
-    from message
-    where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
-) desc nulls last,
-interest.at desc
+    select xmlelement(name div, xmlattributes('grid' as class),
+        xmlelement(name div, (select xmlagg(html::xml) from "giving activity")),
+        xmlelement(name div, (select xmlagg(html::xml) from "receiving activity"))
+    )
 )
-select html from result
-union all select _('Nothing yet.') where not exists (select from result limit 1)
-;
+select html::text from result;
 
 grant select on table "activity" to person;
+
 
 create view "findings" (html)
 with (security_invoker)
@@ -986,7 +1066,7 @@ select $html$<!DOCTYPE html>
 </head>
 <body>
   <script type="module" src="/cpres.js"></script>
-  <main class="container">
+  <main class="container-fluid">
 $html$
 union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
 union all (
@@ -1021,7 +1101,7 @@ union all (
     select format($html$
         <form method="GET" action="/login">
             <input type="text" name="challenge" />
-            <input type="hiddenr" name="redirect" value="referer" />
+            <input type="hidden" name="redirect" value="referer" />
             <input type="submit" value="Login as %s" />
         </form>
     $html$, name)
@@ -1036,7 +1116,8 @@ union all select xmlelement(name div,
             with menu (name, sql, visible) as (values
                 (_('map'), 'table cpres.head union all table cpres.map', true),
                 (_('search'), 'table cpres.head union all table cpres."findings"', current_person_id() is not null),
-                (_('activity'), 'table cpres.head union all table cpres."activity"', current_person_id() is not null),
+                (_('Giving activity'), 'table cpres.head union all table cpres."giving activity"', current_person_id() is not null),
+                (_('Receiving activity'), 'table cpres.head union all table cpres."receiving activity"', current_person_id() is not null),
                 (_('my goods'), 'table cpres.head union all table cpres."good admin"', current_person_id() is not null)
             )
             select xmlagg(

@@ -6,8 +6,11 @@ set local search_path to cpres, pg_catalog;
 
 insert into person (person_id, name, email, login_challenge) values
     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', gen_random_uuid()),
-    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', gen_random_uuid()),
-    (gen_random_uuid(), 'p3', 'p3@example.org', gen_random_uuid());
+    ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb', 'p2', 'p2@example.org', gen_random_uuid());
+
+insert into person (person_id, name, email, login_challenge)
+select gen_random_uuid(), 'p'||i, format('p%s@example.org', i), gen_random_uuid()
+from generate_series(3, 20) i;
 
 insert into person_location (person_id, location) values
     -- ('13a00cef-59d8-4849-b33f-6ce5af85d3d2','(46.0734411, 3.666724)'),
@@ -35,12 +38,15 @@ select
     format('(%s, %s)', random(46.000, 46.200), random(3.600, 3.700))::point,
     person_id -- , array[format('https://lipsum.app/id/%s/800x900', i)]
 from generate_series(1, 10) i, person
-where name <> 'p3';
+where name = 'p1';
 
 insert into interest (good_id, person_id, price, origin)
-select good_id, person_id, random(1, 10), 'manual'
+select good_id, person.person_id, random(1, 10), 'manual'
 from person, good
-where person.person_id <> good.giver;
+join person giver on (giver.person_id = good.giver)
+where person.person_id <> good.giver
+and giver.name <> 'p1'
+;
 
 insert into message (good_id, person_id, author, content)
 select interest.good_id, interest.person_id, person.person_id, i::text || ' ' || random(1, 10)
