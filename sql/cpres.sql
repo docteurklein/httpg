@@ -95,7 +95,7 @@ create extension if not exists moddatetime schema public;
 create extension if not exists vector schema public;
 
 create or replace function current_person_id() returns uuid
-immutable strict parallel safe -- leakproof
+volatile strict parallel safe -- leakproof
 language plpgsql
 security invoker
 set search_path to cpres, pg_catalog
@@ -105,6 +105,7 @@ begin
     select person.person_id into person_id from person where person.person_id = current_setting('cpres.person_id', true)::uuid limit 1;
     return person_id;
 exception when invalid_text_representation then
+    -- raise warning '%', sqlerrm;
     return null;
 end;
 $$;

@@ -1,7 +1,7 @@
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
         StatusCode, header::SET_COOKIE,
-    }, response::{Html, IntoResponse, Redirect, Response}, routing::{get, post}
+    }, response::{Html, IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
@@ -18,12 +18,12 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
 use core::{panic};
-use std::{error::Error, fs, net::TcpListener, sync::Arc};
+use std::{fs, net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
 use tokio_postgres::types::{ToSql, Type};
-use deadpool_postgres::{Pool, Runtime, Transaction};
+use deadpool_postgres::{CreatePoolError, Pool, PoolError, Runtime, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
@@ -34,6 +34,46 @@ mod extract;
 mod sql;
 mod response;
 
+#[derive(thiserror::Error, Debug)]
+enum HttpgError {
+    #[error("io: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("config: {0}")]
+    Config(#[from] config::ConfigError),
+    #[error("postgres: {0}")]
+    Postgres(#[from] tokio_postgres::Error),
+    #[error("deadpool: {0}")]
+    Deadpool(#[from] PoolError),
+    #[error("biscuit token: {0}")]
+    BiscuitToken(#[from] biscuit_auth::error::Token),
+    #[error("biscuit format: {0}")]
+    BiscuitFormat(#[from] biscuit_auth::error::Format),
+    #[error("deadpool config: {0}")]
+    DeadpoolConfig(#[from] CreatePoolError),
+    #[error("serde: {0}")]
+    Serde(#[from] serde_json::Error),
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
+impl IntoResponse for HttpgError {
+    fn into_response(self) -> Response {
+        // let body = match self {
+        //     HttpgError::Io(error) => error.to_string(),
+        //     HttpgError::Config(error) => error.to_string(),
+        //     HttpgError::Postgres(error) => error.to_string(),
+        //     HttpgError::Deadpool(error) => error.to_string(),
+        //     HttpgError::DeadpoolConfig(error) => error.to_string(),
+        //     HttpgError::Serde(error) => error.to_string(),
+        //     HttpgError::Other(error) => error.to_string(),
+        //     HttpgError::Biscuit(error) => error.to_string(),
+        // };
+
+        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+    }
+}
+
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DeadPoolConfig {
     #[serde(default)]
@@ -41,33 +81,32 @@ struct DeadPoolConfig {
 }
 
 impl DeadPoolConfig {
-    pub fn from_env() -> Self {
+    pub fn from_env() -> Result<Self, config::ConfigError> {
         let config = config::Config::builder()
             .add_source(config::Environment::default()
                 .prefix("PG")
                 .separator("_")
                 .keep_prefix(true)
             )
-            .build()
-            .unwrap()
+            .build()?
         ;
 
-        config.try_deserialize::<Self>().unwrap()
+        config.try_deserialize::<Self>()
     }
 }
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn Error>> { Ok(fs::read_to_string(file)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(fs::read_to_string(file)?) })]
     pem: String,
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn Error>> { Ok(fs::read_to_string(file)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(fs::read_to_string(file)?) })]
     pem_key: String,
 }
 
 #[derive(Clone, Conf)]
 #[conf(env_prefix="HTTPG_")]
 struct HttpgConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn Error>> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
     private_key: Vec<u8>,
     #[conf(env)]
     smtp_user: String,
@@ -111,7 +150,7 @@ struct AppState {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), anyhow::Error> {
+async fn main() -> Result<(), HttpgError> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
             env::var("RUST_LOG").unwrap_or("httpg=debug".to_string()),
@@ -119,7 +158,7 @@ async fn main() -> Result<(), anyhow::Error> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let cfg = DeadPoolConfig::from_env();
+    let cfg = DeadPoolConfig::from_env()?;
 
     let pool = match env::var("PG_SSLMODE") {
         Ok(_) => {
@@ -192,38 +231,37 @@ async fn login(
     State(AppState {pool, config: HttpgConfig { login_proc, anon_role, private_key, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<Response, Response> {
-    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key).unwrap());
+) -> Result<impl IntoResponse, HttpgError> {
+    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key)?);
 
-    let mut conn = pool.get().await.map_err(internal_error)?;
+    let mut conn = pool.get().await?;
     let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
-        .start().await
-        .map_err(internal_error)?
+        .start().await?
     ;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error);
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
-    let row = tx.query_opt(&login_proc, &[]).await.map_err(internal_error);
+    let row = tx.query_opt(&login_proc, &[]).await;
 
     let mut builder = Biscuit::builder();
     if let Ok(Some(row)) = row {
-        builder
-        .add_fact(fact("sql", &[string(row.get(0))]))
-        .map_err(internal_error)?;
+        builder.add_fact(fact("sql", &[string(row.get(0))]))?;
     }
-    tx.commit().await.map_err(internal_error)?;
+    tx.commit().await?;
 
     Ok((
-        [(SET_COOKIE, Cookie::build(("auth", builder.build(&root).unwrap().to_base64().unwrap()))
+        [(SET_COOKIE, Cookie::build(("auth", builder.build(&root)?.to_base64()?))
             .http_only(true)
             .secure(true)
             .same_site(cookie::SameSite::Lax) // Strict breaks sending cookie after email challenge redirect
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
-        Redirect::to(&query.redirect.unwrap())
-    ).into_response())
+        query.redirect
+            .map(|r| Redirect::to(&r).into_response())
+            .unwrap_or(NoContent.into_response())
+    ))
 }
 
 async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
@@ -247,7 +285,6 @@ async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscui
         tx.batch_execute(b).await?;
     }
 
-
     Ok(())
 }
 
@@ -256,21 +293,21 @@ async fn email(
     State(AppState {pool, config: HttpgConfig { smtp_user, smtp_password, smtp_relay, anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<Response, Response> {
+) -> Result<impl IntoResponse, HttpgError> {
 
-    let mut conn = pool.get().await.map_err(internal_error)?;
+    let mut conn = pool.get().await?;
     let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
-    .map_err(internal_error)?;
+    ?;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await.map_err(internal_error)?;
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
 
     let smtp_config = SmtpConfig::default()
         .sender("florian.klein@free.fr")
@@ -297,9 +334,12 @@ async fn email(
         }
     }).await;
 
-    tx.commit().await.map_err(internal_error)?;
+    tx.commit().await?;
 
-    Ok(Redirect::to(&query.redirect.unwrap()).into_response())
+    Ok(query.redirect
+        .map(|r| Redirect::to(&r).into_response())
+        .unwrap_or(NoContent.into_response())
+    )
 }
 
 #[debug_handler]
@@ -307,28 +347,27 @@ async fn stream_query(
     State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<Response, Response> {
-    let mut conn = pool.get().await.map_err(internal_error)?;
+) -> Result<impl IntoResponse, HttpgError> {
+    let mut conn = pool.get().await?;
     let tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::Serializable)
-        .start().await
-        .map_err(internal_error)?
+        .start().await?
     ;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error);
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await.map_err(internal_error)?;
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
 
     Ok(response::Result {
         query: query.to_owned(),
         rows: response::Rows::Stream(rows)
         
-    }.into_response())
+    })
 
 }
 
@@ -337,11 +376,11 @@ async fn post_query(
     State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<impl IntoResponse, Response> {
-    let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+) -> Result<impl IntoResponse, HttpgError> {
+    let mut conn = pool.get().await?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -351,7 +390,7 @@ async fn post_query(
 
     let rows = match result {
         Ok(rows) => {
-            tx.commit().await.map_err(internal_error)?;
+            tx.commit().await?;
 
             if let Some(redirect) = query.redirect {
                 return Ok(Redirect::to(&redirect).into_response());
@@ -363,21 +402,22 @@ async fn post_query(
             dbg!(&err);
             let errors = json!({"error": &err.as_db_error().unwrap().message()});
 
-            let mut conn = pool.get().await.map_err(internal_error)?;
-            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+            let mut conn = pool.get().await?;
+            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
-            let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+            pre(&tx, &biscuit, &anon_role, &query).await?;
+
             tx.query_typed_raw(
                 "select set_config('httpg.errors', $1, true)",
-                vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)])
-            .await.map_err(internal_error)?;
+                vec![(serde_json::to_string(&errors)?, Type::TEXT)])
+            .await?;
 
             match query.on_error {
                 Some(on_error) => {
                     let rows: Vec<String> = tx
                         .query_typed(on_error.as_str(), &[])
                         .await
-                        .map_err(internal_error)?
+                        ?
                         .iter()
                         .map(|row| row.get(0))
                         .collect()
@@ -403,29 +443,19 @@ async fn post_query(
     }.into_response())
 }
 
-#[derive(thiserror::Error, Debug)]
-enum HttpgError {
-    #[error("postgres")]
-    Postgres(#[from] tokio_postgres::Error),
-    #[error("deadpool")]
-    Deadpool(#[from] deadpool_postgres::PoolError),
-    #[error("serde")]
-    Serde(#[from] serde_json::Error),
-}
-
 #[debug_handler]
 async fn upload_query(
     State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<impl IntoResponse, Response> {
-    let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+) -> Result<impl IntoResponse, HttpgError> {
+    let mut conn = pool.get().await?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error)?;
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
-    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
-        tx.batch_execute(&b).await.map_err(internal_error)?;
+    if let Some(extract::biscuit::Biscuit(ref b)) = biscuit {
+        tx.batch_execute(b).await?;
     }
 
     let sql_params: Vec<(_, Type)> = 
@@ -442,7 +472,7 @@ async fn upload_query(
 
     let rows = match result {
          Ok(rows) => {
-            tx.commit().await.map_err(internal_error)?;
+            tx.commit().await?;
 
             if let Some(redirect) = query.redirect {
                 return Ok(Redirect::to(&redirect).into_response());
@@ -455,19 +485,18 @@ async fn upload_query(
             let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
             dbg!(&errors);
 
-            let mut conn = pool.get().await.map_err(internal_error)?;
-            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+            let mut conn = pool.get().await?;
+            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
-            // pre(&tx, &biscuit, &anon_role, &query).await.map_err(internal_error)?;
-            tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![(serde_json::to_string(&query).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
-            tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors).map_err(internal_error)?, Type::TEXT)]).await.map_err(internal_error)?;
+            pre(&tx, &biscuit, &anon_role, &query).await?;
+            tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors)?, Type::TEXT)]).await?;
 
             match query.on_error {
                 Some(on_error) => {
                     let rows: Vec<String> = tx
                         .query_typed(on_error.as_str(), &[])
                         .await
-                        .map_err(internal_error)?
+                        ?
                         .iter()
                         .map(|row| row.get(0))
                         .collect()
@@ -498,19 +527,19 @@ async fn raw_http(
     State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<Response, Response> {
-    let mut conn = pool.get().await.map_err(internal_error)?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await.map_err(internal_error)?;
+) -> Result<Response, HttpgError> {
+    let mut conn = pool.get().await?;
+    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _ = pre(&tx, &biscuit, &anon_role, &query).await;
+    pre(&tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await.map_err(internal_error)?;
+    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await?;
 
-    tx.commit().await.map_err(internal_error)?;
+    tx.commit().await?;
 
     Ok(response::Result {
         query,
@@ -519,18 +548,6 @@ async fn raw_http(
             .collect()
         )
     }.into_response())
-}
-
-
-fn internal_error<E>(err: E) -> Response
-where
-    E: std::error::Error,
-{
-    dbg!(&err);
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        err.to_string(),
-    ).into_response()
 }
 
 #[derive(Debug)]
