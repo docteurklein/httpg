@@ -43,7 +43,7 @@ impl VisitOrderBy {
         
             })
             .flat_map(|(rel, cols)| {
-                cols.as_object().unwrap().iter().map(move |(col, asc)| {
+                cols.as_object().unwrap().into_iter().map(move |(col, asc)| {
                     OrderByExpr {
                         expr: Expr::Identifier(Ident {
                             value: format!("{rel}.{col}"),

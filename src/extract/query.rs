@@ -11,7 +11,7 @@ use postgres_types::{to_sql_checked, ToSql};
 use serde::{Deserialize, Serialize};
 use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
 
-use crate::sql::VisitOrderBy;
+use crate::{HttpgError, sql::VisitOrderBy};
 
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -159,7 +159,8 @@ where
                 }
             }
             None => Ok(serde_json::Map::new()),
-        }?;
+        }
+        .or(Err(StatusCode::BAD_REQUEST.into_response()))?;
 
         let content_type_header = headers.get(CONTENT_TYPE);
         let content_type = content_type_header.and_then(|value| value.to_str().ok());
@@ -178,7 +179,8 @@ where
                 (
                     serde_qs.deserialize_bytes::<serde_json::Map<String, serde_json::Value>>(
                         &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
-                    ).unwrap(),
+                    )
+                    .or(Err(StatusCode::BAD_REQUEST.into_response()))?,
                     vec![]
                 )
             },
@@ -190,17 +192,20 @@ where
                     .or(Err(StatusCode::BAD_REQUEST.into_response()))?
                 ;
 
-                while let Some(field) = multipart.next_field().await.unwrap() {
+                while let Some(field) = multipart.next_field().await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
+                {
                     if field.content_type().is_some() {
-                        // let name = field.name().unwrap().to_string();
-                        let file_name = field.file_name().unwrap().to_string();
-                        let content_type = field.content_type().unwrap().to_string();
-                        let content = field.bytes().await.unwrap();
+                        let file_name = field.file_name().ok_or(StatusCode::BAD_REQUEST.into_response()).map(str::to_string)?;
+                        let content_type = field.content_type().ok_or(StatusCode::BAD_REQUEST.into_response()).map(str::to_string)?;
+                        let content = field.bytes().await
+                            .or(Err(StatusCode::BAD_REQUEST.into_response()))?;
                         files.push(File { content: content.to_vec(), content_type, file_name });
                     } else {
-                        body.insert(field.name().unwrap().to_string(), serde_json::json!(&field.text().await.unwrap()));
+                        body.insert(
+                            field.name().ok_or(StatusCode::BAD_REQUEST.into_response()).map(str::to_string)?,
+                            serde_json::json!(&field.text().await.or(Err(StatusCode::BAD_REQUEST.into_response()))?)
+                        );
                     }
-
                 }
                 (body, files)
                 
@@ -245,17 +250,20 @@ where
 
         let on_error = qs.on_error.to_owned().or(body.on_error.to_owned());
 
-        let params: Vec<Param> = qs.params.to_owned().or(body.params.to_owned()).unwrap_or_default().iter().enumerate().map(|(i, param)| {
-            let t = match qs.in_types.to_owned().or(body.in_types.to_owned()) {
-                Some(t) => t.get(i).unwrap_or(&Type::Text).to_owned(),
-                None => Type::Text,
-            };
-            match t {
-                Type::Jsonb => Param::Jsonb(param.to_owned()),
-                Type::Bytea => Param::Bytea(serde_json::to_vec(param).unwrap()),
-                _ => Param::Text(param.as_str().unwrap().to_string()),
-            }
-        }).collect();
+        let params: Result<Vec<Param>, Response> = qs.params.to_owned().or(body.params.to_owned()).unwrap_or_default()
+            .iter().enumerate().map(|(i, param)| {
+                let t = match qs.in_types.to_owned().or(body.in_types.to_owned()) {
+                    Some(t) => t.get(i).unwrap_or(&Type::Text).to_owned(),
+                    None => Type::Text,
+                };
+                match t {
+                    Type::Jsonb => Ok(Param::Jsonb(param.to_owned())),
+                    Type::Bytea => Ok(Param::Bytea(serde_json::to_vec(param).map_err(|_| HttpgError::InvalidTextParam.into_response())?)),
+                    _ => Ok(Param::Text(param.as_str().ok_or(HttpgError::InvalidTextParam.into_response())?.to_string())),
+                }
+            })
+            .collect()
+        ;
 
         let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok()).map(str::to_string);
 
@@ -265,7 +273,7 @@ where
         Ok(Self {
             sql: sql.unwrap_or_default(),
             order,
-            params,
+            params: params.or(Err(StatusCode::BAD_REQUEST.into_response()))?,
             files,
             qs: raw_qs,
             body: raw_body,

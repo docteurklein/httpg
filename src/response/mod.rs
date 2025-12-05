@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
-use crate::{extract::query::Query};
+use crate::{HttpgError, extract::query::Query};
 
 // pub mod compress_stream;
 
@@ -23,31 +23,31 @@ pub enum Raw {
     Body(Vec<u8>),
 }
 
-pub struct Result {
+pub struct HttpResult {
     pub query: Query,
     pub rows: Rows,
 }
 
-fn from_raw(rows: Vec<Raw>) -> Response {
+fn from_raw(rows: Vec<Raw>) -> Result<Response, HttpgError> {
     let mut builder = Response::builder();
     let mut body = BytesMut::new();
     for row in rows.iter() {
         match row {
             Raw::Status(status) => {
-                builder = builder.status(StatusCode::from_u16(status.to_owned()).unwrap());
+                builder = builder.status(StatusCode::from_u16(status.to_owned())?);
             },
             Raw::Header(k, v) => {
-                builder = builder.header(HeaderName::from_bytes(k.as_bytes()).unwrap(), HeaderValue::from_str(v).unwrap());
+                builder = builder.header(HeaderName::from_bytes(k.as_bytes())?, HeaderValue::from_str(v)?);
             },
             Raw::Body(content) => {
                 body.put(content.as_slice());
             }
         }
     }
-    builder.body(Body::from(body.to_vec())).unwrap()
+    builder.body(Body::from(body.to_vec())).map_err(Into::into)
 }
 
-impl IntoResponse for Result {
+impl IntoResponse for HttpResult {
     fn into_response(self) -> Response {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
@@ -68,7 +68,7 @@ impl IntoResponse for Result {
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows)
+                        from_raw(rows).into_response()
                     }
                 }
             },
@@ -77,11 +77,14 @@ impl IntoResponse for Result {
                     Rows::Stream(rows) => Html(
                         Body::from_stream(
                             rows.map(move |row|
-                                Bytes::from(row.unwrap().try_get::<usize, String>(0)
-                                    .map_or_else(|e| e.to_string(), |r| r + "\n")
-                                )
+                                row
+                                    .and_then(|r| r.try_get::<usize, String>(0))
+                                    .map(|r| r + "\n")
+                                    .map_err(|e| e.to_string())
+                                    .map(Bytes::from)
+                                
                             )
-                            .map(Ok::<_, axum::Error>)
+                            // .map(Ok::<_, axum::Error>)
                         ).into_response()
                     ).into_response(),
 
@@ -90,7 +93,7 @@ impl IntoResponse for Result {
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows)
+                        from_raw(rows).into_response()
                     }
                 }
             },
@@ -111,7 +114,7 @@ impl IntoResponse for Result {
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows)
+                        from_raw(rows).into_response()
                     }
                 }
             },

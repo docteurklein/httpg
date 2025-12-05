@@ -35,25 +35,35 @@ mod sql;
 mod response;
 
 #[derive(thiserror::Error, Debug)]
-enum HttpgError {
-    #[error("io: {0}")]
+pub enum HttpgError {
+    #[error("io: {0:#?}")]
     Io(#[from] std::io::Error),
-    #[error("config: {0}")]
+    #[error("config: {0:#?}")]
     Config(#[from] config::ConfigError),
-    #[error("postgres: {0}")]
+    #[error("postgres: {0:#?}")]
     Postgres(#[from] tokio_postgres::Error),
-    #[error("deadpool: {0}")]
+    #[error("deadpool: {0:#?}")]
     Deadpool(#[from] PoolError),
-    #[error("biscuit token: {0}")]
+    #[error("biscuit token: {0:#?}")]
     BiscuitToken(#[from] biscuit_auth::error::Token),
-    #[error("biscuit format: {0}")]
+    #[error("biscuit format: {0:#?}")]
     BiscuitFormat(#[from] biscuit_auth::error::Format),
-    #[error("deadpool config: {0}")]
+    #[error("deadpool config: {0:#?}")]
     DeadpoolConfig(#[from] CreatePoolError),
-    #[error("serde: {0}")]
+    #[error("serde: {0:#?}")]
     Serde(#[from] serde_json::Error),
-    #[error(transparent)]
-    Other(#[from] anyhow::Error),
+    #[error("axum: {0:#?}")]
+    Axum(#[from] axum::http::Error),
+    #[error("axum header name: {0:#?}")]
+    AxumHeaderName(#[from] axum::http::header::InvalidHeaderName),
+    #[error("axum header value: {0:#?}")]
+    AxumHeaderValue(#[from] axum::http::header::InvalidHeaderValue),
+    #[error("axum code: {0:#?}")]
+    AxumCode(#[from] axum::http::status::InvalidStatusCode),
+    #[error("axum multipart: {0:#?}")]
+    AxumMultipart(#[from] axum::extract::multipart::MultipartError),
+    #[error("invalid text param")]
+    InvalidTextParam,
 }
 
 impl IntoResponse for HttpgError {
@@ -363,7 +373,7 @@ async fn stream_query(
 
     let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
 
-    Ok(response::Result {
+    Ok(response::HttpResult {
         query: query.to_owned(),
         rows: response::Rows::Stream(rows)
         
@@ -400,7 +410,7 @@ async fn post_query(
         },
         Err(err) => {
             dbg!(&err);
-            let errors = json!({"error": &err.as_db_error().unwrap().message()});
+            let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
 
             let mut conn = pool.get().await?;
             let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
@@ -437,7 +447,7 @@ async fn post_query(
         }
     };
 
-    Ok(response::Result {
+    Ok(response::HttpResult {
         query,
         rows: response::Rows::Vec(rows)
     }.into_response())
@@ -516,7 +526,7 @@ async fn upload_query(
         }
     };
 
-    Ok(response::Result {
+    Ok(response::HttpResult {
         query,
         rows,
     }.into_response())
@@ -541,7 +551,7 @@ async fn raw_http(
 
     tx.commit().await?;
 
-    Ok(response::Result {
+    Ok(response::HttpResult {
         query,
         rows: response::Rows::Raw(result.iter()
             .map(|row| serde_json::from_str::<Raw>(row.get::<usize, String>(0).as_str()).unwrap())
