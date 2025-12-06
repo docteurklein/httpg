@@ -264,6 +264,10 @@ where
             })
             .collect()
         ;
+        let params = [
+            params?,
+            files.to_owned().iter().map(|f| Param::File(f.to_owned())).collect()
+        ].concat();
 
         let accept_language = headers.get(ACCEPT_LANGUAGE).and_then(|value| value.to_str().ok()).map(str::to_string);
 
@@ -273,7 +277,7 @@ where
         Ok(Self {
             sql: sql.unwrap_or_default(),
             order,
-            params: params.or(Err(StatusCode::BAD_REQUEST.into_response()))?,
+            params,//: params.or(Err(StatusCode::BAD_REQUEST.into_response()))?,
             files,
             qs: raw_qs,
             body: raw_body,

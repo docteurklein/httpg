@@ -10,7 +10,7 @@ use conf::Conf;
 
 use config::ConfigError;
 use email_clients::{clients::{get_email_client, smtp::SmtpConfig}, configuration::EmailConfiguration, email::{EmailAddress, EmailObject}};
-use futures::StreamExt;
+use futures::{TryStreamExt};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -27,7 +27,7 @@ use deadpool_postgres::{CreatePoolError, Pool, PoolError, Runtime, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{extract::query::Query, response::Raw};
+use crate::{extract::query::{Query}, response::Raw};
 // use crate::response::compress_stream;
 
 mod extract;
@@ -62,6 +62,8 @@ pub enum HttpgError {
     AxumCode(#[from] axum::http::status::InvalidStatusCode),
     #[error("axum multipart: {0:#?}")]
     AxumMultipart(#[from] axum::extract::multipart::MultipartError),
+    #[error("email: {0:#?}")]
+    Email(#[from] email_clients::errors::EmailError),
     #[error("invalid text param")]
     InvalidTextParam,
 }
@@ -330,19 +332,17 @@ async fn email(
     let email_configuration: EmailConfiguration = smtp_config.into();
     let client = get_email_client(email_configuration);
 
-    rows.for_each(async |row| {
-        if let Ok(row) = row {
-           let mail = EmailObject {
-               sender: row.get::<&str, &str>("sender").into(),
-               to: vec![EmailAddress { name: row.get::<&str, &str>("to").into(), email: row.get::<&str, &str>("to").into() }],
-               subject: row.get::<&str, &str>("subject").into(),
-               plain: row.get::<&str, &str>("plain").into(),
-               html: row.get::<&str, &str>("html").into(),
-            };
-            dbg!(&mail);
-            client.to_owned().unwrap().send_emails(mail).await.expect("Unable to send email");
-        }
-    }).await;
+    rows.err_into::<HttpgError>().try_for_each(async |row| {
+       let mail = EmailObject {
+           sender: row.get::<&str, &str>("sender").into(),
+           to: vec![EmailAddress { name: row.get::<&str, &str>("to").into(), email: row.get::<&str, &str>("to").into() }],
+           subject: row.get::<&str, &str>("subject").into(),
+           plain: row.get::<&str, &str>("plain").into(),
+           html: row.get::<&str, &str>("html").into(),
+        };
+        dbg!(&mail);
+        client.to_owned().unwrap().send_emails(mail).await.map_err(|e| e.into())
+    }).await?;
 
     tx.commit().await?;
 
@@ -468,15 +468,14 @@ async fn upload_query(
         tx.batch_execute(b).await?;
     }
 
-    let sql_params: Vec<(_, Type)> = 
-        query.files.iter().map(|file| (vec!(
-            file.content.to_owned(),
-            file.file_name.to_owned().into(),
-            file.content_type.to_owned().into()
-        )
-        , Type::BYTEA_ARRAY))
+    // let params = [
+    //     query.params.to_owned(),
+    //     query.files.to_owned().iter().map(|f| Param::File(f.to_owned())).collect()
+    // ].concat();
 
-    .collect::<Vec<_>>();
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
+    }).collect();
 
     let result = tx.query_typed_raw(&query.sql, sql_params).await;
 
