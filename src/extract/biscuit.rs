@@ -7,7 +7,7 @@ use biscuit_auth::{KeyPair, PrivateKey};
 
 use crate::{AppState, HttpgError};
 
-pub struct Biscuit(pub String);
+pub struct Biscuit(pub Vec<String>);
 
 impl<S> OptionalFromRequestParts<S> for Biscuit
 where
@@ -27,7 +27,7 @@ where
 
                 let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)")?;
 
-                Ok(Some(Biscuit(sql.iter().map(|t| t.clone().0).collect::<Vec<String>>().join("; "))))
+                Ok(Some(Biscuit(sql.into_iter().map(|t| t.0).collect())))
             }
             _ => Ok(None)
         }

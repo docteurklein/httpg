@@ -129,7 +129,7 @@ struct HttpgConfig {
     #[conf(env)]
     anon_role: String,
     #[conf(env)]
-    login_proc: String,
+    login_query: String,
     #[conf(env, default_value="3000")]
     port: u16,
     #[conf(flatten)]
@@ -240,26 +240,28 @@ async fn main() -> Result<(), HttpgError> {
 
 #[debug_handler]
 async fn login(
-    State(AppState {pool, config: HttpgConfig { login_proc, anon_role, private_key, ..}}): State<AppState>,
+    State(AppState {pool, config: HttpgConfig { login_query, anon_role, private_key, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let root = KeyPair::from(&PrivateKey::from_bytes(&private_key)?);
 
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction()
+    let mut tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await?
     ;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
-    let row = tx.query_opt(&login_proc, &[]).await;
+    let params: [&(dyn ToSql + Sync); 0] = [];
+    let facts = tx.query(&login_query, &params).await?;
 
     let mut builder = Biscuit::builder();
-    if let Ok(Some(row)) = row {
-        builder.add_fact(fact("sql", &[string(row.get(0))]))?;
-    }
+    facts.iter().try_for_each(|row| {
+        builder.add_fact(fact("sql", &[string(row.get(0))]))
+    })?;
+
     tx.commit().await?;
 
     Ok((
@@ -276,13 +278,29 @@ async fn login(
     ))
 }
 
-async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
+async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;
 
     if let Some(lang) = &query.accept_language {
-        let lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
-        tx.batch_execute(&format!("set local lc_time to \"{}.UTF8\"", lang)).await?;
+        let mut lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
+        lang.push_str(".UTF8");
+
+        let params: [(&(dyn ToSql + Sync), Type); 1] = [
+            (
+                &lang,
+                Type::TEXT
+            )
+        ];
+        
+        let stx = tx.savepoint("lc_time").await?;
+
+        let res = stx.query_typed("select set_config('lc_time', $1, true)", &params).await;
+
+        match res {
+            Ok(_) => stx.commit().await?,
+            Err(_) => stx.rollback().await?,
+        }
     }
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
@@ -294,7 +312,9 @@ async fn pre<'a>(tx: &Transaction<'a>, biscuit: &Option<extract::biscuit::Biscui
     .await?;
 
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
-        tx.batch_execute(b).await?;
+        futures::future::join_all(b.iter().map(async |sql| {
+            tx.batch_execute(sql).await
+        })).await;
     }
 
     Ok(())
@@ -308,12 +328,12 @@ async fn email(
 ) -> Result<impl IntoResponse, HttpgError> {
 
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction()
+    let mut tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
     ?;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -359,13 +379,13 @@ async fn stream_query(
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction()
+    let mut tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::Serializable)
         .start().await?
     ;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
@@ -388,9 +408,9 @@ async fn post_query(
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
+    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -413,16 +433,16 @@ async fn post_query(
             let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
 
             let mut conn = pool.get().await?;
-            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
+            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
-            pre(&tx, &biscuit, &anon_role, &query).await?;
+            pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
             tx.query_typed_raw(
                 "select set_config('httpg.errors', $1, true)",
                 vec![(serde_json::to_string(&errors)?, Type::TEXT)])
             .await?;
 
-            match query.on_error {
+            match &query.on_error {
                 Some(on_error) => {
                     let rows: Vec<String> = tx
                         .query_typed(on_error.as_str(), &[])
@@ -460,13 +480,9 @@ async fn upload_query(
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
+    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
-
-    if let Some(extract::biscuit::Biscuit(ref b)) = biscuit {
-        tx.batch_execute(b).await?;
-    }
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     // let params = [
     //     query.params.to_owned(),
@@ -495,12 +511,12 @@ async fn upload_query(
             dbg!(&errors);
 
             let mut conn = pool.get().await?;
-            let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
+            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
-            pre(&tx, &biscuit, &anon_role, &query).await?;
+            pre(&mut tx, &biscuit, &anon_role, &query).await?;
             tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors)?, Type::TEXT)]).await?;
 
-            match query.on_error {
+            match &query.on_error {
                 Some(on_error) => {
                     let rows: Vec<String> = tx
                         .query_typed(on_error.as_str(), &[])
@@ -538,9 +554,9 @@ async fn raw_http(
     query: extract::query::Query,
 ) -> Result<Response, HttpgError> {
     let mut conn = pool.get().await?;
-    let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
+    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&tx, &biscuit, &anon_role, &query).await?;
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())

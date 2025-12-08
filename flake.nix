@@ -113,7 +113,7 @@
           env = {
             PG_DBNAME = "httpg";
             PG_USER = "httpg";
-            HTTPG_LOGIN_PROC="select cpres.login()";
+            HTTPG_LOGIN_QUERY="select cpres.login()";
             HTTPG_PRIVATE_KEY = "private-key-file";
             HTTPG_ANON_ROLE = "person";
           };

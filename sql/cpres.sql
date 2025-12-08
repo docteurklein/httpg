@@ -125,9 +125,9 @@ create index on translation (id, lang);
 
 insert into translation (id, lang, text) values
   ('Welcome %s!', 'fr', 'Bienvenue %s!')
-, ('A little interested', 'fr', 'Un peu intéressé')
-, ('Interested', 'fr', 'Intéressé')
-, ('Highly interested', 'fr', 'Très intéressé')
+, ('a little interested', 'fr', 'un peu intéressé')
+, ('interested', 'fr', 'intéressé')
+, ('highly interested', 'fr', 'très intéressé')
 , ('Not interested anymore', 'fr', 'Plus intéressé')
 , ('Send login challenge', 'fr', 'Envoyer un lien de login')
 , ('map', 'fr', 'carte')
@@ -459,17 +459,17 @@ select xmlelement(name div, xmlattributes(
                 'params[]' as name,
                 'a little interested' as value,
                 'submit' as type
-            ), _('A little interested')),
+            ), _('a little interested')),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
                 'interested' as value,
                 'submit' as type
-            ), _('Interested')),
+            ), _('interested')),
             xmlelement(name button, xmlattributes(
                 'params[]' as name,
                 'highly interested' as value,
                 'submit' as type
-            ), _('Highly interested'))
+            ), _('highly interested'))
         )
         where not exists (
             select from interest
@@ -745,7 +745,7 @@ html (html) as (
         ), title)),
         xmlelement(name div, xmlattributes('grid interest' as class), (
             select xmlagg(xmlelement(name card,
-            xmlelement(name div, format(_('%s is %s'), receiver.name, interest.level)),
+            xmlelement(name div, format(_('%s is %s'), receiver.name, _(interest.level))),
             (
                 with message as (
                     select *
@@ -1088,7 +1088,8 @@ begin atomic
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'login_challenge')::uuid
         returning person_id
     )
-    select format($sql$set local role to person; set local "cpres.person_id" to %L$sql$, person_id)
+    select 'set local role to person'
+    union all select format('set local "cpres.person_id" to %L', person_id)
     from "user";
 end;
 
