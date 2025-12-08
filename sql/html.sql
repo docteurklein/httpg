@@ -142,7 +142,7 @@ grant select on public.rel, public.head to web, app, anon;
 grant select on all tables in schema pim to web, app, anon;
 grant execute on function public.html(text, jsonb, jsonb, jsonb) to web, app, anon;
 grant execute on function public.url(text, jsonb) to web, app, anon;
-grant execute on function public.url_encode(text) to web, app, anon;
+grant execute on function url.encode(text) to web, app, anon;
 grant execute on function public.decorate(text, jsonb, jsonb, jsonb, jsonb) to web, app, anon;
 
 grant select, insert, update on all tables in schema pim to web, app;

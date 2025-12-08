@@ -8,17 +8,20 @@ html, body, #map {
     height: 100%;
 }
 
+.interest:has(:target) {
+   background-color: yellow;
+}
+
 @media (min-width: 768px) {
     .grid.good {
         grid-template-columns: repeat(auto-fit,minmax(33%, 1fr));
     }
-    /* .grid.interest { */
-        /* grid-template-columns: repeat(auto-fit,minmax(50%, 1fr)); */
-    /* } */
 }
+
 .grid.interest {
     grid-template-columns: repeat(auto-fit,minmax(33%, 1fr));
 }
+
 @media (min-width: 960px) {
 }
 

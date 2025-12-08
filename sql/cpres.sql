@@ -6,3 +6,4 @@ set local search_path to cpres, pg_catalog, public;
 \ir ddl.sql
 \ir view.sql
 \ir fixtures.sql
+\ir cron.sql

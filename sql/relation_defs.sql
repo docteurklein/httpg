@@ -14,7 +14,7 @@ begin atomic
                 string_agg(format('%I', key), ', ' order by ordinality),
                 string_agg(format('$%s', ordinality), ', ' order by ordinality)
             ) crit,
-            string_agg(format('params[]=%s', url_encode(record->>value)), '&' order by ordinality) qs,
+            string_agg(format('params[]=%s', url.encode(record->>value)), '&' order by ordinality) qs,
             array_agg(key order by key) fields,
             array_agg(record->>value order by ordinality) filter (where record->>value is not null) params
         from link, jsonb_each_text(details->'attributes') with ordinality

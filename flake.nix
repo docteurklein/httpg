@@ -132,11 +132,13 @@
               # pg_net
               pgsql-http
               pgvector
+              pg_cron
             ];
             settings = {
               # "wal_level" = "logical";
               # "app.tenant" = "tenant#1";
-              shared_preload_libraries = "auto_explain";
+              "cron.database_name" = "httpg";
+              shared_preload_libraries = "auto_explain, pg_cron";
               "auto_explain.log_min_duration" = "0ms";
               "auto_explain.log_nested_statements" = true;
               "auto_explain.log_timing" = true;

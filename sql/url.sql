@@ -2,7 +2,9 @@
 
 create extension if not exists plv8 schema pg_catalog;
 
-create or replace function public.url_encode (str text)
+create schema if not exists url;
+
+create or replace function url.encode (str text)
 returns text
 immutable strict parallel safe -- leakproof
 language plv8
@@ -10,7 +12,7 @@ as $$
 return encodeURIComponent(String(str))
 $$;
 
-create or replace function public.url_decode (str text)
+create or replace function url.decode (str text)
 returns text
 immutable strict parallel safe -- leakproof
 language plv8
@@ -18,7 +20,7 @@ as $$
 return decodeURIComponent(String(str))
 $$;
 
-create or replace function public.url(path text, params jsonb = '{}')
+create or replace function url.url(path text, params jsonb = '{}')
 returns text
 language sql
 immutable strict parallel safe -- leakproof
@@ -38,7 +40,7 @@ select format('%s?%s', path, (
             where _param.value is json array
         )
     )
-    select string_agg(format('%s=%s', path, url_encode(value #>> '{}')), '&')
+    select string_agg(format('%s=%s', path, url.encode(value #>> '{}')), '&')
     from param 
     where value is json scalar
 ));
