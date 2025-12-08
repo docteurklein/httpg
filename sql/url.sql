@@ -1,7 +1,5 @@
 \set ON_ERROR_STOP on
 
-begin; 
-
 create extension if not exists plv8 schema pg_catalog;
 
 create or replace function public.url_encode (str text)
@@ -45,5 +43,3 @@ select format('%s?%s', path, (
     where value is json scalar
 ));
 end;
-
-commit;

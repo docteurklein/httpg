@@ -1,8 +1,8 @@
 \set ON_ERROR_STOP on
 
-begin;
-
 set local search_path to cpres, pg_catalog;
+
+truncate person, good, person_location cascade;
 
 insert into person (person_id, name, email, login_challenge) values
     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', gen_random_uuid()),
@@ -54,4 +54,3 @@ select interest.good_id, interest.person_id, person.person_id, i::text || ' ' ||
 from interest, person, generate_series(1, 3) i
 where person.person_id = interest.person_id;
 
-commit;
