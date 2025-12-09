@@ -2,7 +2,7 @@
 
 set local search_path to cpres, pg_catalog;
 
-truncate person, good, person_location cascade;
+truncate person, good, person_detail cascade;
 
 insert into person (person_id, name, email, login_challenge) values
     ('13a00cef-59d8-4849-b33f-6ce5af85d3d2', 'p1', 'p1@example.org', gen_random_uuid()),
@@ -12,7 +12,7 @@ insert into person (person_id, name, email, login_challenge)
 select gen_random_uuid(), 'p'||i, format('p%s@example.org', i), gen_random_uuid()
 from generate_series(3, 10) i;
 
-insert into person_location (person_id, location) values
+insert into person_detail (person_id, location) values
     -- ('13a00cef-59d8-4849-b33f-6ce5af85d3d2','(46.0734411, 3.666724)'),
     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffb','(56.073448, 2.666524)')
 ;
