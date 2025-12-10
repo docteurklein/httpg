@@ -158,25 +158,35 @@ where receiver is null;
 
 grant select on table nearby to person;
 
-create or replace function good_form(params jsonb, sql text) returns xml
+create or replace function good_form(id text, params jsonb, sql text) returns xml
 security invoker
 immutable parallel safe -- leakproof
 language sql
 begin atomic
-with query (redirect, errors) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->>'redirect',
+with query (good_id, redirect, errors) as (
+    select
+    coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'->>'form.id',
+    coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->>'redirect',
     coalesce(nullif(current_setting('httpg.errors', true), '')::jsonb, '{}')
 )
 select xmlelement(name form, xmlattributes(
         'POST' as method,
-        '/query' as action
+        url('/query', jsonb_build_object(
+            'redirect', url('/query', jsonb_build_object(
+                'sql', 'table cpres.head union all table cpres."good admin"'
+            ))
+        )) as action
     ),
-    xmlelement(name article, xmlattributes('pico-background-red error' as class), coalesce(errors->>'error', '')),
+    case when good_form.id = query.good_id then
+        xmlelement(name article, xmlattributes(
+            'pico-background-red error' as class
+        ), coalesce(_(errors->>'error'), ''))
+    end,
     xmlelement(name fieldset, xmlattributes('grid' as class),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
-            'redirect' as name,
-            coalesce(redirect, 'referer') as value
+            'form.id' as name,
+            good_form.id as value
         )),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
@@ -221,21 +231,32 @@ grant execute on function good_form to person;
 
 create or replace view "good admin" (html)
 with (security_invoker)
-as
+as with query (q) as (
+    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
+)
 select xmlelement(name div, xmlattributes('new' as class),
     xmlelement(name h2, _('New good')),
     good_form(
-        coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'->'params',
-        'insert into cpres.good (title, description, location) values ($1::text, $2::text, $3::text::point)'
+        'new',
+        case q->'body'->>'form.id'
+            when 'new' then q->'body'->'params'
+            else '[]'
+        end,
+        'insert into cpres.good (title, description, location) values ($1, $2, $3::point)'
     ),
     xmlelement(name h2, _('Existing goods'))
 )::text
+from query
 union all (
 with result (html) as (
     select xmlelement(name article,
         case when receiver.name is not null then xmltext(format(_('Given to %s'), receiver.name)) end,
         good_form(
-            jsonb_build_array(title, description, good.location),
+            good_id::text,
+            case q->'body'->>'form.id'
+                when good_id::text then q->'body'->'params'
+                else jsonb_build_array(title, description, good.location)
+            end,
             format('update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L', good_id)
         ),
         xmlelement(name div, xmlattributes('grid media' as class), coalesce((
@@ -354,7 +375,7 @@ with result (html) as (
             ))
         )
     )
-    from good
+    from query, good
     left join person receiver on (good.receiver = receiver.person_id)
     where giver = current_person_id()
     order by coalesce(updated_at, created_at) desc, title
@@ -666,7 +687,7 @@ as with q (q) as (
     select current_setting('httpg.query', true)::jsonb
 )
 select $html$<!DOCTYPE html>
-<html lang="en">
+<html data-theme="dark">
 <head>
     <meta charset="utf-8" />
     <meta name="color-scheme" content="light dark" />

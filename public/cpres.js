@@ -1,7 +1,11 @@
 navigator.geolocation.getCurrentPosition(async pos => {
   let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
 
-  [...document.querySelectorAll('input.location')].forEach(i => i.value = location);
+  [...document.querySelectorAll('input.location')].forEach(i => {
+    if (!i.value) {
+      i.value = location
+    }
+  });
 });
 
 // navigator.serviceWorker.register('/service-worker.js?v=1');

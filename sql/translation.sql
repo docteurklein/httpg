@@ -35,6 +35,7 @@ insert into cpres.translation (id, lang, text) values
 , ('Check your emails', 'fr', 'Vérifiez vos emails et clickez sur le lien reçu.')
 , ('Nothing yet.', 'fr', 'Rien à lister.')
 , ('%s is waiting for you on %s', 'fr', '%s vous attend pour %s')
+, ('new row for relation "good" violates check constraint "good_title_check"', 'fr', 'Le titre doit être non-vide')
 on conflict (id, lang) do update
     set text = excluded.text
 ;
