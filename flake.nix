@@ -140,12 +140,12 @@
               "cron.database_name" = "httpg";
               shared_preload_libraries = "auto_explain, pg_cron";
               "auto_explain.log_min_duration" = "0ms";
-              "auto_explain.log_nested_statements" = true;
+              # "auto_explain.log_nested_statements" = true;
               "auto_explain.log_timing" = true;
               "auto_explain.log_analyze" = true;
               "auto_explain.log_buffers" = true;
               "auto_explain.log_settings" = true;
-              "auto_explain.log_format" = "json";
+              # "auto_explain.log_format" = "json";
               "auto_explain.log_triggers" = true;
               log_statement = "all";
               log_filename = "postgresql.log";

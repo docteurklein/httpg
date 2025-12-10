@@ -129,6 +129,8 @@ struct HttpgConfig {
     #[conf(env)]
     anon_role: String,
     #[conf(env)]
+    index_sql: String,
+    #[conf(env)]
     login_query: String,
     #[conf(env, default_value="3000")]
     port: u16,
@@ -197,9 +199,9 @@ async fn main() -> Result<(), HttpgError> {
         .allow_origin(Any);
 
     let app = Router::new()
+        .route("/", get(index))
         .route("/login", get(login).post(login))
         .route("/query", get(stream_query).post(post_query))
-        .route("/upload", post(upload_query))
         .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
         .fallback_service(ServeDir::new("public"))
@@ -239,6 +241,18 @@ async fn main() -> Result<(), HttpgError> {
 }
 
 #[debug_handler]
+async fn index(
+    state: State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    mut query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+
+    query.sql = state.config.index_sql.to_owned();
+
+    stream_query(state.clone(), biscuit, query).await
+}
+
+#[debug_handler]
 async fn login(
     State(AppState {pool, config: HttpgConfig { login_query, anon_role, private_key, ..}}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
@@ -267,7 +281,7 @@ async fn login(
     Ok((
         [(SET_COOKIE, Cookie::build(("auth", builder.build(&root)?.to_base64()?))
             .http_only(true)
-            .secure(true)
+            .secure(false) // @TODO
             .same_site(cookie::SameSite::Lax) // Strict breaks sending cookie after email challenge redirect
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
@@ -470,80 +484,6 @@ async fn post_query(
     Ok(response::HttpResult {
         query,
         rows: response::Rows::Vec(rows)
-    }.into_response())
-}
-
-#[debug_handler]
-async fn upload_query(
-    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
-    biscuit: Option<extract::biscuit::Biscuit>,
-    query: extract::query::Query,
-) -> Result<impl IntoResponse, HttpgError> {
-    let mut conn = pool.get().await?;
-    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
-
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
-
-    // let params = [
-    //     query.params.to_owned(),
-    //     query.files.to_owned().iter().map(|f| Param::File(f.to_owned())).collect()
-    // ].concat();
-
-    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
-    }).collect();
-
-    let result = tx.query_typed_raw(&query.sql, sql_params).await;
-
-    let rows = match result {
-         Ok(rows) => {
-            tx.commit().await?;
-
-            if let Some(redirect) = query.redirect {
-                return Ok(Redirect::to(&redirect).into_response());
-            }
-
-            response::Rows::Stream(rows)
-        },
-        Err(err) => {
-            dbg!(&err);
-            let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
-            dbg!(&errors);
-
-            let mut conn = pool.get().await?;
-            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
-
-            pre(&mut tx, &biscuit, &anon_role, &query).await?;
-            tx.query_typed_raw("select set_config('httpg.errors', $1, true)", vec![(serde_json::to_string(&errors)?, Type::TEXT)]).await?;
-
-            match &query.on_error {
-                Some(on_error) => {
-                    let rows: Vec<String> = tx
-                        .query_typed(on_error.as_str(), &[])
-                        .await
-                        ?
-                        .iter()
-                        .map(|row| row.get(0))
-                        .collect()
-                    ;
-                    return Ok((
-                        StatusCode::BAD_REQUEST,
-                        Html(rows.join(" \n"))
-                    ).into_response());
-                }
-                _ => {
-                    return Ok((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        err.to_string(),
-                    ).into_response());
-                }
-            }
-        }
-    };
-
-    Ok(response::HttpResult {
-        query,
-        rows,
     }.into_response())
 }
 

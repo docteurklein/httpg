@@ -13,7 +13,7 @@ select xmlconcat(
     from rel
     where fqn = fqn_
 )
-select xmlelement(name card
+select xmlelement(name div
     , xmlelement(name h3, (select string_agg(r->>value, ' ') from jsonb_array_elements_text(pkey)))
     , xmlelement(name ul, xmlattributes('order' as class), (
         with link (href, field, value) as (

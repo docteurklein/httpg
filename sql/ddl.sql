@@ -89,21 +89,30 @@ create extension if not exists earthdistance schema public;
 create extension if not exists moddatetime schema public;
 create extension if not exists vector schema public;
 
+-- create or replace function current_person_id() returns uuid
+-- volatile strict parallel safe -- leakproof
+-- language plpgsql
+-- security invoker
+-- set search_path to cpres, pg_catalog
+-- as $$
+-- declare person_id uuid;
+-- begin
+--     select person.person_id into person_id from person where person.person_id = current_setting('cpres.person_id', true)::uuid limit 1;
+--     return person_id;
+-- exception when invalid_text_representation then
+--     -- raise warning '%', sqlerrm;
+--     return null;
+-- end;
+-- $$;
+
 create or replace function current_person_id() returns uuid
 volatile strict parallel safe -- leakproof
-language plpgsql
+language sql
 security invoker
 set search_path to cpres, pg_catalog
-as $$
-declare person_id uuid;
-begin
-    select person.person_id into person_id from person where person.person_id = current_setting('cpres.person_id', true)::uuid limit 1;
-    return person_id;
-exception when invalid_text_representation then
-    -- raise warning '%', sqlerrm;
-    return null;
+begin atomic
+    select nullif(current_setting('cpres.person_id', true), '')::uuid;
 end;
-$$;
 
 grant execute on function current_person_id to person;
 
@@ -115,42 +124,6 @@ create table translation (
 );
 
 create index on translation (id, lang);
-
-insert into translation (id, lang, text) values
-  ('Welcome %s!', 'fr', 'Bienvenue %s!')
-, ('a little interested', 'fr', 'un peu intéressé')
-, ('interested', 'fr', 'intéressé')
-, ('highly interested', 'fr', 'très intéressé')
-, ('Not interested anymore', 'fr', 'Plus intéressé')
-, ('Send login challenge', 'fr', 'Envoyer un lien de login')
-, ('map', 'fr', 'carte')
-, ('search', 'fr', 'Rechercher')
-, ('activity', 'fr', 'Notifications')
-, ('Receiving activity', 'fr', 'Mes intérêts')
-, ('Giving activity', 'fr', 'Dons en cours')
-, ('my goods', 'fr', 'Gérer mes biens')
-, ('By %s', 'fr', 'Par %s')
-, ('%s at %s: ', 'fr', '%s le %s: ')
-, ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
-, ('Search', 'fr', 'Chercher')
-, ('query', 'fr', 'Requête')
-, ('title', 'fr', 'Titre')
-, ('Create alert', 'fr', 'Créer une alerte')
-, ('Remove alert', 'fr', 'Supprimer cette alerte')
-, (' from %s', 'fr', ' de %s')
-, ('%s is %s', 'fr', '%s est %s')
-, ('Send message', 'fr', 'Envoyer')
-, ('New good', 'fr', 'Créér un nouveau bien')
-, ('Existing goods', 'fr', 'Mes biens')
-, ('Submit', 'fr', 'Enregistrer')
-, ('Add file', 'fr', 'Ajouter ce fichier')
-, ('Remove', 'fr', 'Supprimer')
-, ('Are you sure?', 'fr', 'En êtes-vous sûr?')
-, ('Give to %s', 'fr', 'Donner à %s')
-, ('Given to %s', 'fr', 'Donné à %s')
-, ('Check your emails', 'fr', 'Vérifiez vos emails et clickez sur le lien reçu.')
-, ('Nothing yet.', 'fr', 'Rien à lister.')
-;
 
 create table person (
     person_id uuid primary key default gen_random_uuid(),
@@ -187,7 +160,7 @@ create policy "owner" on person_detail for all to person using (
 
 create table good (
     good_id uuid primary key default gen_random_uuid(),
-    title text not null check (title <> ''),
+    title text not null check (trim(title) <> ''),
     description text not null,
     passage text not null generated always as (title || ': ' || description)
         \if :is_neon
@@ -288,7 +261,7 @@ create table message (
     author uuid not null default current_person_id()
         references person (person_id)
             on delete cascade,
-    content text not null check (content <> ''),
+    content text not null check (trim(content) <> ''),
     at timestamptz not null default now(),
     foreign key (good_id, person_id) references interest (good_id, person_id)
         on delete cascade
@@ -324,119 +297,3 @@ create policy "owner" on search for all to person
 using (
     person_id = current_person_id()
 );
-
-create function compare_search() returns trigger
-volatile strict parallel safe -- leakproof
-security definer
-set search_path to cpres, pg_catalog
-as $$
-begin
-    with result (good_id, person_id, interest, query, rerank_distance) as (
-        select new.good_id, person_id, interest, query, rerank_distance(query, new.passage)
-        from search
-        where person_id <> new.giver
-        order by (new.embedding <=> search.embedding)
-        limit 100
-    )
-    insert into interest (good_id, person_id, level, origin, query)
-    select good_id, person_id, interest, 'automatic', query
-    from result
-    where rerank_distance < 0;
-
-    return null;
-end;
-$$ language plpgsql;
-
-create trigger compare_search
-after insert or update of title, description on good
-for each row
-execute procedure compare_search();
-
-create procedure give(_good_id uuid, _receiver uuid)
-language sql
-security invoker
-set search_path to cpres, pg_catalog
-begin atomic
-with interest as (
-    update interest
-    set state = 'approved'
-    where (good_id, person_id) = (_good_id, _receiver)
-)
-update good
-set receiver = _receiver,
-given_at = now()
-where good_id = _good_id;
-end;
-
-grant execute on procedure give to person;
-
-create procedure want(_good_id uuid, level interest_level)
-language sql
-security invoker
-set search_path to cpres, pg_catalog
-begin atomic
-    insert into interest (good_id, person_id, origin, level) values (_good_id, current_person_id(), 'manual', level);
-end;
-
-grant execute on procedure want to person;
-
-create procedure unwant(_good_id uuid)
-language sql
-security invoker
-set search_path to cpres, pg_catalog
-begin atomic
-    delete from interest where (good_id, person_id) = (_good_id, current_person_id());
-end;
-grant execute on procedure unwant to person;
-
--- alter function http parallel safe;
-
--- create procedure mark_late_interests()
--- language sql
--- security invoker
--- set search_path to cpres, pg_catalog
--- set parallel_setup_cost to 0
--- set parallel_tuple_cost to 0
--- begin atomic
---     with late as (
---         update cpres.interest
---         set
---             state = 'late',
---             at = now()
---         where at < now() - interval '3 days'
---         and state = 'approved'
---         returning good_id, person_id
---     ),
---     detail as (
---         select push_endpoint
---         from person_detail
---         join late using (person_id)
---         where push_endpoint is not null
---     )
---     select http(('POST', push_endpoint,
---         array[('TTL', 50000)]::http_header[],
---         'application/json',
---         jsonb_build_object()
---     )::http_request)
---     from detail;
--- end;
--- grant execute on procedure mark_late_interests to person;
-
-create function login() returns setof text
-volatile strict parallel safe -- leakproof
-language sql
-security definer
-set search_path to cpres, pg_catalog
-begin atomic
-    with "user" as (
-        update person
-        set login_challenge = null
-        where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'login_challenge')::uuid
-        returning person_id
-    )
-    select 'set local role to person'
-    union all select format('set local "cpres.person_id" to %L', person_id)
-    from "user";
-end;
-
-grant execute on function login to person;

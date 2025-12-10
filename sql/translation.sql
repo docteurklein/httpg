@@ -1,0 +1,42 @@
+\set ON_ERROR_STOP on
+
+insert into cpres.translation (id, lang, text) values
+  ('Welcome %s!', 'fr', 'Bienvenue %s!')
+, ('a little interested', 'fr', 'un peu intéressé')
+, ('interested', 'fr', 'intéressé')
+, ('highly interested', 'fr', 'très intéressé')
+, ('Not interested anymore', 'fr', 'Plus intéressé')
+, ('Send login challenge', 'fr', 'Envoyer un lien de login')
+, ('map', 'fr', 'carte')
+, ('search', 'fr', 'Rechercher')
+, ('activity', 'fr', 'Notifications')
+, ('Receiving activity', 'fr', 'Mes intérêts')
+, ('Giving activity', 'fr', 'Dons en cours')
+, ('my goods', 'fr', 'Gérer mes biens')
+, ('By %s', 'fr', 'Par %s')
+, ('%s at %s: ', 'fr', '%s le %s: ')
+, ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
+, ('Search', 'fr', 'Chercher')
+, ('query', 'fr', 'Requête')
+, ('title', 'fr', 'Titre')
+, ('Create alert', 'fr', 'Créer une alerte')
+, ('Remove alert', 'fr', 'Supprimer cette alerte')
+, (' from %s', 'fr', ' de %s')
+, ('%s is %s', 'fr', '%s est %s')
+, ('Send message', 'fr', 'Envoyer')
+, ('New good', 'fr', 'Créér un nouveau bien')
+, ('Existing goods', 'fr', 'Mes biens')
+, ('Submit', 'fr', 'Enregistrer')
+, ('Add file', 'fr', 'Ajouter ce fichier')
+, ('Remove', 'fr', 'Supprimer')
+, ('Are you sure?', 'fr', 'En êtes-vous sûr?')
+, ('Give to %s', 'fr', 'Donner à %s')
+, ('Given to %s', 'fr', 'Donné à %s')
+, ('Check your emails', 'fr', 'Vérifiez vos emails et clickez sur le lien reçu.')
+, ('Nothing yet.', 'fr', 'Rien à lister.')
+, ('%s is waiting for you on %s', 'fr', '%s vous attend pour %s')
+on conflict (id, lang) do update
+    set text = excluded.text
+;
+
+

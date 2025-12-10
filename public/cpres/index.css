@@ -8,6 +8,19 @@ html, body, #map {
     height: 100%;
 }
 
+.flashes {
+    max-height: 20vh;
+    overflow: scroll;
+
+    &:empty {
+        display: none;
+    }
+}
+
+.error:empty {
+    display: none;
+}
+
 .interest:has(:target) {
    background-color: yellow;
 }
