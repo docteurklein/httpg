@@ -577,10 +577,12 @@ head (html) as (
         ))),
         xmlelement(name form, xmlattributes(
             'GET' as method,
-            '/query' as action),
+            '/query' as action,
+            'group' as role
+        ),
             xmlelement(name input, xmlattributes(
                 'q' as name,
-                'text' as type,
+                'search' as type,
                 _('query') as placeholder,
                 qs->>'q' as value
             )),
