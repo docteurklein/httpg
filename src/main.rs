@@ -44,12 +44,12 @@ pub enum HttpgError {
     Postgres(#[from] tokio_postgres::Error),
     #[error("deadpool: {0:#?}")]
     Deadpool(#[from] PoolError),
+    #[error("deadpool config: {0:#?}")]
+    DeadpoolConfig(#[from] CreatePoolError),
     #[error("biscuit token: {0:#?}")]
     BiscuitToken(#[from] biscuit_auth::error::Token),
     #[error("biscuit format: {0:#?}")]
     BiscuitFormat(#[from] biscuit_auth::error::Format),
-    #[error("deadpool config: {0:#?}")]
-    DeadpoolConfig(#[from] CreatePoolError),
     #[error("serde: {0:#?}")]
     Serde(#[from] serde_json::Error),
     #[error("axum: {0:#?}")]
@@ -70,17 +70,6 @@ pub enum HttpgError {
 
 impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
-        // let body = match self {
-        //     HttpgError::Io(error) => error.to_string(),
-        //     HttpgError::Config(error) => error.to_string(),
-        //     HttpgError::Postgres(error) => error.to_string(),
-        //     HttpgError::Deadpool(error) => error.to_string(),
-        //     HttpgError::DeadpoolConfig(error) => error.to_string(),
-        //     HttpgError::Serde(error) => error.to_string(),
-        //     HttpgError::Other(error) => error.to_string(),
-        //     HttpgError::Biscuit(error) => error.to_string(),
-        // };
-
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
     }
 }
@@ -93,12 +82,35 @@ struct DeadPoolConfig {
 }
 
 impl DeadPoolConfig {
-    pub fn from_env() -> Result<Self, config::ConfigError> {
+    pub fn read() -> Result<Self, config::ConfigError> {
         let config = config::Config::builder()
             .add_source(config::Environment::default()
                 .prefix("PG")
                 .separator("_")
                 .keep_prefix(true)
+            )
+            .add_source(config::Environment::default()
+                .prefix("PG_READ")
+                .separator("_")
+                .keep_prefix(false)
+            )
+            .build()?
+        ;
+
+        config.try_deserialize::<Self>()
+    }
+
+    pub fn write() -> Result<Self, config::ConfigError> {
+        let config = config::Config::builder()
+            .add_source(config::Environment::default()
+                .prefix("PG")
+                .separator("_")
+                .keep_prefix(true)
+            )
+            .add_source(config::Environment::default()
+                .prefix("PG_WRITE")
+                .separator("_")
+                .keep_prefix(false)
             )
             .build()?
         ;
@@ -159,7 +171,8 @@ impl HttpgConfig {
 
 #[derive(Clone)]
 struct AppState {
-    pool: Pool,
+    read_pool: Pool,
+    write_pool: Pool,
     config: HttpgConfig,
 }
 
@@ -172,26 +185,15 @@ async fn main() -> Result<(), HttpgError> {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
-    let cfg = DeadPoolConfig::from_env()?;
-
-    let pool = match env::var("PG_SSLMODE") {
-        Ok(_) => {
-            let tls_config = rustls::ClientConfig::builder()
-                .dangerous()
-                .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-                .with_no_client_auth()
-            ;
-            let tls = MakeRustlsConnect::new(tls_config);
-
-            cfg.pg.create_pool(Some(Runtime::Tokio1), tls)?
-        },
-        _ => cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls)?,
-    };
 
     let httpg_config = HttpgConfig::from_env()?;
+
+    let read_pool = create_pool(DeadPoolConfig::read()?, env::var("PG_SSL_MODE").is_ok())?;
+    let write_pool = create_pool(DeadPoolConfig::write()?, env::var("PG_SSL_MODE").is_ok())?;
     
     let state = AppState {
-        pool,
+        read_pool,
+        write_pool,
         config: httpg_config.to_owned(),
     };
 
@@ -240,6 +242,22 @@ async fn main() -> Result<(), HttpgError> {
     Ok(())
 }
 
+fn create_pool(cfg: DeadPoolConfig, is_ssl: bool) -> Result<Pool, HttpgError> {
+    if is_ssl {
+        let tls_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+            .with_no_client_auth()
+        ;
+        let tls = MakeRustlsConnect::new(tls_config);
+
+        cfg.pg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
+    }
+    else {
+        cfg.pg.create_pool(Some(Runtime::Tokio1), NoTls).map_err(Into::into)
+    }
+}
+
 #[debug_handler]
 async fn index(
     state: State<AppState>,
@@ -254,13 +272,13 @@ async fn index(
 
 #[debug_handler]
 async fn login(
-    State(AppState {pool, config: HttpgConfig { login_query, anon_role, private_key, ..}}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { login_query, anon_role, private_key, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let root = KeyPair::from(&PrivateKey::from_bytes(&private_key)?);
 
-    let mut conn = pool.get().await?;
+    let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await?
@@ -336,12 +354,12 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
 #[debug_handler]
 async fn email(
-    State(AppState {pool, config: HttpgConfig { smtp_user, smtp_password, smtp_relay, anon_role, ..}}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    let mut conn = pool.get().await?;
+    let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
@@ -374,7 +392,6 @@ async fn email(
            plain: row.get::<&str, &str>("plain").into(),
            html: row.get::<&str, &str>("html").into(),
         };
-        dbg!(&mail);
         client.to_owned().unwrap().send_emails(mail).await.map_err(|e| e.into())
     }).await?;
 
@@ -388,11 +405,11 @@ async fn email(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
+    State(AppState {read_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let mut conn = pool.get().await?;
+    let mut conn = read_pool.get().await?;
     let mut tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::Serializable)
@@ -417,11 +434,11 @@ async fn stream_query(
 
 #[debug_handler]
 async fn post_query(
-    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let mut conn = pool.get().await?;
+    let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
     pre(&mut tx, &biscuit, &anon_role, &query).await?;
@@ -443,10 +460,9 @@ async fn post_query(
             rows
         },
         Err(err) => {
-            dbg!(&err);
             let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
 
-            let mut conn = pool.get().await?;
+            let mut conn = write_pool.get().await?;
             let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
             pre(&mut tx, &biscuit, &anon_role, &query).await?;
@@ -489,11 +505,11 @@ async fn post_query(
 
 #[debug_handler]
 async fn raw_http(
-    State(AppState {pool, config: HttpgConfig {anon_role, ..}}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<Response, HttpgError> {
-    let mut conn = pool.get().await?;
+    let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
     pre(&mut tx, &biscuit, &anon_role, &query).await?;

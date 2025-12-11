@@ -76,6 +76,9 @@ end $$;
 
 grant person to httpg;
 
+alter role person set search_path to cpres;
+alter role httpg set search_path to cpres;
+
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;
 revoke usage on language plv8 from public, httpg, person;

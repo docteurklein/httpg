@@ -75,27 +75,27 @@ set search_path to cpres, pg_catalog
 set parallel_setup_cost to 0
 set parallel_tuple_cost to 0
 begin atomic
-    with late as (
+    -- with late as (
         update cpres.interest
         set
             state = 'late',
             at = now()
         where at < now() - interval '3 days'
-        and state = 'approved'
-        returning good_id, person_id
-    ),
-    detail as (
-        select push_endpoint
-        from person_detail
-        join late using (person_id)
-        where push_endpoint is not null
-    )
-    select http(('POST', push_endpoint,
-        array[('TTL', 50000)]::http_header[],
-        'application/json',
-        jsonb_build_object()
-    )::http_request)
-    from detail;
+        and state = 'approved';
+        -- returning good_id, person_id
+    -- ),
+    -- detail as (
+    --     select push_endpoint
+    --     from person_detail
+    --     join late using (person_id)
+    --     where push_endpoint is not null
+    -- )
+    -- select http(('POST', push_endpoint,
+    --     array[('TTL', 50000)]::http_header[],
+    --     'application/json',
+    --     jsonb_build_object()
+    -- )::http_request)
+    -- from detail;
 end;
 grant execute on procedure mark_late_interests to person;
 

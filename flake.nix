@@ -116,6 +116,8 @@
             HTTPG_LOGIN_QUERY="select cpres.login()";
             HTTPG_PRIVATE_KEY = "private-key-file";
             HTTPG_ANON_ROLE = "person";
+            HTTPG_INDEX_SQL = "table cpres.head union all table cpres.findings";
+            RUST_LOG = "tokio_postgres=debug,httpg=debug,axum=debug";
           };
           
           processes.postgres.process-compose.readiness_probe.exec.command = with pkgs.lib; mkForce "pg_isready -d template1";
