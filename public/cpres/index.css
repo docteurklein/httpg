@@ -8,6 +8,12 @@ html, body, #map {
     height: 100%;
 }
 
+a.whatsapp {
+    font-size: 35px;
+    color: green;
+    padding-left: 10px;
+}
+
 .flashes {
     max-height: 20vh;
     overflow: scroll;

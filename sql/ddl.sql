@@ -132,10 +132,14 @@ create table person (
     person_id uuid primary key default gen_random_uuid(),
     name text not null,
     email text not null unique,
+    phone text default null unique,
     login_challenge uuid default null
 );
 
-grant select (person_id, name),
+drop type if exists public_person cascade;
+create type public_person as (name text, phone text);
+
+grant select (person_id, name, phone),
     insert (name, email),
     update (name, email),
     delete on table person to person;

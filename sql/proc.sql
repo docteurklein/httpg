@@ -141,7 +141,7 @@ begin atomic
             set location = excluded.location
     ),
     url as (
-        select login_person.*, url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
+        select login_person.*, url(format('http://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
             'redirect', '/',
             'login_challenge', login_challenge,
             'sql', 'select'
@@ -149,7 +149,10 @@ begin atomic
         from login_person
     )
     select 'florian.klein@free.fr', email, 'cpres: login', url,
-        xmlelement(name a, xmlattributes(url as href), format(_('Login as %s'), name))
+        xmlelement(name a, xmlattributes(
+            url as href
+            -- , 'cpres' as target
+        ), format(_('Login as %s'), name))
     from url;
 end;
 

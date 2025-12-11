@@ -8,7 +8,8 @@ insert into cpres.translation (id, lang, text) values
 , ('Not interested anymore', 'fr', 'Plus intéressé')
 , ('Send login challenge', 'fr', 'Envoyer un lien de login')
 , ('map', 'fr', 'carte')
-, ('search', 'fr', 'Rechercher')
+, ('Search', 'fr', 'Rechercher')
+, ('About', 'fr', 'A propos')
 , ('activity', 'fr', 'Notifications')
 , ('Receiving activity', 'fr', 'Mes intérêts')
 , ('Giving activity', 'fr', 'Dons en cours')
@@ -16,7 +17,6 @@ insert into cpres.translation (id, lang, text) values
 , ('By %s', 'fr', 'Par %s')
 , ('%s at %s: ', 'fr', '%s le %s: ')
 , ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
-, ('Search', 'fr', 'Chercher')
 , ('query', 'fr', 'Requête')
 , ('title', 'fr', 'Titre')
 , ('Create alert', 'fr', 'Créer une alerte')
@@ -28,7 +28,8 @@ insert into cpres.translation (id, lang, text) values
 , ('Existing goods', 'fr', 'Mes biens')
 , ('Submit', 'fr', 'Enregistrer')
 , ('Add file', 'fr', 'Ajouter ce fichier')
-, ('Remove', 'fr', 'Supprimer')
+, ('Remove this media', 'fr', 'Supprimer ce fichier')
+, ('Remove this good', 'fr', 'Supprimer ce bien')
 , ('Are you sure?', 'fr', 'En êtes-vous sûr?')
 , ('Give to %s', 'fr', 'Donner à %s')
 , ('Given to %s', 'fr', 'Donné à %s')
@@ -36,6 +37,8 @@ insert into cpres.translation (id, lang, text) values
 , ('Nothing yet.', 'fr', 'Rien à lister.')
 , ('%s is waiting for you on %s', 'fr', '%s vous attend pour %s')
 , ('new row for relation "good" violates check constraint "good_title_check"', 'fr', 'Le titre doit être non-vide')
+, ('Saved successfully', 'fr', 'Changement enregistré')
+, ('https://wa.me/%s?text=About giving %s', 'fr', 'https://wa.me/%s?text=A propos du don %s')
 on conflict (id, lang) do update
     set text = excluded.text
 ;

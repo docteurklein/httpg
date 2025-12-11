@@ -16,7 +16,7 @@ begin atomic
             )
             select text
             from translation, a
-            where (id, lang) = (id_, coalesce(lang_, coalesce(accept_language, 'fr')))
+            where (id, lang) = (id_, coalesce(lang_, accept_language, 'fr'))
             limit 1
         ),
         id_
@@ -163,17 +163,23 @@ security invoker
 immutable parallel safe -- leakproof
 language sql
 begin atomic
-with query (good_id, redirect, errors) as (
-    select
-    coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'->>'form.id',
-    coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->>'redirect',
-    coalesce(nullif(current_setting('httpg.errors', true), '')::jsonb, '{}')
+with query (q, good_id, redirect, errors) as (
+    with q (q, errors) as (
+        select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}'),
+        coalesce(nullif(current_setting('httpg.errors', true), '')::jsonb, '{}')
+    )
+    select q,
+    q->'body'->>'form.id',
+    q->>'redirect',
+    errors
+    from q
 )
 select xmlelement(name form, xmlattributes(
         'POST' as method,
         url('/query', jsonb_build_object(
             'redirect', url('/query', jsonb_build_object(
-                'sql', 'table cpres.head union all table cpres."good admin"'
+                'sql', 'table cpres.head union all select html from cpres."good admin"',
+                'flash[green]', _('Saved successfully')
             ))
         )) as action
     ),
@@ -182,7 +188,7 @@ select xmlelement(name form, xmlattributes(
             'pico-background-red error' as class
         ), coalesce(_(errors->>'error'), ''))
     end,
-    xmlelement(name fieldset, xmlattributes('grid' as class),
+    xmlelement(name fieldset, xmlattributes(null as class),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'form.id' as name,
@@ -196,7 +202,7 @@ select xmlelement(name form, xmlattributes(
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'on_error' as name,
-            'table cpres.head union all table cpres."good admin"' as value
+            coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'table cpres.head union all select html from cpres."good admin"') as value
         )),
         xmlelement(name input, xmlattributes(
             'text' as type,
@@ -233,22 +239,8 @@ create or replace view "good admin" (html)
 with (security_invoker)
 as with query (q) as (
     select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
-)
-select xmlelement(name div, xmlattributes('new' as class),
-    xmlelement(name h2, _('New good')),
-    good_form(
-        'new',
-        case q->'body'->>'form.id'
-            when 'new' then q->'body'->'params'
-            else '[]'
-        end,
-        'insert into cpres.good (title, description, location) values ($1, $2, $3::point)'
-    ),
-    xmlelement(name h2, _('Existing goods'))
-)::text
-from query
-union all (
-with result (html) as (
+),
+result (html, good_id) as (
     select xmlelement(name article,
         case when receiver.name is not null then xmltext(format(_('Given to %s'), receiver.name)) end,
         good_form(
@@ -305,7 +297,7 @@ with result (html) as (
                         'submit' as type,
                         'pico-background-red' as class,
                         format('return confirm(%L)', _('Are you sure?')) as onclick,
-                        _('Remove') as value
+                        _('Remove this media') as value
                     ))
                 )
             ))
@@ -328,7 +320,6 @@ with result (html) as (
                 format($$
                     with f (f) as (
                         select $1::bytea[]
-                        -- where array_length($1, 1) is not null
                     )
                     insert into cpres.good_media (good_id, name, content, content_type)
                     select %L, convert_from(f[3], 'UTF8'), f[1], convert_from(f[2], 'UTF8')
@@ -371,18 +362,35 @@ with result (html) as (
                 'submit' as type,
                 'pico-background-red' as class,
                 format('return confirm(%L)', _('Are you sure?')) as onclick,
-                _('Remove') as value
+                _('Remove this good') as value
             ))
         )
-    )
+    ), good_id
     from query, good
     left join person receiver on (good.receiver = receiver.person_id)
     where giver = current_person_id()
     order by coalesce(updated_at, created_at) desc, title
 )
-select xmlelement(name div, xmlattributes('good' as class), array_agg(html))::text from result
+select xmlelement(name div, xmlattributes('new' as class),
+    xmlelement(name h2, _('New good')),
+    good_form(
+        'new',
+        case q->'body'->>'form.id'
+            when 'new' then q->'body'->'params'
+            else '[]'
+        end,
+        'insert into cpres.good (title, description, location) values ($1, $2, $3::point)'
+    ),
+    xmlelement(name h2, _('Existing goods'))
+)::text
+from query
+union all select xmlelement(name div, xmlattributes('grid good' as class),
+    array_agg(html)
+)::text
+from result
+-- group by good_id
 union all select _('Nothing yet.') where not exists (select from result limit 1)
-);
+;
 
 grant select on table "good admin" to person;
 
@@ -470,7 +478,7 @@ html (html) as (
     )
     from data
 )
-select xmlelement(name h1, _('Giving activity'))::text
+select xmlelement(name h2, _('Giving activity'))::text
 union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
 union all select _('Nothing yet.') where not exists (select from html limit 1)
 ;
@@ -479,11 +487,11 @@ grant select on table "giving activity" to person;
 
 create or replace view "receiving activity" (html)
 with (security_invoker)
-as with data (good, giver_name, receiver_detail, interest) as (
-    select good, giver.name, receiver_detail, interest
+as with data (good, giver, receiver_detail, interest) as (
+    select good, row(giver_.name, giver_.phone)::public_person, receiver_detail, interest
     from interest
     join good using (good_id)
-    join person giver on (good.giver = giver.person_id)
+    join person giver_ on (good.giver = giver_.person_id)
     left join person_detail receiver_detail on (good.receiver = receiver_detail.person_id)
     where interest.person_id = current_person_id()
     order by
@@ -508,7 +516,12 @@ html (html) as (
                 'params[]', (good).good_id
             )) as href
         ), (good).title),
-        xmlelement(name div, format(_('By %s'), giver_name)),
+        xmlelement(name div, format(_('By %s'), (giver).name), case when (giver).phone is not null then
+            xmlelement(name a, xmlattributes(
+                format(_('https://wa.me/%s?text=About giving %s'), (giver).phone, (good).title) as href,
+                'whatsapp' as class
+            ), '✆')
+        end),
         (
             with message as (
                 select *
@@ -544,7 +557,7 @@ html (html) as (
     )
     from data
 )
-select xmlelement(name h1, _('Receiving activity'))::text
+select xmlelement(name h2, _('Receiving activity'))::text
 union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
 union all select _('Nothing yet.') where not exists (select from html limit 1)
 ;
@@ -666,7 +679,6 @@ list (html) as (
                 select from interest
                 where good_id = d.good_id
                 and state in ('approved', 'late', 'given')
-                and person_id <> current_person_id()
             )
         ), _('Nothing yet.')::xml)
     )
@@ -716,7 +728,7 @@ union all (
     ),
         xmlelement(name fieldset, xmlattributes('group' as role),
             xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from cpres.send_login_email($1, $2)' as value)),
-            xmlelement(name input, xmlattributes('text' as type, 'params[]' as name, 'email' as placeholder)),
+            xmlelement(name input, xmlattributes('email' as type, 'params[]' as name, 'email' as placeholder, true as required)),
             xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class)),
             xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
         )
@@ -761,10 +773,11 @@ union all (
 union all select xmlelement(name nav,
     xmlelement(name ul, (
         with menu (name, sql, visible) as (values
-            (_('search'), 'table cpres.head union all table cpres."findings"', true),
+            (_('Search'), 'table cpres.head union all table cpres."findings"', true),
             (_('Giving activity'), 'table cpres.head union all table cpres."giving activity"', current_person_id() is not null),
             (_('Receiving activity'), 'table cpres.head union all table cpres."receiving activity"', current_person_id() is not null),
-            (_('my goods'), 'table cpres.head union all table cpres."good admin"', current_person_id() is not null)
+            (_('my goods'), 'table cpres.head union all select html from cpres."good admin"', current_person_id() is not null),
+            (_('About'), 'table cpres.head union all select html::text from cpres.about', true)
         )
         select xmlagg(
             xmlelement(name li,
@@ -782,3 +795,9 @@ union all select xmlelement(name nav,
 ;
 grant select on table head to person;
 
+create or replace view about (html)
+as select xmlelement(name h2, _('About'))
+union all select xmlelement(name p, 'Fait avec amour par Florian Klein.')
+union all select xmlelement(name a, xmlattributes('https://github.com/docteurklein/httpg' as href), 'code source')
+;
+grant select on table about to person;

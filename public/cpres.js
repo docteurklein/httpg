@@ -1,3 +1,6 @@
+
+// window.name = 'cpres';
+
 navigator.geolocation.getCurrentPosition(async pos => {
   let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
 
