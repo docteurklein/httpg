@@ -70,12 +70,15 @@
           version = "0.1";
           cargoLock.lockFile = ./Cargo.lock;
 
-          src = with pkgs; lib.cleanSourceWith {
+          src = with pkgs; (lib.cleanSourceWith {
             filter = path: type:
-              !builtins.elem (baseNameOf path) ["Cargo.lock src public"]
+              let path' = (lib.strings.removePrefix (builtins.toString ./.) path);
+              in
+                builtins.match "^/src/?.*" path' != null
+                || builtins.match "^/Cargo\..*" path' != null
             ;
             src = ./.;
-          };
+          });
 
           nativeBuildInputs = with pkgs; [
             mold-wrapped clang pkg-config openssl.dev
@@ -98,11 +101,13 @@
           };
           copyToRoot = pkgs.buildEnv {
             name = "assets";
-            paths = [
+            paths = with pkgs.dockerTools; [
               ./.
-              pkgs.dockerTools.caCertificates
+              binSh
+              pkgs.coreutils
+              caCertificates
             ];
-            pathsToLink = [ "/public" ];
+            pathsToLink = [ "/public" "/" "/" "/etc"];
           };
         };
 
