@@ -69,7 +69,14 @@
           pname = "httpg";
           version = "0.1";
           cargoLock.lockFile = ./Cargo.lock;
-          src = pkgs.lib.cleanSource ./.;
+
+          src = with pkgs; lib.cleanSourceWith {
+            filter = path: type:
+              !builtins.elem (baseNameOf path) ["Cargo.lock src public"]
+            ;
+            src = ./.;
+          };
+
           nativeBuildInputs = with pkgs; [
             mold-wrapped clang pkg-config openssl.dev
           ];
@@ -95,7 +102,7 @@
               ./.
               pkgs.dockerTools.caCertificates
             ];
-            pathsToLink = [ "/public" "/" ];
+            pathsToLink = [ "/public" ];
           };
         };
 

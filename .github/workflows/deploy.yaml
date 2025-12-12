@@ -26,7 +26,7 @@ jobs:
       - run: nix --accept-flake-config run .#oci.copyToRegistry
       - id: image_name
         run: |
-          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee "$GITHUB_OUTPUT"
+          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
 
       - name: Install Render CLI
         run: |
