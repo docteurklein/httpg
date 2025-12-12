@@ -66,7 +66,7 @@ begin atomic
 end;
 grant execute on procedure unwant to person;
 
-alter function http parallel safe;
+-- alter function http parallel safe;
 
 create or replace procedure mark_late_interests()
 language sql

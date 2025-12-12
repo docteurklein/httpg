@@ -188,8 +188,8 @@ async fn main() -> Result<(), HttpgError> {
 
     let httpg_config = HttpgConfig::from_env()?;
 
-    let read_pool = create_pool(DeadPoolConfig::read()?, env::var("PG_SSL_MODE").is_ok())?;
-    let write_pool = create_pool(DeadPoolConfig::write()?, env::var("PG_SSL_MODE").is_ok())?;
+    let read_pool = create_pool(DeadPoolConfig::read()?, env::var("PG_SSLMODE").is_ok())?;
+    let write_pool = create_pool(DeadPoolConfig::write()?, env::var("PG_SSLMODE").is_ok())?;
     
     let state = AppState {
         read_pool,
@@ -412,7 +412,7 @@ async fn stream_query(
     let mut conn = read_pool.get().await?;
     let mut tx = conn.build_transaction()
         .read_only(true)
-        .isolation_level(IsolationLevel::Serializable)
+        .isolation_level(IsolationLevel::RepeatableRead)
         .start().await?
     ;
 

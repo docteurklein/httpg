@@ -23,7 +23,7 @@ $$;
 create or replace function url.url(path text, params jsonb = '{}')
 returns text
 language sql
-immutable strict parallel safe -- leakproof
+immutable parallel safe -- leakproof
 begin atomic
 select format('%s?%s', path, (
     with recursive param(path, value) as (

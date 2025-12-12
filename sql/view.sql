@@ -566,8 +566,8 @@ grant select on table "receiving activity" to person;
 
 create or replace view "findings" (html)
 with (security_invoker)
-as with q (qs) as (
-    select current_setting('httpg.query', true)::jsonb->'qs'
+as with q (q) as (
+    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
 ),
 map (html) as (
     select $html$
@@ -581,15 +581,16 @@ head (html) as (
     select xmlelement(name div,
         xmlelement(name h2, _('Search')),
         xmlelement(name nav, xmlelement(name ul, (
-            select xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
-                url('/query', qs || jsonb_build_object(
-                    'q', query
+            select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
+                url('/query', jsonb_build_object(
+                    'q', query,
+                    'sql', 'table cpres.head union all table cpres."findings"'
                 )) as href
-            ), query)))
+            ), query))), '')
             from search
         ))),
         xmlelement(name form, xmlattributes(
-            'GET' as method,
+            'POST' as method,
             '/query' as action,
             'group' as role
         ),
@@ -597,12 +598,12 @@ head (html) as (
                 'q' as name,
                 'search' as type,
                 _('query') as placeholder,
-                qs->>'q' as value
+                coalesce(q->'body'->>'q', q->'qs'->>'q') as value
             )),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                qs->>'sql' as value
+                'table cpres.head union all table cpres."findings"' as value
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
@@ -613,7 +614,9 @@ head (html) as (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/query', jsonb_build_object(
-                    'redirect', 'referer'
+                    'redirect', url('/query', jsonb_build_object(
+                        'sql', 'table cpres.head union all table cpres."findings"'
+                    ))
                 )) as action),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
@@ -623,22 +626,26 @@ head (html) as (
                 xmlelement(name input, xmlattributes(
                     'params[]' as name,
                     'hidden' as type,
-                    qs->>'q' as value
+                    coalesce(q->'body'->>'q', q->'qs'->>'q') as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
                     _('Create alert') as value
                 ))
             )
-            where qs->>'q' <> ''
-            and not exists (select from search where query = qs->>'q')
+            where coalesce(q->'body'->>'q', q->'qs'->>'q') <> ''
+            and not exists (select from search where query = coalesce(q->'body'->>'q', q->'qs'->>'q'))
             and current_person_id() is not null
         ),
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/query', jsonb_build_object(
-                    'redirect', 'referer'
+                    -- 'redirect', 'referer'
+                    -- 'redirect', url('/query', coalesce(q->'body', q->'qs'))
+                    'redirect', url('/query', jsonb_build_object(
+                        'sql', 'table cpres.head union all table cpres."findings"'
+                    ))
                 )) as action),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
@@ -648,7 +655,7 @@ head (html) as (
                 xmlelement(name input, xmlattributes(
                     'params[]' as name,
                     'hidden' as type,
-                    qs->>'q' as value
+                    coalesce(q->'body'->>'q', q->'qs'->>'q') as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
@@ -657,40 +664,38 @@ head (html) as (
                     _('Remove alert') as value
                 ))
             )
-            where exists (select from search where query = qs->>'q')
+            where exists (select from search where query = coalesce(q->'body'->>'q', q->'qs'->>'q'))
         )
     )
     from q
 ),
+result (good_id, rerank_distance) as (
+    select good_id, case when q->'body'->>'q' <> '' then
+        rerank_distance(q->'body'->>'q', passage)
+        else -1
+    end
+    from q, good
+    order by embedding <=> embed_query(q->'body'->>'q')
+    limit 100
+),
 list (html) as (
-    select xmlelement(name article,
-        coalesce((
-            with result (good_id, rerank_distance) as (
-                select good_id, case when qs->>'q' <> '' then rerank_distance(qs->>'q', passage) else -1 end
-                from good
-                order by embedding <=> embed_query(qs->>'q')
-                limit 100
-            )
-            select xmlagg(d.html::xml)
-            from result
-            join "good_detail" d using (good_id)
-            where rerank_distance < 0
-            and not exists (
-                select from interest
-                where good_id = d.good_id
-                and state in ('approved', 'late', 'given')
-            )
-        ), _('Nothing yet.')::xml)
+    select xmlelement(name article, d.html::xml)
+    from result
+    join "good_detail" d using (good_id)
+    where rerank_distance < 0
+    and not exists (
+        select from interest
+        where good_id = d.good_id
+        and state in ('approved', 'late', 'given')
     )
-    from q
 )
-select xmlconcat(
-    (select html from head),
-    xmlelement(name div, xmlattributes('grid search-results' as class),
-        xmlelement(name div, xmlattributes('list' as class), (select html from list)),
-        xmlelement(name div, (select html from map))
-    )
+select html::text from head
+union all select xmlelement(name div, xmlattributes('grid search-results' as class),
+    xmlelement(name div, xmlattributes('list' as class), xmlconcat(html)),
+    xmlelement(name div, (select html from map))
 )::text
+from list
+union all select _('Nothing yet.') where not exists (select from list limit 1)
 ;
 
 grant select on table "findings" to person;
