@@ -802,7 +802,7 @@ grant select on table head to person;
 
 create or replace view about (html)
 as select xmlelement(name h2, _('About'))
-union all select xmlelement(name p, 'Fait avec amour par Florian Klein.')
+union all select xmlelement(name p, 'Fait avec amour et passion par Florian Klein.')
 union all select xmlelement(name a, xmlattributes('https://github.com/docteurklein/httpg' as href), 'code source')
 ;
 grant select on table about to person;
