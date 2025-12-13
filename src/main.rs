@@ -238,12 +238,14 @@ async fn main() -> Result<(), HttpgError> {
             )
             .await;
 
-            axum_server::from_tcp_rustls(tcp, config?)
+            axum_server::from_tcp_rustls(tcp, config?)?
                 .serve(app.into_make_service())
                 .await?
         },
         None => {
-            axum_server::from_tcp(tcp)
+            tcp.set_nonblocking(true)?;
+
+            axum_server::from_tcp(tcp)?
                 .serve(app.into_make_service())
                 .await?
         },

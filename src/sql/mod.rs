@@ -50,8 +50,10 @@ impl VisitOrderBy {
                             quote_style: None,
                             span: sqlparser::tokenizer::Span { start: Location {line: 1, column: 1}, end: Location {line: 1, column: 1} }
                         }),
-                        asc: Some(matches!(asc.as_str(), Some("desc")).not()),
-                        nulls_first: None,
+                        options: sqlparser::ast::OrderByOptions {
+                            asc: Some(matches!(asc.as_str(), Some("desc")).not()),
+                            nulls_first: None,
+                        },
                         with_fill: None,
                     }
                 })
@@ -59,7 +61,7 @@ impl VisitOrderBy {
         ;
 
         (!exprs.is_empty()).then_some(OrderBy {
-            exprs,
+            kind: sqlparser::ast::OrderByKind::Expressions(exprs),
             interpolate: None,
         })
     }
