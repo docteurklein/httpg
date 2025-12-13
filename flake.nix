@@ -5,6 +5,10 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:NixOS/nixpkgs";
     devenv.url = "github:cachix/devenv";
+    crate2nix = {
+      url = "github:nix-community/crate2nix";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -16,60 +20,17 @@
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  outputs = inputs@{ flake-parts, ... }:
+  outputs = inputs@{ flake-parts, crate2nix, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.devenv.flakeModule
       ];
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
 
-      perSystem = { config, self', inputs', pkgs, system, ... }:
-        let n2c = inputs.nix2container.packages.x86_64-linux;
-      in {
-
-        packages.pg_render = pkgs.buildPgrxExtension rec {
-          pname = "pg_render";
-          version = "0.1";
-          inherit system;
-          postgresql = pkgs.postgresql_18;
-
-          src = pkgs.fetchFromGitHub {
-            owner = "mkaski";
-            repo = pname;
-            rev = "master";
-            hash = "sha256-idnkh91kdsnXiF79q7SN9yOJM1eVLsIS35FFXiyOpS4=";
-          };
-          cargoHash = "sha256-q5Rv2G+deh7uHiKZSS0SgF4KiAqB3kxeub6czXBsuaI=";
-          cargoPatches = [
-            ./add-cargo.patch
-          ];
-        };
-
-        # packages.pgrag = pkgs.buildPgrxExtension rec {
-        #   pname = "pgrag";
-        #   version = "0.1";
-        #   inherit system;
-        #   postgresql = pkgs.postgresql_18;
-        #   cargo-pgrx = pkgs.cargo-pgrx;
-
-        #   src = pkgs.fetchFromGitHub {
-        #     owner = "neondatabase-labs";
-        #     repo = pname;
-        #     rev = "main";
-        #     rootDir = "exts/rag_bge_small_en_v15";
-        #     hash = "sha256-ioD0DrZZOgIFfc5FtunsbvthAJmkA+VvzGAuaaD+xBE=";
-        #   };
-        #   cargoHash = "sha256-Xcr4/BsxQrau5Qxgz7iw9d+j1wwYoObhKRRrtUQpAlI=";
-        #   cargoPatches = [
-        #     ./add-cargo-rag-bge.patch
-        #   ];
-        # };
-
-        packages.httpg = pkgs.rustPlatform.buildRustPackage {
-          pname = "httpg";
-          version = "0.1";
-          cargoLock.lockFile = ./Cargo.lock;
-
+      perSystem = { config, self', inputs', pkgs, system, ... }: let
+        n2c = inputs.nix2container.packages.x86_64-linux;
+        cargoNix = inputs.crate2nix.tools.${system}.appliedCargoNix {
+          name = "httpg";
           src = with pkgs; (lib.cleanSourceWith {
             filter = path: type:
               let path' = (lib.strings.removePrefix (builtins.toString ./.) path);
@@ -79,18 +40,10 @@
             ;
             src = ./.;
           });
-
-          nativeBuildInputs = with pkgs; [
-            mold-wrapped clang pkg-config openssl.dev
-          ];
-          buildInputs = with pkgs; [
-            pkg-config openssl.dev
-          ];
-          env = {
-            RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
-          };
-          doCheck = false;
         };
+      in {
+
+        packages.httpg = cargoNix.rootCrate.build;
 
         packages.default = self'.packages.httpg;
 
