@@ -1,12 +1,3 @@
-#map-container {
-    height: 100vh;
-    position: sticky;
-}
-
-html, body, #map {
-    width: 100%:;
-    height: 100%;
-}
 
 a.whatsapp {
     font-size: 35px;
@@ -46,8 +37,14 @@ a.whatsapp {
 
 .grid.search-results .list {
     overflow: auto;
-    height: 100vh;
+    height: 90vh;
 }
+
+#map {
+    height: 90vh;
+    position: sticky;
+}
+
 
 .leaflet-popup-content {
     overflow: scroll;

@@ -696,10 +696,9 @@ list (html) as (
 )
 select html::text from head
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
-    xmlelement(name div, xmlattributes('list' as class), xmlconcat(html)),
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html) from list)),
     xmlelement(name div, (select html from map))
 )::text
-from list
 union all select _('Nothing yet.') where not exists (select from list limit 1)
 ;
 
