@@ -133,6 +133,8 @@ struct HttpgConfig {
     #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
     private_key: Vec<u8>,
     #[conf(env)]
+    smtp_from: String,
+    #[conf(env)]
     smtp_user: String,
     #[conf(env)]
     smtp_password: String,
@@ -354,7 +356,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
 #[debug_handler]
 async fn email(
-    State(AppState {write_pool, config: HttpgConfig { smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { smtp_from, smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
@@ -374,7 +376,7 @@ async fn email(
     let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
 
     let smtp_config = SmtpConfig::default()
-        .sender("florian.klein@free.fr")
+        .sender(smtp_from.as_str())
         .username(smtp_user)
         .password(smtp_password)
         .relay(smtp_relay)

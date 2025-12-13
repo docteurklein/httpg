@@ -141,18 +141,32 @@ begin atomic
             set location = excluded.location
     ),
     url as (
-        select login_person.*, url(format('http://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
+        select login_person.*, url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
             'redirect', '/',
             'login_challenge', login_challenge,
             'sql', 'select'
         )) as url
         from login_person
     )
-    select 'florian.klein@free.fr', email, 'cpres: login', url,
-        xmlelement(name a, xmlattributes(
-            url as href
-            -- , 'cpres' as target
-        ), format(_('Login as %s'), name))
+    select 'florian.klein@free.fr', email, '[cpres]: a new login link has been created',
+        format($$
+            Bonjour %s,
+
+            Un nouveau lien d'authentification a été crée pour vous authentifier: %s
+
+            Ignorez ce lien si vous n'êtes pas à l'origine de la demande.
+
+            Cordialement, L'admin cpres.
+        $$, name, url),
+        xmlconcat(
+            xmlelement(name h1, format(_('Bonjour %s'), name)),
+            xmlelement(name p, 'Un nouveau lien d''authentification a été crée pour vous authentifier: '),
+            xmlelement(name a, xmlattributes(
+                url as href
+            ), url)
+            , xmlelement(name p, 'Ignorez ce lien si vous n''êtes pas a l''origine de la demande.')
+            , xmlelement(name p, 'Cordialement, L''admin cpres.')
+        )
     from url;
 end;
 

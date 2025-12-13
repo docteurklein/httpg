@@ -104,10 +104,10 @@
             paths = with pkgs.dockerTools; [
               ./.
               binSh
-              pkgs.coreutils
+              # pkgs.coreutils
               caCertificates
             ];
-            pathsToLink = [ "/public" "/" "/" "/etc"];
+            pathsToLink = ["/public" "/" "/etc"];
           };
         };
 
