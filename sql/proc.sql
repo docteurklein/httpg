@@ -156,7 +156,7 @@ begin atomic
 
             Ignorez ce lien si vous n'êtes pas à l'origine de la demande.
 
-            Cordialement, L'admin cpres.
+            Cordialement, l'admin.
         $$, name, url),
         xmlconcat(
             xmlelement(name h1, format(_('Bonjour %s'), name)),
@@ -165,7 +165,7 @@ begin atomic
                 url as href
             ), url)
             , xmlelement(name p, 'Ignorez ce lien si vous n''êtes pas a l''origine de la demande.')
-            , xmlelement(name p, 'Cordialement, L''admin cpres.')
+            , xmlelement(name p, 'Cordialement, l''admin.')
         )
     from url;
 end;

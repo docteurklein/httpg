@@ -9,6 +9,7 @@ use axum_macros::debug_handler;
 use conf::Conf;
 
 use config::ConfigError;
+use cookie::time::{Duration, OffsetDateTime, format_description::modifier::OffsetSecond};
 use futures::{TryStreamExt};
 use lettre::{
     message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
@@ -212,6 +213,7 @@ async fn main() -> Result<(), HttpgError> {
     let app = Router::new()
         .route("/", get(index))
         .route("/login", get(login).post(login))
+        .route("/logout", get(logout).post(logout))
         .route("/query", get(stream_query).post(post_query))
         .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
@@ -315,9 +317,25 @@ async fn login(
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
-        query.redirect
-            .map(|r| Redirect::to(&r).into_response())
-            .unwrap_or(NoContent.into_response())
+        Redirect::to(&query.redirect.unwrap_or("/".to_string())).into_response()
+    ))
+}
+
+#[debug_handler]
+async fn logout(
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+    Ok((
+        [
+            (SET_COOKIE, Cookie::build(("auth", ""))
+                .http_only(true)
+                .secure(false) // @TODO
+                .same_site(cookie::SameSite::Lax)
+                .expires(OffsetDateTime::now_utc() - Duration::days(365))
+                .to_string()
+            ),
+        ],
+        Redirect::to(&query.redirect.unwrap_or("/".to_string())).into_response()
     ))
 }
 

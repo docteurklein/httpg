@@ -726,7 +726,14 @@ select $html$<!DOCTYPE html>
   <script type="module" src="/cpres.js"></script>
   <main class="container-fluid">
 $html$
-union all (select format(_('Welcome %s!'), name) from person where person_id = current_person_id())
+union all (
+    select xmlconcat(
+        xmlelement(name span, format(_('Welcome %s! '), name)),
+        xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
+    )::text
+    from person
+    where person_id = current_person_id()
+)
 union all (
     select xmlelement(name form, xmlattributes(
         'POST' as method,
@@ -744,6 +751,7 @@ union all (
         )
     )::text
     from q
+    where current_person_id() is null
 )
 union all (
     with m (color, m) as (
