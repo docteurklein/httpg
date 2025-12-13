@@ -45,6 +45,20 @@ a.whatsapp {
     position: sticky;
 }
 
+form input.inline-name {
+    field-sizing: content;
+    width: auto;
+    /* border: 0p solid; */
+    &, &:active, &:focus {
+        border: none;
+        outline: none;
+        background: transparent;
+    }
+}
+
+form.inline {
+    display: inline;
+}
 
 .leaflet-popup-content {
     overflow: scroll;

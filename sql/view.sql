@@ -554,6 +554,19 @@ html (html) as (
                 'submit' as type,
                 _('Send message') as value
             ))
+        ),
+        (
+            select xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                    'sql', format('call cpres.unwant(%L)', (good).good_id),
+                    'redirect', 'referer'
+                )) as action),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    'pico-background-red' as class,
+                    format('return confirm(%L)', _('Are you sure?')) as onclick,
+                    _('Not interested anymore') as value
+                ))
+            )
         )
     )
     from data
@@ -727,7 +740,26 @@ select $html$<!DOCTYPE html>
 $html$
 union all (
     select xmlconcat(
-        xmlelement(name span, format(_('Welcome %s! '), name)),
+        xmlelement(name form, xmlattributes(
+            'POST' as method,
+            '/query?redirect=referer' as action,
+            'inline' as class
+        ),
+            _('Welcome '),
+            xmlelement(name input, xmlattributes(
+                'text' as type,
+                'params[]' as name,
+                'inline-name' as class,
+                _('name') as placeholder,
+                true as required,
+                name as value
+            )),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'sql' as name,
+                'update cpres.person set name = $1 where person_id = current_person_id()' as value
+            ))
+        ),
         xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
     )::text
     from person
