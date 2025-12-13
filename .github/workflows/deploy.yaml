@@ -33,17 +33,11 @@ jobs:
 
       - run: nix --accept-flake-config run .#oci.copyToRegistry
 
-      - name: Install Render CLI
-        run: |
-          curl -L https://github.com/render-oss/cli/releases/download/v2.5.0/cli_2.5.0_linux_amd64.zip -o render.zip
-          unzip -d render render.zip
-          sudo mv render/cli_v2.5.0 /usr/local/bin/render
+      - id: 'deploy'
+        uses: 'google-github-actions/deploy-cloudrun@v3'
+        with:
+          service: 'httpg'
+          image: ${{ steps.image_name.outputs.image_name }}
 
-      - name: Trigger deploy with Render CLI
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          CI: true
-          IMAGE_NAME: ${{ steps.image_name.outputs.image_name }}
-        run: |
-          render deploys create ${{ secrets.RENDER_SERVICE_ID }} --output json --confirm --wait --image "$IMAGE_NAME"
-
+      - name: 'deploy url'
+        run: 'echo "${{ steps.deploy.outputs.url }}"'
