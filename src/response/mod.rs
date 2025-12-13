@@ -76,15 +76,12 @@ impl IntoResponse for HttpResult {
                 match self.rows {
                     Rows::Stream(rows) => Html(
                         Body::from_stream(
-                            rows.map(move |row|
+                            rows.map(|row|
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
-                                    .map(|r| r + "\n")
-                                    .map_err(|e| e.to_string())
-                                    .map(Bytes::from)
-                                
+                                    .map_or_else(|e| HttpgError::Postgres(e).to_string() + "\n", |v| v + "\n")
                             )
-                            // .map(Ok::<_, axum::Error>)
+                            .map(Ok::<_, HttpgError>)
                         ).into_response()
                     ).into_response(),
 

@@ -415,11 +415,16 @@ async fn email(
 
 #[debug_handler]
 async fn stream_query(
-    State(AppState {read_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
+    State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let mut conn = read_pool.get().await?;
+
+    let mut conn = match query.use_primary {
+        Some(_) => write_pool,
+        None => read_pool,
+    }.get().await?;
+
     let mut tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::RepeatableRead)

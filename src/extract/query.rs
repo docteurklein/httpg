@@ -112,8 +112,9 @@ pub struct QueryPart {
     pub order: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_primary: Option<String>,
 }
-
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
@@ -138,6 +139,8 @@ pub struct Query {
     pub qs: serde_json::Map<String, serde_json::Value>,
     #[serde(skip_serializing_if = "serde_json::Map::is_empty")]
     pub body: serde_json::Map<String, serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub use_primary: Option<String>,
 }
 
 impl<S> FromRequest<S> for Query
@@ -274,6 +277,8 @@ where
         let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
         let accept = qs.accept.to_owned().or(body.accept.to_owned()).or(accept.map(ToString::to_string));
 
+        let use_primary = qs.use_primary.or(body.use_primary);
+
         Ok(Self {
             sql: sql.unwrap_or_default(),
             order,
@@ -286,6 +291,7 @@ where
             accept,
             accept_language,
             on_error,
+            use_primary,
         })
     }
 }

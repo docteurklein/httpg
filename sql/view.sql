@@ -504,7 +504,8 @@ html (html) as (
                 xmlelement(name a, xmlattributes(
                     url('/query', jsonb_build_object(
                         'sql', 'table cpres.head union all table cpres."findings"',
-                        'q', (interest).query
+                        'q', (interest).query,
+                        'use_primary', true
                     )) as href
                 ), format('found via search: %s', (interest).query))
             )
@@ -566,8 +567,8 @@ grant select on table "receiving activity" to person;
 
 create or replace view "findings" (html)
 with (security_invoker)
-as with q (q) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
+as with q (qs) as (
+    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'qs'
 ),
 map (html) as (
     select $html$
@@ -584,13 +585,14 @@ head (html) as (
             select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
                 url('/query', jsonb_build_object(
                     'q', query,
-                    'sql', 'table cpres.head union all table cpres."findings"'
+                    'sql', 'table cpres.head union all table cpres."findings"',
+                    'use_primary', true
                 )) as href
             ), query))), '')
             from search
         ))),
         xmlelement(name form, xmlattributes(
-            'POST' as method,
+            'GET' as method,
             '/query' as action,
             'group' as role
         ),
@@ -598,12 +600,17 @@ head (html) as (
                 'q' as name,
                 'search' as type,
                 _('query') as placeholder,
-                coalesce(q->'body'->>'q', q->'qs'->>'q') as value
+                qs->>'q' as value
             )),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
                 'table cpres.head union all table cpres."findings"' as value
+            )),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'use_primary' as name,
+                null as value
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
@@ -626,23 +633,21 @@ head (html) as (
                 xmlelement(name input, xmlattributes(
                     'params[]' as name,
                     'hidden' as type,
-                    coalesce(q->'body'->>'q', q->'qs'->>'q') as value
+                    qs->>'q' as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
                     _('Create alert') as value
                 ))
             )
-            where coalesce(q->'body'->>'q', q->'qs'->>'q') <> ''
-            and not exists (select from search where query = coalesce(q->'body'->>'q', q->'qs'->>'q'))
+            where qs->>'q' <> ''
+            and not exists (select from search where query = qs->>'q')
             and current_person_id() is not null
         ),
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/query', jsonb_build_object(
-                    -- 'redirect', 'referer'
-                    -- 'redirect', url('/query', coalesce(q->'body', q->'qs'))
                     'redirect', url('/query', jsonb_build_object(
                         'sql', 'table cpres.head union all table cpres."findings"'
                     ))
@@ -655,7 +660,7 @@ head (html) as (
                 xmlelement(name input, xmlattributes(
                     'params[]' as name,
                     'hidden' as type,
-                    coalesce(q->'body'->>'q', q->'qs'->>'q') as value
+                    qs->>'q' as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
@@ -664,18 +669,18 @@ head (html) as (
                     _('Remove alert') as value
                 ))
             )
-            where exists (select from search where query = coalesce(q->'body'->>'q', q->'qs'->>'q'))
+            where exists (select from search where query = qs->>'q')
         )
     )
     from q
 ),
 result (good_id, rerank_distance) as (
-    select good_id, case when q->'body'->>'q' <> '' then
-        rerank_distance(q->'body'->>'q', passage)
+    select good_id, case when qs->>'q' <> '' then
+        rerank_distance(qs->>'q', passage)
         else -1
     end
     from q, good
-    order by embedding <=> embed_query(q->'body'->>'q')
+    order by case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
     limit 100
 ),
 list (html) as (
