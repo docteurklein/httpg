@@ -9,8 +9,11 @@ use axum_macros::debug_handler;
 use conf::Conf;
 
 use config::ConfigError;
-use email_clients::{clients::{get_email_client, smtp::SmtpConfig}, configuration::EmailConfiguration, email::{EmailAddress, EmailObject}};
 use futures::{TryStreamExt};
+use lettre::{
+    message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
+    AsyncTransport, Message, Tokio1Executor,
+};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -63,7 +66,11 @@ pub enum HttpgError {
     #[error("axum multipart: {0:#?}")]
     AxumMultipart(#[from] axum::extract::multipart::MultipartError),
     #[error("email: {0:#?}")]
-    Email(#[from] email_clients::errors::EmailError),
+    Email(#[from] lettre::error::Error),
+    #[error("email: {0:#?}")]
+    EmailAddress(#[from] lettre::address::AddressError),
+    #[error("email: {0:#?}")]
+    Smtp(#[from] lettre::transport::smtp::Error),
     #[error("invalid text param")]
     InvalidTextParam,
 }
@@ -133,7 +140,7 @@ struct HttpgConfig {
     #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
     private_key: Vec<u8>,
     #[conf(env)]
-    smtp_from: String,
+    smtp_sender: String,
     #[conf(env)]
     smtp_user: String,
     #[conf(env)]
@@ -356,7 +363,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
 #[debug_handler]
 async fn email(
-    State(AppState {write_pool, config: HttpgConfig { smtp_from, smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { smtp_sender, smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
@@ -375,26 +382,25 @@ async fn email(
 
     let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
 
-    let smtp_config = SmtpConfig::default()
-        .sender(smtp_from.as_str())
-        .username(smtp_user)
-        .password(smtp_password)
-        .relay(smtp_relay)
-        .tls(email_clients::clients::smtp::TlsMode::StartTls)
-        .port(587)
-    ;
-    let email_configuration: EmailConfiguration = smtp_config.into();
-    let client = get_email_client(email_configuration);
+    let creds = Credentials::new(smtp_user, smtp_password);
+
+    let mailer: AsyncSmtpTransport<Tokio1Executor> =
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_relay)
+            .unwrap()
+            .credentials(creds)
+            .build();
 
     rows.err_into::<HttpgError>().try_for_each(async |row| {
-       let mail = EmailObject {
-           sender: row.get::<&str, &str>("sender").into(),
-           to: vec![EmailAddress { name: row.get::<&str, &str>("to").into(), email: row.get::<&str, &str>("to").into() }],
-           subject: row.get::<&str, &str>("subject").into(),
-           plain: row.get::<&str, &str>("plain").into(),
-           html: row.get::<&str, &str>("html").into(),
-        };
-        client.to_owned().unwrap().send_emails(mail).await.map_err(|e| e.into())
+        let email = Message::builder()
+            .sender(smtp_sender.parse()?)
+            .from(row.get::<&str, &str>("from").parse()?)
+            .to(row.get::<&str, &str>("to").parse()?)
+            .subject(row.get::<&str, &str>("subject"))
+            .header(ContentType::TEXT_HTML)
+            .body(row.get::<&str, &str>("html").to_string())
+        ?;
+        mailer.send(email).await?;
+        Ok(())
     }).await?;
 
     tx.commit().await?;

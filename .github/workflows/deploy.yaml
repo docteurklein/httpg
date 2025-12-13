@@ -14,6 +14,14 @@ jobs:
           fetch-depth: 0
       - uses: DeterminateSystems/nix-installer-action@main
       - uses: DeterminateSystems/magic-nix-cache-action@main
+      - uses: 'google-github-actions/setup-gcloud@v3'
+      - uses: 'google-github-actions/auth@v2'
+        with:
+          workload_identity_provider: 'projects/278563930937/locations/global/workloadIdentityPools/github/providers/my-repo'
+
+      - id: image_name
+        run: |
+          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
 
       - run: |
           nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
@@ -24,9 +32,6 @@ jobs:
           nix --accept-flake-config build .#httpg --print-build-logs
 
       - run: nix --accept-flake-config run .#oci.copyToRegistry
-      - id: image_name
-        run: |
-          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
 
       - name: Install Render CLI
         run: |

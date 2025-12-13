@@ -119,7 +119,7 @@ end;
 grant execute on function login to person;
 
 create or replace function send_login_email(email_ text, location_ text)
-returns table (sender text, "to" text, subject text, plain text, html text)
+returns table ("from" text, "to" text, subject text, plain text, html text)
 language sql
 volatile parallel safe not leakproof
 security definer
@@ -148,7 +148,7 @@ begin atomic
         )) as url
         from login_person
     )
-    select 'florian.klein@free.fr', email, '[cpres]: a new login link has been created',
+    select 'sideral.underground@gmail.com', email, '[cpres]: Nouveau lien d''authentification',
         format($$
             Bonjour %s,
 

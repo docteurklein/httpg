@@ -810,21 +810,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 
 [[package]]
-name = "email-clients"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7809630acc2ccb3134c61d5d8a8551903019dce8e41b022270620ad713356df8"
-dependencies = [
- "async-trait",
- "lettre",
- "log",
- "secrecy",
- "serde",
- "thiserror 1.0.69",
- "tokio",
-]
-
-[[package]]
 name = "email-encoding"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1257,10 +1242,10 @@ dependencies = [
  "config",
  "cookie",
  "deadpool-postgres",
- "email-clients",
  "flate2",
  "futures",
  "hex",
+ "lettre",
  "postgres-types",
  "rustls",
  "serde",
@@ -1511,7 +1496,6 @@ dependencies = [
  "socket2",
  "tokio",
  "tokio-native-tls",
- "tracing",
  "url",
 ]
 
@@ -2309,16 +2293,6 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
-
-[[package]]
-name = "secrecy"
-version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9bd1c54ea06cfd2f6b63219704de0b9b4f72dcc2b8fdef820be6cd799780e91e"
-dependencies = [
- "serde",
- "zeroize",
-]
 
 [[package]]
 name = "security-framework"
