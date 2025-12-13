@@ -148,7 +148,7 @@ begin atomic
         )) as url
         from login_person
     )
-    select 'sideral.underground@gmail.com', email, '[cpres]: Nouveau lien d''authentification',
+    select 'florian.klein@free.fr', email, '[cpres]: Nouveau lien d''authentification',
         format($$
             Bonjour %s,
 
