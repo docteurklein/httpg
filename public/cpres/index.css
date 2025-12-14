@@ -1,3 +1,22 @@
+@media (prefers-color-scheme: dark) {
+    :root {
+        color: red !important;
+        color-scheme: dark;
+    }
+}
+@media (prefers-color-scheme: light) {
+    color: green !important;
+    :root {
+        color: red !important;
+        color-scheme: light;
+    }
+}
+
+.destructive {
+    background-color: transparent;
+    border: 3px solid var(--pico-color-red);
+    color: var(--pico-color-red);
+}
 
 a.whatsapp {
     font-size: 35px;
@@ -48,7 +67,6 @@ a.whatsapp {
 form input.inline-name {
     field-sizing: content;
     width: auto;
-    /* border: 0p solid; */
     &, &:active, &:focus {
         border: none;
         outline: none;
@@ -58,6 +76,11 @@ form input.inline-name {
 
 form.inline {
     display: inline;
+}
+
+.messages {
+    max-height: 50vh;
+    overflow: scroll;
 }
 
 .leaflet-popup-content {

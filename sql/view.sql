@@ -130,6 +130,8 @@ select xmlelement(name article, xmlattributes(
             )) as action),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
+                'destructive' as class,
+                format('return confirm(%L)', _('Are you sure?')) as onclick,
                 _('Not interested anymore') as value
             ))
         )
@@ -295,7 +297,7 @@ result (html, good_id) as (
                     )),
                     xmlelement(name input, xmlattributes(
                         'submit' as type,
-                        'pico-background-red' as class,
+                        'destructive' as class,
                         format('return confirm(%L)', _('Are you sure?')) as onclick,
                         _('Remove this media') as value
                     ))
@@ -360,7 +362,7 @@ result (html, good_id) as (
             )),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
-                'pico-background-red' as class,
+                'destructive' as class,
                 format('return confirm(%L)', _('Are you sure?')) as onclick,
                 _('Remove this good') as value
             ))
@@ -423,9 +425,9 @@ html (html) as (
                     where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
                     order by at asc
                 )
-                select xmlagg(xmlelement(name article,
+                select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
                     format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
-                ))
+                )), ''))
                 from message
                 join person author on (author.person_id = message.author)
             ),
@@ -530,9 +532,9 @@ html (html) as (
                 where (message.good_id, message.person_id) = ((interest).good_id, (interest).person_id)
                 order by at asc
             )
-            select xmlagg(xmlelement(name article,
+                select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
                 format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
-            ))
+            )), ''))
             from message
             join person author on (author.person_id = message.author)
         ),
@@ -562,7 +564,7 @@ html (html) as (
                 )) as action),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
-                    'pico-background-red' as class,
+                    'destructive' as class,
                     format('return confirm(%L)', _('Are you sure?')) as onclick,
                     _('Not interested anymore') as value
                 ))
@@ -677,7 +679,7 @@ head (html) as (
                 )),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
-                    'pico-background-red' as class,
+                    'destructive' as class,
                     format('return confirm(%L)', _('Are you sure?')) as onclick,
                     _('Remove alert') as value
                 ))
@@ -723,12 +725,12 @@ as with q (q) as (
     select current_setting('httpg.query', true)::jsonb
 )
 select $html$<!DOCTYPE html>
-<html data-theme="dark">
+<html>
 <head>
     <meta charset="utf-8" />
-    <meta name="color-scheme" content="light dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.colors.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
@@ -738,33 +740,6 @@ select $html$<!DOCTYPE html>
   <script type="module" src="/cpres.js"></script>
   <main class="container-fluid">
 $html$
-union all (
-    select xmlconcat(
-        xmlelement(name form, xmlattributes(
-            'POST' as method,
-            '/query?redirect=referer' as action,
-            'inline' as class
-        ),
-            _('Welcome '),
-            xmlelement(name input, xmlattributes(
-                'text' as type,
-                'params[]' as name,
-                'inline-name' as class,
-                _('name') as placeholder,
-                true as required,
-                name as value
-            )),
-            xmlelement(name input, xmlattributes(
-                'hidden' as type,
-                'sql' as name,
-                'update cpres.person set name = $1 where person_id = current_person_id()' as value
-            ))
-        ),
-        xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
-    )::text
-    from person
-    where person_id = current_person_id()
-)
 union all (
     select xmlelement(name form, xmlattributes(
         'POST' as method,
@@ -822,24 +797,57 @@ union all (
 )
 union all select xmlelement(name nav,
     xmlelement(name ul, (
-        with menu (name, sql, visible) as (values
+        with menu (name, sql, visible) as ( values
             (_('Search'), 'table cpres.head union all table cpres."findings"', true),
             (_('Giving activity'), 'table cpres.head union all table cpres."giving activity"', current_person_id() is not null),
             (_('Receiving activity'), 'table cpres.head union all table cpres."receiving activity"', current_person_id() is not null),
             (_('my goods'), 'table cpres.head union all select html from cpres."good admin"', current_person_id() is not null),
             (_('About'), 'table cpres.head union all select html::text from cpres.about', true)
-        )
-        select xmlagg(
-            xmlelement(name li,
-                xmlelement(name a, xmlattributes(
-                    url('/query', jsonb_build_object(
-                        'sql', sql
-                    )) as href
-                ), name)
+        ),
+        item (html) as (
+            select xmlelement(name a, xmlattributes(
+                url('/query', jsonb_build_object(
+                    'sql', sql
+                )) as href
+            ), name)
+            from menu, q
+            where visible
+        ),
+        auth (html) as (
+            select xmlelement(name form, xmlattributes(
+                    'POST' as method,
+                    '/query?redirect=referer' as action,
+                    'inline' as class
+            ),
+                _('Welcome '),
+                xmlelement(name input, xmlattributes(
+                    'text' as type,
+                    'params[]' as name,
+                    'inline-name' as class,
+                    _('name') as placeholder,
+                    true as required,
+                    name as value
+                )),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'sql' as name,
+                    'update cpres.person set name = $1 where person_id = current_person_id()' as value
+                ))
             )
+            from person
+            where person_id = current_person_id()
+        ),
+        "all" (html) as (
+            select html from auth
+            union all
+            select html from item
+            union all 
+            select xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
+            where current_person_id() is not null
         )
-        from menu, q
-        where visible
+        select xmlagg(xmlelement(name li, html))
+        from "all"
+        limit 1
     ))
 )::text
 ;

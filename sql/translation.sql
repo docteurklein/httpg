@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 
 insert into cpres.translation (id, lang, text) values
-  ('Welcome %s!', 'fr', 'Bienvenue %s!')
+  ('Welcome ', 'fr', 'Bienvenue ')
 , ('a little interested', 'fr', 'un peu intéressé')
 , ('interested', 'fr', 'intéressé')
 , ('highly interested', 'fr', 'très intéressé')
@@ -11,8 +11,8 @@ insert into cpres.translation (id, lang, text) values
 , ('Search', 'fr', 'Rechercher')
 , ('About', 'fr', 'A propos')
 , ('activity', 'fr', 'Notifications')
-, ('Receiving activity', 'fr', 'Mes intérêts')
-, ('Giving activity', 'fr', 'Dons en cours')
+, ('Receiving activity', 'fr', 'Demandes')
+, ('Giving activity', 'fr', 'Dons')
 , ('my goods', 'fr', 'Gérer mes biens')
 , ('By %s', 'fr', 'Par %s')
 , ('%s at %s: ', 'fr', '%s le %s: ')

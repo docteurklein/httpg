@@ -11,6 +11,10 @@ navigator.geolocation.getCurrentPosition(async pos => {
   });
 });
 
+[...document.querySelectorAll('.messages')].forEach(e => {
+  e.scrollTop = e.scrollHeight;
+});
+
 // navigator.serviceWorker.register('/service-worker.js?v=1');
 
 // navigator.serviceWorker.ready.then(function(registration) {

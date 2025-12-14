@@ -19,7 +19,7 @@ new GeoJSON(data, {
     layer.bindPopup(feature.properties.description, {
       maxHeight: 400,
       maxWidth: 1000,
-      minWidth: 200,
+      minWidth: 300,
     });
 		markers.addLayer(layer);
   }
