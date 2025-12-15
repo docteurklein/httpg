@@ -47,15 +47,20 @@ end;
 
 grant execute on procedure give to person;
 
-create or replace procedure want(_good_id uuid, level interest_level)
+create or replace procedure want(_good_id uuid, level interest_level, price_ text)
 language sql
 security invoker
 set search_path to cpres, pg_catalog
 begin atomic
-    insert into interest (good_id, person_id, origin, level) values (_good_id, current_person_id(), 'manual', level);
+    insert into interest (good_id, person_id, origin, level, price)
+    values (_good_id, current_person_id(), 'manual', level, nullif(price_, '')::numeric)
+    on conflict (good_id, person_id) do update
+        set level = excluded.level,
+        price = excluded.price
+    ;
 end;
 
-grant execute on procedure want to person;
+grant execute on procedure want(uuid, interest_level, text) to person;
 
 create or replace procedure unwant(_good_id uuid)
 language sql

@@ -2,10 +2,11 @@
 
 insert into cpres.translation (id, lang, text) values
   ('Welcome ', 'fr', 'Bienvenue ')
-, ('a little interested', 'fr', 'un peu intéressé')
-, ('interested', 'fr', 'intéressé')
-, ('highly interested', 'fr', 'très intéressé')
+, ('a little interested', 'fr', 'un peu')
+, ('interested', 'fr', 'beaucoup')
+, ('highly interested', 'fr', 'passionnément')
 , ('Not interested anymore', 'fr', 'Plus intéressé')
+, ('Interested', 'fr', 'Intéressé')
 , ('Send login challenge', 'fr', 'Envoyer un lien de login')
 , ('map', 'fr', 'carte')
 , ('Search', 'fr', 'Rechercher')

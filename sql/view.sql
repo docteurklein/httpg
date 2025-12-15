@@ -40,29 +40,117 @@ end;
 
 grant execute on function geojson to person;
 
+create or replace function max_interest_price(good good) returns xml
+language sql
+immutable strict parallel safe -- leakproof
+set search_path to cpres, pg_catalog
+security definer
+begin atomic;
+    with max(price) as (
+        select max(price)
+        from interest
+        where good_id = good.good_id
+        and person_id <> current_person_id()
+    ) 
+    select xmlelement(name div,
+        format(_('current bid at %s€'), price)
+    )
+    from max
+    where price > 0;
+end;
+
+create or replace function interest_control(good good, interest interest) returns xml
+language sql
+immutable parallel safe -- leakproof
+set search_path to cpres, pg_catalog
+begin atomic;
+    select xmlconcat(
+        (
+            select xmlelement(name form, xmlattributes(
+                'POST' as method,
+                url('/query', jsonb_build_object(
+                    'sql', format('call cpres.want(%L, $2, $1)', good.good_id),
+                    'redirect', 'referer'
+                )) as action,
+                null as class
+            ),
+                max_interest_price(good),
+                xmlelement(name input, xmlattributes(
+                    'number' as type,
+                    0 as min,
+                    'any' as step,
+                    'params[]' as name,
+                    interest.price as value,
+                    _('Price?') as placeholder
+                )),
+                xmlelement(name span, xmlattributes('inline' as class), '€'),
+                -- xmlelement(name select, xmlattributes('params[]' as name),
+                (
+                    select xmlagg(
+                        xmlelement(name label, case when interest.level = value
+                            then xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, true as required, true as checked))
+                            else xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, true as required))
+                    end, _(value)))
+                    from unnest(array['a little interested', 'interested', 'highly interested']) a (value)
+                ),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    _('Interested') as value
+                ))
+            )
+            where current_person_id() is not null
+            and current_person_id() <> good.giver
+        ),
+        (
+            select xmlelement(name form, xmlattributes(
+                'POST' as method,
+                url('/query', jsonb_build_object(
+                    'sql', format('call cpres.unwant(%L)', (good).good_id),
+                    'redirect', 'referer'
+                )) as action
+            ),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    'destructive' as class,
+                    format('return confirm(%L)', _('Are you sure?')) as onclick,
+                    _('Not interested anymore') as value
+                ))
+            )
+            where exists (
+                select from interest
+                where good.good_id = interest.good_id
+                and interest.person_id = current_person_id()
+            )
+            and current_person_id() is not null
+            and current_person_id() <> (good).giver
+        )
+    );
+end;
+
 create or replace view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
 as with receiver (location) as (
     select location from person_detail where person_id = current_person_id() limit 1
 ),
 base as (
-    select good.*, giver.name as giver_name,
+    select good, interest, giver.name as giver_name,
         case when receiver.location is not null then (good.location <@> receiver.location) * 1.609347 end bird_distance_km
     from good
+    left join interest on (interest.good_id, interest.person_id) = (good.good_id, current_person_id())
     join person giver on (good.giver = giver.person_id)
     left join receiver on true
 )
 select xmlelement(name article, xmlattributes(
-    geojson(good.location) as "data-geojson"
+    geojson((good).location) as "data-geojson"
 ),
     xmlelement(name h2, xmlelement(name a, xmlattributes(
         url('/query', jsonb_build_object(
             'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
-            'params[]', good.good_id
+            'params[]', (good).good_id
         )) as href
-    ), good.title)),
+    ), (good).title)),
     xmlelement(name span, format(_('By %s'), giver_name)),
-    xmlelement(name p, good.description),
+    xmlelement(name p, (good).description),
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
@@ -88,66 +176,10 @@ select xmlelement(name article, xmlattributes(
             )
         ))
         from good_media
-        where good_id = good.good_id
+        where good_id = (good).good_id
     ), '')),
-    (
-        select xmlelement(name form, xmlattributes(
-            'POST' as method,
-            url('/query', jsonb_build_object(
-                'sql', format('call cpres.want(%L, $1)', good.good_id),
-                'redirect', 'referer'
-            )) as action,
-            'grid' as class
-        ),
-            xmlelement(name button, xmlattributes(
-                'params[]' as name,
-                'a little interested' as value,
-                'submit' as type
-            ), _('a little interested')),
-            xmlelement(name button, xmlattributes(
-                'params[]' as name,
-                'interested' as value,
-                'submit' as type
-            ), _('interested')),
-            xmlelement(name button, xmlattributes(
-                'params[]' as name,
-                'highly interested' as value,
-                'submit' as type
-            ), _('highly interested'))
-        )
-        where not exists (
-            select from interest
-            where good.good_id = interest.good_id
-            and interest.person_id = current_person_id()
-        )
-        and current_person_id() is not null
-        and current_person_id() <> good.giver
-    ),
-    (
-        select xmlelement(name form, xmlattributes(
-            'POST' as method,
-            url('/query', jsonb_build_object(
-                'sql', format('call cpres.unwant(%L)', good.good_id),
-                'redirect', 'referer'
-            )) as action,
-            'grid' as class
-        ),
-            xmlelement(name input, xmlattributes(
-                'submit' as type,
-                'destructive' as class,
-                format('return confirm(%L)', _('Are you sure?')) as onclick,
-                _('Not interested anymore') as value
-            ))
-        )
-        where exists (
-            select from interest
-            where good.good_id = interest.good_id
-            and interest.person_id = current_person_id()
-        )
-        and current_person_id() is not null
-        and current_person_id() <> good.giver
-    )
-)::text, good.location, 0, good.good_id, good.receiver
+    interest_control(good, interest)
+)::text, (good).location, 0, (good).good_id, (good).receiver
 from base good;
 
 grant select on table "good_detail" to person;
@@ -277,8 +309,7 @@ result (html, good_id) as (
                 ),
                 xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/query' as action,
-                    'grid' as class
+                    '/query' as action
                 ),
                     xmlelement(name input, xmlattributes(
                         'hidden' as type,
@@ -311,7 +342,6 @@ result (html, good_id) as (
         ), '')),
         xmlelement(name article, xmlattributes('card' as class),
             xmlelement(name form, xmlattributes(
-                'grid' as class,
                 'POST' as method,
                 '/query' as action,
                 'multipart/form-data' as enctype
@@ -349,8 +379,7 @@ result (html, good_id) as (
         ),
         xmlelement(name form, xmlattributes(
             'POST' as method,
-            '/query' as action,
-            'grid' as class
+            '/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -426,6 +455,9 @@ html (html) as (
                 xmlelement(name article, xmlattributes('card' as class),
                     xmlelement(name div, xmlattributes('inline' as class),
                         xmlelement(name h4, format(_('%s is %s'), receiver.name, _(interest.level))),
+                        case when interest.price is not null then
+                            xmlelement(name div, format(_('For %s€'), interest.price))
+                        end,
                         case when receiver.phone is not null then
                             xmlconcat(xmlelement(name a, xmlattributes(
                                 format('tel:%s', receiver.phone) as href,
@@ -455,8 +487,7 @@ html (html) as (
                         'POST' as method,
                         url('/query', jsonb_build_object(
                             'redirect', 'referer'
-                        )) as action,
-                        'grid' as class
+                        )) as action
                     ),
                         xmlelement(name input, xmlattributes(
                             'hidden' as type,
@@ -479,8 +510,7 @@ html (html) as (
                             url('/query', jsonb_build_object(
                                 'sql', 'call cpres.give($1::uuid, $2::uuid)',
                                 'redirect', 'referer'
-                            )) as action,
-                            'grid' as class
+                            )) as action
                         ),
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
@@ -589,8 +619,7 @@ html (html) as (
             'POST' as method,
             url('/query', jsonb_build_object(
                 'redirect', 'referer'
-            )) as action,
-            'grid' as class
+            )) as action
         ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -606,23 +635,10 @@ html (html) as (
                 _('Send message') as value
             ))
         ),
-        (
-            select xmlelement(name form, xmlattributes(
-                'POST' as method,
-                url('/query', jsonb_build_object(
-                    'sql', format('call cpres.unwant(%L)', (good).good_id),
-                    'redirect', 'referer'
-                )) as action,
-                'grid' as class
-            ),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    'destructive' as class,
-                    format('return confirm(%L)', _('Are you sure?')) as onclick,
-                    _('Not interested anymore') as value
-                ))
-            )
-        )
+        case when (interest).state in ('approved', 'given', 'late')
+            then xmltext(_('Winner'))
+            else interest_control(good, interest)
+        end
     )
     from data
 )
@@ -690,7 +706,8 @@ head (html) as (
                 'POST' as method,
                 url('/query', jsonb_build_object(
                     'redirect', url('/query', jsonb_build_object(
-                        'sql', 'table cpres.head union all table cpres."findings"'
+                        'sql', 'table cpres.head union all table cpres."findings"',
+                        'q', qs->>'q'
                     ))
                 )) as action),
                 xmlelement(name input, xmlattributes(
@@ -719,8 +736,7 @@ head (html) as (
                     'redirect', url('/query', jsonb_build_object(
                         'sql', 'table cpres.head union all table cpres."findings"'
                     ))
-                )) as action,
-                'grid' as class
+                )) as action
             ),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
@@ -885,7 +901,7 @@ union all select xmlelement(name nav,
                     'params[]' as name,
                     'inline-name' as class,
                     _('name') as placeholder,
-                    greatest(1, length(name)) as size,
+                    greatest(4, length(name)) as size,
                     true as required,
                     name as value
                 )),
@@ -894,7 +910,7 @@ union all select xmlelement(name nav,
                     'params[]' as name,
                     'inline-name' as class,
                     _('phone') as placeholder,
-                    greatest(1, length(phone)) as size,
+                    greatest(4, length(phone)) as size,
                     true as required,
                     phone as value
                 )),

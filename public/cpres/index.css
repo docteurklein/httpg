@@ -38,8 +38,6 @@ nav ul {
 }
 
 form {
-    /* width: 30em; */
-    /* max-width: 90%; */
     margin: 0 auto;
 }
 
@@ -67,7 +65,7 @@ label {
 }
 
 input,
-textarea {
+textarea, button, select {
     padding: 0.4rem;
     margin-bottom: 1rem;
     width: 90%;
@@ -78,20 +76,18 @@ textarea {
     color: var(--color-input);
 }
 
-form.grid input {
-    display: inline;
+input[type="radio"] {
     width: unset;
 }
 
-input[type="submit"] {
+input[type="submit"], button {
     display: block;
-    width: unset;
     background-color: var(--color-bg-button);
     color: var(--color-button);
 }
 
 .grid {
-    --min: 30ch;
+    --min: 40ch;
     --gap: 1rem;
 
     display: grid;
