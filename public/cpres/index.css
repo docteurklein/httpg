@@ -1,15 +1,30 @@
 :root {
-    --color-surface: black;
+    color-scheme: dark light;
+    --color-surface: dark;
     --color-on-surface: white;
-    color-scheme: light dark;
     --color-destructive: red;
+    --color-bg-input: #2b2a33;
+    --color-input: white;
+    --color-bg-button: green;
+    --color-button: white;
+
+
+    line-height: 1.5;
+    font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
 @media only screen and (prefers-color-scheme: light) {
     :root {
         --color-surface: white;
         --color-on-surface: black;
+        --color-bg-input: cornsilk;
+        --color-input: black;
     }
+}
+
+body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
 }
 
 nav ul {
@@ -35,21 +50,15 @@ form input.inline-name {
     padding: 0;
     &, &:active, &:focus {
         border: none;
+        box-shadow: none;
         outline: none;
         background: transparent;
     }
 }
 
-.inline {
+.inline > * {
     display: inline;
-}
-
-fieldset {
-  width: 100%;
-  margin: 0;
-  margin-bottom: 1rem;
-  padding: 0;
-  border: 0;
+    padding-right: 0.5rem;
 }
 
 label {
@@ -62,6 +71,11 @@ textarea {
     padding: 0.4rem;
     margin-bottom: 1rem;
     width: 90%;
+    border: none;
+    box-shadow: 0 0 0.1rem hsl(0 0% 0% / 35%);
+    border-radius: 0.2rem;
+    background-color: var(--color-bg-input);
+    color: var(--color-input);
 }
 
 form.grid input {
@@ -70,12 +84,10 @@ form.grid input {
 }
 
 input[type="submit"] {
+    display: block;
     width: unset;
-}
-
-body {
-    background-color: var(--color-surface);
-    color: var(--color-on-surface);
+    background-color: var(--color-bg-button);
+    color: var(--color-button);
 }
 
 .grid {
@@ -90,9 +102,6 @@ body {
         --min: 10ch;
     }
 
-}
-.phone * {
-    display: inline;
 }
 
 .search-results .list {
@@ -118,7 +127,7 @@ article.card {
     }
 }
 
-.destructive {
+input.destructive {
     background-color: transparent;
     border: 2px solid var(--color-destructive);
     color: var(--color-destructive);
@@ -128,10 +137,6 @@ a.whatsapp {
     font-size: 35px;
     color: green;
     padding-left: 10px;
-}
-
-a.tel {
-    padding-left: 1ch;
 }
 
 .error {

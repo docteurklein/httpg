@@ -24,11 +24,9 @@ select $html$<!DOCTYPE html>
 $html$
 union all select $html$
 <form method="POST" action="/login">
-  <fieldset class="grid">
     <input type="text" name="user" />
     <input type="password" name="password" />
     <input type="submit" value="login" />
-  </fieldset>
 </form>
 $html$
 where current_role = 'anon'

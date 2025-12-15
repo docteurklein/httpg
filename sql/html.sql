@@ -44,67 +44,69 @@ select xmlelement(name div
         )
         select xmlagg(
             xmlelement(name li,
-                xmlelement(name form, xmlattributes('POST' as method, url('/query', jsonb_build_object(
+                xmlelement(name form, xmlattributes(
+                    'POST' as method,
+                    url('/query', jsonb_build_object(
                         'field', field,
                         'rootsql', coalesce(query->'qs'->>'rootsql', query->'qs'->>'sql')
-                    )) as action),
-                    xmlelement(name fieldset, xmlattributes('grid' as class),
-                        xmlelement(name input, xmlattributes(
-                            'hidden' as type,
-                            'redirect' as name,
-                            coalesce(query->>'redirect', 'referer') as value
-                        )),
-                        xmlelement(name a, xmlattributes(
-                            href as href
-                        ), field),
-                        params.params,
-                        xmlelement(name input, xmlattributes(
-                            hypermedia.cols->(link.field)->>'html_type' as type,
-                            'params[]' as name,
-                            case query->'qs'->>'field' when field
-                                then coalesce(query->'params'->>0, value) else value
-                            end as value,
-                            case when errors ? 'error' and errors->>'field' = field
-                                then 'true'
-                            end as "aria-invalid",
-                            'invalid-helper' as "aria-describedby"
-                        )),
+                    )) as action,
+                    'grid' as class
+                ),
+                    xmlelement(name input, xmlattributes(
+                        'hidden' as type,
+                        'redirect' as name,
+                        coalesce(query->>'redirect', 'referer') as value
+                    )),
+                    xmlelement(name a, xmlattributes(
+                        href as href
+                    ), field),
+                    params.params,
+                    xmlelement(name input, xmlattributes(
+                        hypermedia.cols->(link.field)->>'html_type' as type,
+                        'params[]' as name,
+                        case query->'qs'->>'field' when field
+                            then coalesce(query->'params'->>0, value) else value
+                        end as value,
                         case when errors ? 'error' and errors->>'field' = field
-                            then xmlelement(name small, xmlattributes('invalid-helper' as id), errors->>'error')
-                        end,
-                        xmlelement(name input, xmlattributes(
-                            'hidden' as type,
-                            'on_error' as name,
-                            format($sql$
-                                select html from head
-                                union all
-                                select html(
-                                    %1$L,
-                                    to_jsonb(r),
-                                    current_setting('httpg.query', true)::jsonb,
-                                    current_setting('httpg.errors', true)::jsonb || jsonb_build_object(
-                                        'field', '%3$s'
-                                    )
+                            then 'true'
+                        end as "aria-invalid",
+                        'invalid-helper' as "aria-describedby"
+                    )),
+                    case when errors ? 'error' and errors->>'field' = field
+                        then xmlelement(name small, xmlattributes('invalid-helper' as id), errors->>'error')
+                    end,
+                    xmlelement(name input, xmlattributes(
+                        'hidden' as type,
+                        'on_error' as name,
+                        format($sql$
+                            select html from head
+                            union all
+                            select html(
+                                %1$L,
+                                to_jsonb(r),
+                                current_setting('httpg.query', true)::jsonb,
+                                current_setting('httpg.errors', true)::jsonb || jsonb_build_object(
+                                    'field', '%3$s'
                                 )
-                                from %1$s r
-                                where %2$s
-                                $sql$, fqn_, hypermedia->>'where', field
-                            ) as value
-                        )),
-                        xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
-                    ),
-                    xmlelement(name fieldset, xmlattributes('grid' as class),
-                        xmlelement(name details,
-                            xmlelement(name summary, 'sql'),
-                            xmlelement(name textarea, xmlattributes('sql' as name), format(
-                                $sql$update %s set %s = nullif($%s, '')::%s where %s$sql$,
-                                fqn_,
-                                field,
-                                jsonb_array_length(pkey) + 1,
-                                hypermedia.cols->(link.field)->>'type',
-                                hypermedia->>'where'
-                            ))
-                        )
+                            )
+                            from %1$s r
+                            where %2$s
+                            $sql$, fqn_, hypermedia->>'where', field
+                        ) as value
+                    )),
+                    xmlelement(name input, xmlattributes('submit' as type, 'update' as value))
+                ),
+                xmlelement(name fieldset, xmlattributes('grid' as class),
+                    xmlelement(name details,
+                        xmlelement(name summary, 'sql'),
+                        xmlelement(name textarea, xmlattributes('sql' as name), format(
+                            $sql$update %s set %s = nullif($%s, '')::%s where %s$sql$,
+                            fqn_,
+                            field,
+                            jsonb_array_length(pkey) + 1,
+                            hypermedia.cols->(link.field)->>'type',
+                            hypermedia->>'where'
+                        ))
                     )
                 )
             )
