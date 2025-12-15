@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir};
+use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use core::{panic};
 use std::{fs, net::TcpListener, sync::Arc};
 use std::env;
@@ -222,6 +222,7 @@ async fn main() -> Result<(), HttpgError> {
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
         // .layer(axum::middleware::from_fn(compress_stream::compress_stream)) //nope with stream
         .layer(ServiceBuilder::new().layer(cors))
+        .layer(TraceLayer::new_for_http())
     ;
 
     let addr = SocketAddr::from((

@@ -130,9 +130,9 @@ create index on translation (id, lang);
 
 create table person (
     person_id uuid primary key default gen_random_uuid(),
-    name text not null,
-    email text not null unique,
-    phone text default null unique,
+    name text not null unique check (trim(name) <> ''),
+    email text not null unique check (trim(email) <> ''),
+    phone text default null unique check (trim(phone) <> ''),
     login_challenge uuid default null
 );
 
@@ -140,8 +140,8 @@ drop type if exists public_person cascade;
 create type public_person as (name text, phone text);
 
 grant select (person_id, name, phone),
-    insert (name, email),
-    update (name, email),
+    insert (name, email, phone),
+    update (name, email, phone),
     delete on table person to person;
 
 alter table person enable row level security;
@@ -211,9 +211,10 @@ create policy "owner" on good for all to person using (true) with check (
 create table good_media (
     good_id uuid not null references good (good_id) on delete cascade,
     content bytea not null,
-    content_hash bytea primary key generated always as (sha256(content)) stored,
+    content_hash bytea not null generated always as (sha256(content)) stored,
     content_type text not null,
-    name text not null
+    name text not null,
+    primary key (good_id, content_hash)
 );
 
 grant select, insert, delete, update on table good_media to person;

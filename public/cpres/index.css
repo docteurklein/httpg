@@ -1,21 +1,127 @@
-@media (prefers-color-scheme: dark) {
+:root {
+    --color-surface: black;
+    --color-on-surface: white;
+    color-scheme: light dark;
+    --color-destructive: red;
+}
+
+@media only screen and (prefers-color-scheme: light) {
     :root {
-        color: red !important;
-        color-scheme: dark;
+        --color-surface: white;
+        --color-on-surface: black;
     }
 }
-@media (prefers-color-scheme: light) {
-    color: green !important;
-    :root {
-        color: red !important;
-        color-scheme: light;
+
+nav ul {
+    align-items: center;
+    padding: 0;
+    list-style: none;
+    & li {
+        display: inline-block;
+        margin-right: 1ch;
+    }
+}
+
+form {
+    /* width: 30em; */
+    /* max-width: 90%; */
+    margin: 0 auto;
+}
+
+form input.inline-name {
+    field-sizing: content;
+    width: auto;
+    margin: 0;
+    padding: 0;
+    &, &:active, &:focus {
+        border: none;
+        outline: none;
+        background: transparent;
+    }
+}
+
+.inline {
+    display: inline;
+}
+
+fieldset {
+  width: 100%;
+  margin: 0;
+  margin-bottom: 1rem;
+  padding: 0;
+  border: 0;
+}
+
+label {
+    margin-bottom: 0.4rem;
+    display: block;
+}
+
+input,
+textarea {
+    padding: 0.4rem;
+    margin-bottom: 1rem;
+    width: 90%;
+}
+
+form.grid input {
+    display: inline;
+    width: unset;
+}
+
+input[type="submit"] {
+    width: unset;
+}
+
+body {
+    background-color: var(--color-surface);
+    color: var(--color-on-surface);
+}
+
+.grid {
+    --min: 30ch;
+    --gap: 1rem;
+
+    display: grid;
+    grid-gap: var(--gap);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--min)), 1fr));
+
+    &.media {
+        --min: 10ch;
+    }
+
+}
+.phone * {
+    display: inline;
+}
+
+.search-results .list {
+    overflow: auto;
+    height: 90vh;
+}
+
+.search-results #map {
+    height: 90vh;
+    position: sticky;
+}
+
+
+article.card {
+    box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
+    border-radius: 0.5rem;
+    padding: 1rem;
+
+    & img, & object {
+      aspect-ratio: var(3/2);
+      object-fit: cover;
+      width: 100%;
     }
 }
 
 .destructive {
     background-color: transparent;
-    border: 3px solid var(--pico-color-red);
-    color: var(--pico-color-red);
+    border: 2px solid var(--color-destructive);
+    color: var(--color-destructive);
 }
 
 a.whatsapp {
@@ -24,7 +130,25 @@ a.whatsapp {
     padding-left: 10px;
 }
 
+a.tel {
+    padding-left: 1ch;
+}
+
+.error {
+    background-color: red;
+}
+
 .flashes {
+    & .red {
+        background-color: red;
+    }
+    & .green {
+        background-color: green;
+    }
+    & .yellow {
+        background-color: yellow;
+        color: black;
+    }
     max-height: 20vh;
     overflow: scroll;
 
@@ -41,46 +165,13 @@ a.whatsapp {
    background-color: yellow;
 }
 
-@media (min-width: 768px) {
-    .grid.good {
-        grid-template-columns: repeat(auto-fit,minmax(33%, 1fr));
-    }
-}
-
-.grid.interest {
-    grid-template-columns: repeat(auto-fit,minmax(33%, 1fr));
-}
-
-@media (min-width: 960px) {
-}
-
-.grid.search-results .list {
-    overflow: auto;
-    height: 90vh;
-}
-
-#map {
-    height: 90vh;
-    position: sticky;
-}
-
-form input.inline-name {
-    field-sizing: content;
-    width: auto;
-    &, &:active, &:focus {
-        border: none;
-        outline: none;
-        background: transparent;
-    }
-}
-
-form.inline {
-    display: inline;
-}
-
 .messages {
-    max-height: 50vh;
+    max-height: 30vh;
     overflow: scroll;
+
+    & pre {
+        white-space: pre-wrap;
+    }
 }
 
 .leaflet-popup-content {

@@ -24,11 +24,11 @@ insert into cpres.translation (id, lang, text) values
 , (' from %s', 'fr', ' de %s')
 , ('%s is %s', 'fr', '%s est %s')
 , ('Send message', 'fr', 'Envoyer')
-, ('New good', 'fr', 'Créér un nouveau bien')
+, ('New good', 'fr', 'Créer un nouveau bien')
 , ('Existing goods', 'fr', 'Mes biens')
 , ('Submit', 'fr', 'Enregistrer')
 , ('Add file', 'fr', 'Ajouter ce fichier')
-, ('Remove this media', 'fr', 'Supprimer ce fichier')
+, ('X', 'fr', 'X')
 , ('Remove this good', 'fr', 'Supprimer ce bien')
 , ('Are you sure?', 'fr', 'En êtes-vous sûr?')
 , ('Give to %s', 'fr', 'Donner à %s')
@@ -39,6 +39,14 @@ insert into cpres.translation (id, lang, text) values
 , ('new row for relation "good" violates check constraint "good_title_check"', 'fr', 'Le titre doit être non-vide')
 , ('Saved successfully', 'fr', 'Changement enregistré')
 , ('https://wa.me/%s?text=About giving %s', 'fr', 'https://wa.me/%s?text=A propos du don %s')
+, ('duplicate key value violates unique constraint "person_phone_key"', 'fr', 'Une autre personne utilise déjà ce numéro')
+, ('duplicate key value violates unique constraint "person_name_key"', 'fr', 'Une autre personne utilise déjà ce nom')
+, ('duplicate key value violates unique constraint "person_phone_key"', 'en', 'Another person already uses this number')
+, ('duplicate key value violates unique constraint "person_name_key"', 'en', 'Another person already uses this name')
+, ('new row for relation "person" violates check constraint "person_name_check"', 'en', 'Connot have an empty name')
+, ('new row for relation "person" violates check constraint "person_name_check"', 'fr', 'Le nom ne doit pas être vide')
+, ('new row for relation "person" violates check constraint "person_phone_check"', 'en', 'Connot have an empty phone')
+, ('new row for relation "person" violates check constraint "person_phone_check"', 'fr', 'Le numéro ne doit pas être vide')
 on conflict (id, lang) do update
     set text = excluded.text
 ;

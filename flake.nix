@@ -5,10 +5,7 @@
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:NixOS/nixpkgs";
     devenv.url = "github:cachix/devenv";
-    crate2nix = {
-      url = "github:nix-community/crate2nix";
-      inputs.nixpkgs.follows = "nixpkgs";
-    };
+    crane.url = "github:ipetkov/crane";
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -20,7 +17,7 @@
     extra-substituters = "https://devenv.cachix.org";
   };
 
-  outputs = inputs@{ flake-parts, crate2nix, ... }:
+  outputs = inputs@{ flake-parts, crane, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       imports = [
         inputs.devenv.flakeModule
@@ -29,21 +26,26 @@
 
       perSystem = { config, self', inputs', pkgs, system, ... }: let
         n2c = inputs.nix2container.packages.x86_64-linux;
-        cargoNix = inputs.crate2nix.tools.${system}.appliedCargoNix {
-          name = "httpg";
-          src = with pkgs; (lib.cleanSourceWith {
-            filter = path: type:
-              let path' = (lib.strings.removePrefix (builtins.toString ./.) path);
-              in
-                builtins.match "^/src/?.*" path' != null
-                || builtins.match "^/Cargo\..*" path' != null
-            ;
-            src = ./.;
-          });
+        craneLib = crane.mkLib pkgs;
+        crate =  {
+          src = craneLib.cleanCargoSource ./.;
+
+          doCheck = false;
+
+          nativeBuildInputs = with pkgs; [
+            mold-wrapped clang pkg-config openssl.dev
+          ];
+          buildInputs = with pkgs; [
+            pkg-config openssl.dev
+          ];
+          env = {
+            RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
+          };
         };
       in {
 
-        packages.httpg = cargoNix.rootCrate.build;
+        packages.httpg-dev = craneLib.buildPackage (crate // { CARGO_PROFILE = "dev"; });
+        packages.httpg = craneLib.buildPackage (crate // { CARGO_PROFILE = "release"; });
 
         packages.default = self'.packages.httpg;
 
@@ -57,7 +59,6 @@
             paths = with pkgs.dockerTools; [
               ./.
               binSh
-              # pkgs.coreutils
               caCertificates
             ];
             pathsToLink = ["/public" "/" "/etc"];

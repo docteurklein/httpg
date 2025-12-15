@@ -11,6 +11,10 @@ navigator.geolocation.getCurrentPosition(async pos => {
   });
 });
 
+[...document.querySelectorAll('.inline-name')].forEach(e => e.addEventListener('input', (e => {
+  e.target.size = Math.max(1, e.target.value.length);
+})));
+
 [...document.querySelectorAll('.messages')].forEach(e => {
   e.scrollTop = e.scrollHeight;
 });

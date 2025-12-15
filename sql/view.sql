@@ -67,7 +67,7 @@ select xmlelement(name article, xmlattributes(
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
-        select xmlagg(xmlelement(name article,
+        select xmlagg(xmlelement(name article, xmlattributes('card' as class),
             (
                 with url (url) as (
                     select url('/query', jsonb_build_object(
@@ -187,7 +187,7 @@ select xmlelement(name form, xmlattributes(
     ),
     case when good_form.id = query.good_id then
         xmlelement(name article, xmlattributes(
-            'pico-background-red error' as class
+            'card error' as class
         ), coalesce(_(errors->>'error'), ''))
     end,
     xmlelement(name fieldset, xmlattributes(null as class),
@@ -243,7 +243,7 @@ as with query (q) as (
     select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
 ),
 result (html, good_id) as (
-    select xmlelement(name article,
+    select xmlelement(name article, xmlattributes('card' as class),
         case when receiver.name is not null then xmltext(format(_('Given to %s'), receiver.name)) end,
         good_form(
             good_id::text,
@@ -254,7 +254,7 @@ result (html, good_id) as (
             format('update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L', good_id)
         ),
         xmlelement(name div, xmlattributes('grid media' as class), coalesce((
-            select xmlagg(xmlelement(name article,
+            select xmlagg(xmlelement(name article, xmlattributes('card' as class),
                 (
                     with url (url) as (
                         select url('/query', jsonb_build_object(
@@ -275,7 +275,8 @@ result (html, good_id) as (
                 ),
                 xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/query' as action
+                    '/query' as action,
+                    'grid' as class
                 ),
                     xmlelement(name input, xmlattributes(
                         'hidden' as type,
@@ -299,47 +300,50 @@ result (html, good_id) as (
                         'submit' as type,
                         'destructive' as class,
                         format('return confirm(%L)', _('Are you sure?')) as onclick,
-                        _('Remove this media') as value
+                        _('X') as value
                     ))
                 )
             ))
             from good_media
             where good_id = good.good_id
         ), '')),
-        xmlelement(name form, xmlattributes(
-            'POST' as method,
-            '/query' as action,
-            'multipart/form-data' as enctype
-        ),
-            xmlelement(name input, xmlattributes(
-                'hidden' as type,
-                'redirect' as name,
-                'referer' as value
-            )),
-            xmlelement(name input, xmlattributes(
-                'hidden' as type,
-                'sql' as name,
-                format($$
-                    with f (f) as (
-                        select $1::bytea[]
-                    )
-                    insert into cpres.good_media (good_id, name, content, content_type)
-                    select %L, convert_from(f[3], 'UTF8'), f[1], convert_from(f[2], 'UTF8')
-                    from f
-                    where f[1] <> ''
-                    on conflict (content_hash) do nothing
-                $$, good_id) as value
-            )),
-            xmlelement(name input, xmlattributes(
-                'file' as type,
-                'file' as name,
-                true as required
-                -- true as multiple
-            )),
-            xmlelement(name input, xmlattributes(
-                'submit' as type,
-                _('Add file') as value
-            ))
+        xmlelement(name article, xmlattributes('card' as class),
+            xmlelement(name form, xmlattributes(
+                'grid' as class,
+                'POST' as method,
+                '/query' as action,
+                'multipart/form-data' as enctype
+            ),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'redirect' as name,
+                    'referer' as value
+                )),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'sql' as name,
+                    format($$
+                        with f (f) as (
+                            select $1::bytea[]
+                        )
+                        insert into cpres.good_media (good_id, name, content, content_type)
+                        select %L, convert_from(f[3], 'UTF8'), f[1], convert_from(f[2], 'UTF8')
+                        from f
+                        where f[1] <> ''
+                        on conflict (good_id, content_hash) do nothing
+                    $$, good_id) as value
+                )),
+                xmlelement(name input, xmlattributes(
+                    'file' as type,
+                    'file' as name,
+                    true as required
+                    -- true as multiple
+                )),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    _('Add file') as value
+                ))
+            )
         ),
         xmlelement(name form, xmlattributes(
             'POST' as method,
@@ -408,7 +412,7 @@ as with data (good_id, title) as (
         coalesce(good.updated_at, good.created_at) desc
 ),
 html (html) as (
-    select xmlelement(name article,
+    select xmlelement(name article, xmlattributes('card' as class),
         xmlelement(name h2, xmlelement(name a, xmlattributes(
             url('/query', jsonb_build_object(
                 'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
@@ -416,62 +420,80 @@ html (html) as (
             )) as href
         ), title)),
         xmlelement(name div, xmlattributes('grid interest' as class), (
-            select xmlagg(xmlelement(name article,
-            xmlelement(name div, format(_('%s is %s'), receiver.name, _(interest.level))),
-            (
-                with message as (
-                    select *
-                    from message
-                    where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
-                    order by at asc
+            select xmlagg(
+                xmlelement(name article, xmlattributes('card' as class),
+                    xmlelement(name div, xmlattributes('phone' as class),
+                        xmlelement(name h4, format(_('%s is %s'), receiver.name, _(interest.level))),
+                        case when receiver.phone is not null then
+                            xmlconcat(xmlelement(name a, xmlattributes(
+                                format('tel:%s', receiver.phone) as href,
+                                'tel' as class
+                            ), receiver.phone),
+                            xmlelement(name a, xmlattributes(
+                                format(_('https://wa.me/%s?text=About receiving %s'), receiver.phone, title) as href,
+                                'whatsapp' as class
+                            ), '✆'))
+                        end
+                    ),
+                    (
+                        with message as (
+                            select *
+                            from message
+                            where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
+                            order by at asc
+                        )
+                        select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
+                            format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
+                            xmlelement(name pre, content)
+                        )), ''))
+                        from message
+                        join person author on (author.person_id = message.author)
+                    ),
+                    xmlelement(name form, xmlattributes(
+                        'POST' as method,
+                        url('/query', jsonb_build_object(
+                            'redirect', 'referer'
+                        )) as action),
+                        xmlelement(name input, xmlattributes(
+                            'hidden' as type,
+                            'sql' as name,
+                            format('insert into cpres.message (good_id, person_id, content) values(%L, %L, $1)', interest.good_id, interest.person_id) as value
+                        )),
+                        xmlelement(name textarea, xmlattributes(
+                            'params[]' as name,
+                            'message' as placeholder
+                        ), ''),
+                        xmlelement(name input, xmlattributes(
+                            'submit' as type,
+                            _('Send message') as value
+                        ))
+                    ),
+                    case when interest.state in ('approved', 'late', 'given')
+                    then xmltext(_('Given'))
+                    else xmlelement(name form, xmlattributes(
+                        'POST' as method,
+                        url('/query', jsonb_build_object(
+                            'sql', 'call cpres.give($1::uuid, $2::uuid)',
+                            'redirect', 'referer'
+                        )) as action
+                    ),
+                        xmlelement(name input, xmlattributes(
+                            'hidden' as type,
+                            'params[]' as name,
+                            interest.good_id as value
+                        )),
+                        xmlelement(name input, xmlattributes(
+                            'hidden' as type,
+                            'params[]' as name,
+                            interest.person_id as value
+                        )),
+                        xmlelement(name input, xmlattributes(
+                            'submit' as type,
+                            format(_('Give to %s'), receiver.name) as value
+                        ))
+                    ) end
                 )
-                select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
-                    format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))) || content
-                )), ''))
-                from message
-                join person author on (author.person_id = message.author)
-            ),
-            xmlelement(name form, xmlattributes(
-                'POST' as method,
-                url('/query', jsonb_build_object(
-                    'redirect', 'referer'
-                )) as action),
-                xmlelement(name input, xmlattributes(
-                    'hidden' as type,
-                    'sql' as name,
-                    format('insert into cpres.message (good_id, person_id, content) values(%L, %L, $1)', interest.good_id, interest.person_id) as value
-                )),
-                xmlelement(name textarea, xmlattributes(
-                    'params[]' as name,
-                    'message' as placeholder
-                ), ''),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    _('Send message') as value
-                ))
-            ),
-            xmlelement(name form, xmlattributes(
-                'POST' as method,
-                url('/query', jsonb_build_object(
-                    'sql', 'call cpres.give($1::uuid, $2::uuid)',
-                    'redirect', 'referer'
-                )) as action
-            ),
-                xmlelement(name input, xmlattributes(
-                    'hidden' as type,
-                    'params[]' as name,
-                    interest.good_id as value
-                )),
-                xmlelement(name input, xmlattributes(
-                    'hidden' as type,
-                    'params[]' as name,
-                    interest.person_id as value
-                )),
-                xmlelement(name input, xmlattributes(
-                    'submit' as type,
-                    format(_('Give to %s'), receiver.name) as value
-                ))
-            )))
+            )
             from interest
             join person receiver on (interest.person_id = receiver.person_id)
             left join person_detail receiver_detail on (receiver.person_id = receiver_detail.person_id)
@@ -500,7 +522,7 @@ as with data (good, giver, receiver_detail, interest) as (
         coalesce(good.updated_at, good.created_at) desc
 ),
 html (html) as (
-    select xmlelement(name article, xmlattributes('interest' as class),
+    select xmlelement(name article, xmlattributes('interest card' as class),
         case when (interest).origin = 'automatic' then
             xmlelement(name div,
                 xmlelement(name a, xmlattributes(
@@ -512,19 +534,28 @@ html (html) as (
                 ), format('found via search: %s', (interest).query))
             )
         end,
-        xmlelement(name a, xmlattributes(
+        xmlelement(name h2, xmlelement(name a, xmlattributes(
             (good).title as id,
             url('/query', jsonb_build_object(
                 'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
                 'params[]', (good).good_id
             )) as href
-        ), (good).title),
-        xmlelement(name div, format(_('By %s'), (giver).name), case when (giver).phone is not null then
-            xmlelement(name a, xmlattributes(
-                format(_('https://wa.me/%s?text=About giving %s'), (giver).phone, (good).title) as href,
-                'whatsapp' as class
-            ), '✆')
-        end),
+        ), (good).title)),
+        xmlelement(name div,
+            xmlelement(name span, format(_('By %s'), (giver).name)),
+            case when (giver).phone is not null then
+                xmlconcat(
+                    xmlelement(name a, xmlattributes(
+                        format('tel:%s', (giver).phone) as href,
+                        'tel' as class
+                    ), (giver).phone),
+                    xmlelement(name a, xmlattributes(
+                        format(_('https://wa.me/%s?text=About giving %s'), (giver).phone, (good).title) as href,
+                        'whatsapp' as class
+                    ), '✆')
+                )
+            end
+        ),
         (
             with message as (
                 select *
@@ -699,7 +730,7 @@ result (good_id, rerank_distance) as (
     limit 100
 ),
 list (html) as (
-    select xmlelement(name article, d.html::xml)
+    select xmlelement(name article, xmlattributes('card' as class), d.html::xml)
     from result
     join "good_detail" d using (good_id)
     where rerank_distance < 0
@@ -728,10 +759,9 @@ select $html$<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8" />
+    <title>cpres</title>
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.green.min.css" />
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.colors.min.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
@@ -777,10 +807,17 @@ union all (
             order by at desc
             limit 10
         )
+        union all (
+            with error (error) as (
+                select nullif(current_setting('httpg.errors', true), '')::jsonb
+            )
+            select 'red', _(error->>'error')::xml
+            from error
+            where error is not null
+        )
     )
     select xmlelement(name div, xmlattributes('flashes' as class), coalesce(xmlagg(xmlelement(name article, xmlattributes(
-        true as open,
-        'pico-background-' || color as class
+        color || ' card' as class
     ), m))), '')::text
     from m
 )
@@ -816,8 +853,9 @@ union all select xmlelement(name nav,
         auth (html) as (
             select xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/query?redirect=referer' as action,
-                    'inline' as class
+                    '/query?redirect=/' as action,
+                    'inline' as class,
+                    'this.submit()' as onchange
             ),
                 _('Welcome '),
                 xmlelement(name input, xmlattributes(
@@ -825,13 +863,28 @@ union all select xmlelement(name nav,
                     'params[]' as name,
                     'inline-name' as class,
                     _('name') as placeholder,
+                    greatest(1, length(name)) as size,
                     true as required,
                     name as value
                 )),
                 xmlelement(name input, xmlattributes(
+                    'tel' as type,
+                    'params[]' as name,
+                    'inline-name' as class,
+                    _('phone') as placeholder,
+                    greatest(1, length(phone)) as size,
+                    true as required,
+                    phone as value
+                )),
+                xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'sql' as name,
-                    'update cpres.person set name = $1 where person_id = current_person_id()' as value
+                    $$update cpres.person set name = $1, phone = nullif($2, '') where person_id = current_person_id()$$ as value
+                )),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'on_error' as name,
+                    'table cpres.head union all table cpres."findings"' as value
                 ))
             )
             from person
