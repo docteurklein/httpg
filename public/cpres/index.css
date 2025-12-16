@@ -112,6 +112,10 @@ input[type="submit"], button {
 .search-results .list {
     overflow: auto;
     max-height: 90vh;
+
+    & .leaflet-container {
+        display: none;
+    }
 }
 
 .search-results #map {
