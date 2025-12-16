@@ -162,7 +162,8 @@ select xmlelement(name article, xmlattributes(
                     select url('/query', jsonb_build_object(
                         'sql', 'select content from good_media where content_hash = $1::text::bytea',
                         'params[]', content_hash,
-                        'accept', content_type
+                        'accept', content_type,
+                        'cache_control', 'max-age=604800 immutable'
                     ))
                 )
                 select case
@@ -296,7 +297,8 @@ result (html, good_id) as (
                         select url('/query', jsonb_build_object(
                             'sql', 'select content from good_media where content_hash = $1::text::bytea',
                             'params[]', content_hash,
-                            'accept', content_type
+                            'accept', content_type,
+                            'cache_control', 'max-age=604800 immutable'
                         ))
                     )
                     select case

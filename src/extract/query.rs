@@ -109,6 +109,8 @@ pub struct QueryPart {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
@@ -131,6 +133,8 @@ pub struct Query {
     pub accept: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept_language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -277,6 +281,8 @@ where
         let accept = headers.get(ACCEPT).and_then(|value| value.to_str().ok());
         let accept = qs.accept.to_owned().or(body.accept.to_owned()).or(accept.map(ToString::to_string));
 
+        let cache_control = qs.cache_control.to_owned().or(body.cache_control.to_owned());
+
         let use_primary = qs.use_primary.or(body.use_primary);
 
         Ok(Self {
@@ -290,6 +296,7 @@ where
             redirect: redirect.map(str::to_string),
             accept,
             accept_language,
+            cache_control,
             on_error,
             use_primary,
         })

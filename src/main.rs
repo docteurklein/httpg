@@ -9,7 +9,7 @@ use axum_macros::debug_handler;
 use conf::Conf;
 
 use config::ConfigError;
-use cookie::time::{Duration, OffsetDateTime, format_description::modifier::OffsetSecond};
+use cookie::time::{Duration, OffsetDateTime};
 use futures::{TryStreamExt};
 use lettre::{
     message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,

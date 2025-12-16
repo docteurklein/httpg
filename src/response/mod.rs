@@ -1,5 +1,5 @@
 
-use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode}, response::{Html, IntoResponse, Redirect, Response}};
+use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
@@ -56,7 +56,7 @@ impl IntoResponse for HttpResult {
             Some(a) if a.starts_with("application/json") => {
                 match self.rows {
                     Rows::Stream(rows) =>  (
-                        [("content-type",a)],
+                        [("content-type", a)],
                         Body::from_stream(rows
                             .map(|row| Bytes::from(row.unwrap().get::<usize, String>(0) + "\n"))
                             .map(Ok::<_, axum::Error>)
@@ -96,15 +96,23 @@ impl IntoResponse for HttpResult {
             },
             a => {
                 match self.rows {
-                    Rows::Stream(rows) => (
-                        [("content-type", a.unwrap_or("application/octet-stream".to_string()))],
-                        Body::from_stream(rows
-                            .map(|row|
-                                row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
-                            )
-                            .map(Ok::<_, axum::Error>)
-                        ),
-                    ).into_response(),
+                    Rows::Stream(rows) => {
+                        let mut headers = HeaderMap::new();
+                        headers.insert(CONTENT_TYPE, a.unwrap_or("application/octet-stream".to_string()).parse().unwrap());
+                        if let Some(cache_control) = self.query.cache_control {
+                            headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
+                        }
+
+                        (
+                            headers,
+                            Body::from_stream(rows
+                                .map(|row|
+                                    row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
+                                )
+                                .map(Ok::<_, axum::Error>)
+                            ),
+                        ).into_response()
+                    },
 
                     Rows::Vec(rows) => Body::from(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
