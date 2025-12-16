@@ -45,3 +45,17 @@ jobs:
 
       - name: 'deploy url'
         run: 'echo "${{ steps.deploy.outputs.url }}"'
+  migrate:
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 'migrate'
+        run: 'psql "$PG_URI" -c "select 1"'
+        env:
+          PG_URI: ${{ secrets.PG_URI }}
