@@ -25,6 +25,15 @@
 body {
     background-color: var(--color-surface);
     color: var(--color-on-surface);
+
+    & a {
+        color: var(--color-bg-button);
+    }
+
+}
+
+* {
+    box-sizing: border-box;
 }
 
 nav ul {
@@ -68,7 +77,7 @@ input,
 textarea, button, select {
     padding: 0.4rem;
     margin-bottom: 1rem;
-    width: 90%;
+    width: 100%;
     border: none;
     box-shadow: 0 0 0.1rem hsl(0 0% 0% / 35%);
     border-radius: 0.2rem;
@@ -97,7 +106,6 @@ input[type="submit"], button {
     &.media {
         --min: 10ch;
     }
-
 }
 
 .search-results .list {
@@ -106,10 +114,30 @@ input[type="submit"], button {
 }
 
 .search-results #map {
-    height: 90vh;
+    height: 80vh;
     position: sticky;
 }
 
+#map:empty {
+    display: none;
+}
+
+input[is="cpres-map"] {
+    & + .leaflet-container {
+        margin-bottom: 1em;
+        height: 20vh;
+    }
+}
+
+.leaflet-popup-content {
+    overflow: scroll;
+    & img {
+        display: inline;
+    }
+    & .leaflet-container {
+        display: none;
+    }
+}
 
 article.card {
     box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
@@ -117,7 +145,7 @@ article.card {
     padding: 1rem;
 
     & img, & object {
-      aspect-ratio: var(3/2);
+      aspect-ratio: 3/2;
       object-fit: cover;
       width: 100%;
     }
@@ -146,6 +174,9 @@ a.whatsapp {
     & .green {
         background-color: green;
     }
+    & .blue {
+        background-color: lightblue;
+    }
     & .yellow {
         background-color: yellow;
         color: black;
@@ -172,12 +203,5 @@ a.whatsapp {
 
     & pre {
         white-space: pre-wrap;
-    }
-}
-
-.leaflet-popup-content {
-    overflow: scroll;
-    & img {
-        display: inline;
     }
 }

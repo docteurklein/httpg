@@ -132,7 +132,7 @@ set search_path to cpres, pg_catalog
 begin atomic
     with login_person as (
         insert into person (name, email, login_challenge)
-        values ($1, $1, gen_random_uuid())
+        values (replace($1, '@', '-at-'), $1, gen_random_uuid())
         on conflict (email) do update
             set login_challenge = excluded.login_challenge
         returning *

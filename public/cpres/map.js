@@ -24,12 +24,12 @@ new GeoJSON(data, {
 		markers.addLayer(layer);
   }
 });
-map.setZoom(12);
 map.addLayer(markers);
 
 map.locate({
   setView: true
 });
+map.setZoom(12);
 
 const tiles = new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,

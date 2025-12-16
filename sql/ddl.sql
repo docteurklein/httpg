@@ -130,8 +130,8 @@ create index on translation (id, lang);
 
 create table person (
     person_id uuid primary key default gen_random_uuid(),
-    name text not null unique check (trim(name) <> ''),
-    email text not null unique check (trim(email) <> ''),
+    name text not null unique check (trim(name) <> '' and position('@' in name) = 0),
+    email text not null unique check (trim(email) <> '' and position('@' in email) <> 0),
     phone text default null unique check (trim(phone) <> ''),
     login_challenge uuid default null
 );

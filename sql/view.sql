@@ -129,16 +129,16 @@ end;
 
 create or replace view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
-as with receiver (location) as (
+as with looker (location) as (
     select location from person_detail where person_id = current_person_id() limit 1
 ),
 base as (
     select good, interest, giver.name as giver_name,
-        case when receiver.location is not null then (good.location <@> receiver.location) * 1.609347 end bird_distance_km
+        case when looker.location is not null then (good.location <@> looker.location) * 1.609347 end bird_distance_km
     from good
     left join interest on (interest.good_id, interest.person_id) = (good.good_id, current_person_id())
     join person giver on (good.giver = giver.person_id)
-    left join receiver on true
+    left join looker on true
 )
 select xmlelement(name article, xmlattributes(
     geojson((good).location) as "data-geojson"
@@ -154,6 +154,7 @@ select xmlelement(name article, xmlattributes(
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
+    xmlelement(name input, xmlattributes('hidden' as type, 'cpres-map' as is, (good).location as value)),
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),
             (
@@ -254,6 +255,7 @@ select xmlelement(name form, xmlattributes(
     ), coalesce(params->>1, '')),
     xmlelement(name input, xmlattributes(
         'text' as type,
+        'cpres-map' as is,
         'params[2]' as name,
         _('location: (lat,lng)') as placeholder,
         'location' as class,
@@ -656,9 +658,7 @@ as with q (qs) as (
 ),
 map (html) as (
     select $html$
-        <div id="map-container">
-            <div id="map"></div>
-        </div>
+        <div id="map"></div>
         <script type="module" src="/cpres/map.js"></script>
     $html$::xml
 ),
@@ -676,9 +676,9 @@ head (html) as (
             from search
         ))),
         xmlelement(name form, xmlattributes(
+            'grid' as class,
             'GET' as method,
-            '/query' as action,
-            'group' as role
+            '/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'q' as name,
@@ -767,7 +767,7 @@ result (good_id, rerank_distance) as (
     end
     from q, good
     order by case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
-    limit 100
+    limit 500
 ),
 list (html) as (
     select xmlelement(name article, xmlattributes('card' as class), d.html::xml)
@@ -782,8 +782,8 @@ list (html) as (
 )
 select html::text from head
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
-    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html) from list)),
-    xmlelement(name div, (select html from map where exists (select from list limit 1)))
+    xmlelement(name div, (select html from map where exists (select from list limit 1))),
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html) from list))
 )::text
 union all select _('Nothing yet.') where not exists (select from list limit 1)
 ;
@@ -805,13 +805,19 @@ select $html$<!DOCTYPE html>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css" crossorigin="" />
+    <script type="module" src="/cpres.js"></script>
+    <script type="module" src="/cpres/webcomponent/map.js"></script>
 </head>
-<body>
-  <script type="module" src="/cpres.js"></script>
-  <main class="container-fluid">
 $html$
 union all (
+    select xmlelement(name article, xmlattributes('flashes' as class),
+        xmlelement(name article, xmlattributes('blue card' as class), _('Authentifiez-vous ci dessous pour pouvoir ajouter des annonces, mémoriser vos recherches, ...'))
+    )::text
+    where current_person_id() is null
+)
+union all (
     select xmlelement(name form, xmlattributes(
+        'grid' as class,
         'POST' as method,
         url('/email', jsonb_build_object(
             'redirect', url('/', jsonb_build_object(
@@ -905,6 +911,7 @@ union all select xmlelement(name nav,
                     true as required,
                     name as value
                 )),
+                ' ',
                 xmlelement(name input, xmlattributes(
                     'tel' as type,
                     'params[]' as name,

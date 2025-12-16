@@ -5,6 +5,7 @@ insert into cpres.translation (id, lang, text) values
 , ('a little interested', 'fr', 'un peu')
 , ('interested', 'fr', 'beaucoup')
 , ('highly interested', 'fr', 'passionnément')
+, ('%s is %s', 'fr', '%s est %s interessé')
 , ('Not interested anymore', 'fr', 'Plus intéressé')
 , ('Interested', 'fr', 'Intéressé')
 , ('Send login challenge', 'fr', 'Envoyer un lien de login')
@@ -23,7 +24,6 @@ insert into cpres.translation (id, lang, text) values
 , ('Create alert', 'fr', 'Créer une alerte')
 , ('Remove alert', 'fr', 'Supprimer cette alerte')
 , (' from %s', 'fr', ' de %s')
-, ('%s is %s', 'fr', '%s est %s')
 , ('Send message', 'fr', 'Envoyer')
 , ('New good', 'fr', 'Créer un nouveau bien')
 , ('Existing goods', 'fr', 'Mes biens')
@@ -44,10 +44,11 @@ insert into cpres.translation (id, lang, text) values
 , ('duplicate key value violates unique constraint "person_name_key"', 'fr', 'Une autre personne utilise déjà ce nom')
 , ('duplicate key value violates unique constraint "person_phone_key"', 'en', 'Another person already uses this number')
 , ('duplicate key value violates unique constraint "person_name_key"', 'en', 'Another person already uses this name')
-, ('new row for relation "person" violates check constraint "person_name_check"', 'en', 'Connot have an empty name')
-, ('new row for relation "person" violates check constraint "person_name_check"', 'fr', 'Le nom ne doit pas être vide')
+, ('new row for relation "person" violates check constraint "person_name_check"', 'en', 'Connot have an invalid name: no @, not empty')
+, ('new row for relation "person" violates check constraint "person_name_check"', 'fr', 'Ce nom est invalide (pas de @, pas vide)')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'en', 'Connot have an empty phone')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'fr', 'Le numéro ne doit pas être vide')
+, ('current bid at %s€', 'fr', 'Certains offrent %s€')
 on conflict (id, lang) do update
     set text = excluded.text
 ;

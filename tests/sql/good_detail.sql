@@ -31,25 +31,17 @@ assert (
 ), 'div tags';
 
 assert (
-    with html (html) as (
-        select html from cpres.head
-        union all select '</main></body></html>'
-    )
     select xpath_exists('//script', (string_agg(html, ''))::xml)
-    from html
+    from cpres.head
 ), 'has script tag';
 
 -- raise info '%', (select current_person_id());
 assert (
 -- raise info '%', (
-    with html (html) as (
-        select html from cpres.head
-        union all select '</main></body></html>'
-    )
     select
         -- string_agg(html, '')
         xpath_exists('//text()[contains(., "Welcome user1!")]', (string_agg(html, ' '))::xml)
-    from html
+    from cpres.head
 )
 , 'has welcome message';
 
@@ -57,14 +49,10 @@ set local "httpg.query" to '{"accept_language": "fr-FR,"}';
 
 assert (
 -- raise info '%', (
-    with html (html) as (
-        select html from cpres.head
-        union all select '</main></body></html>'
-    )
     select
         -- string_agg(html, '')
         xpath_exists('//text()[contains(., "Bienvenue user1!")]', (string_agg(html, ' '))::xml)
-    from html
+    from cpres.head
 )
 , 'has welcome message';
 

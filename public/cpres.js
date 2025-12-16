@@ -4,18 +4,18 @@
 navigator.geolocation.getCurrentPosition(async pos => {
   let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
 
-  [...document.querySelectorAll('input.location')].forEach(i => {
+  Array.from(document.querySelectorAll('input.location')).forEach(i => {
     if (!i.value) {
       i.value = location
     }
   });
 });
 
-[...document.querySelectorAll('.inline-name')].forEach(e => e.addEventListener('input', (e => {
+Array.from(document.querySelectorAll('.inline-name')).forEach(e => e.addEventListener('input', (e => {
   e.target.size = Math.max(4, e.target.value.length);
 })));
 
-[...document.querySelectorAll('.messages')].forEach(e => {
+Array.from(document.querySelectorAll('.messages')).forEach(e => {
   e.scrollTop = e.scrollHeight;
 });
 
