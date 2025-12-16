@@ -19,6 +19,8 @@ insert into cpres.translation (id, lang, text) values
 , ('By %s', 'fr', 'Par %s')
 , ('%s at %s: ', 'fr', '%s le %s: ')
 , ('HH24:MI, TMDay DD/MM', 'fr', 'TMDay DD/MM à HH24:MI')
+, ('at %s', 'fr', 'le %s')
+, ('TMDay DD/MM', 'fr', 'TMDay DD/MM')
 , ('query', 'fr', 'Requête')
 , ('title', 'fr', 'Titre')
 , ('Create alert', 'fr', 'Créer une alerte')

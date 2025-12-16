@@ -75,7 +75,9 @@ begin atomic;
                 null as class
             ),
                 max_interest_price(good),
+                _('propose '),
                 xmlelement(name input, xmlattributes(
+                    'price' as class,
                     'number' as type,
                     0 as min,
                     'any' as step,
@@ -150,6 +152,8 @@ select xmlelement(name article, xmlattributes(
         )) as href
     ), (good).title)),
     xmlelement(name span, format(_('By %s'), giver_name)),
+    ', ',
+    xmlelement(name span, xmlattributes((good).created_at as title), format(_('at %s'), to_char((good).created_at, _('TMDay DD/MM')))),
     xmlelement(name p, (good).description),
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))

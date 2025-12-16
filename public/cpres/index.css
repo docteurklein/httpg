@@ -96,6 +96,10 @@ input[type="submit"], button {
     color: var(--color-button);
 }
 
+input.price {
+    width: unset;
+}
+
 .grid {
     --min: 40ch;
     --gap: 1rem;
