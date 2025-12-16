@@ -110,7 +110,7 @@ input[type="submit"], button {
 
 .search-results .list {
     overflow: auto;
-    height: 90vh;
+    max-height: 90vh;
 }
 
 .search-results #map {

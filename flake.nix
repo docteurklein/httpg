@@ -82,14 +82,14 @@
           env = {
             PG_DBNAME = "httpg";
             PG_USER = "httpg";
-            HTTPG_LOGIN_QUERY="select cpres.login()";
+            HTTPG_LOGIN_QUERY="select login()";
             HTTPG_PRIVATE_KEY = "private-key-file";
             HTTPG_ANON_ROLE = "person";
-            HTTPG_INDEX_SQL = "table cpres.head union all table cpres.findings";
+            HTTPG_INDEX_SQL = "table head union all table findings";
             RUST_LOG = "tokio_postgres=debug,httpg=debug,axum=debug";
           };
           
-          processes.postgres.process-compose.readiness_probe.exec.command = with pkgs.lib; mkForce "pg_isready -d template1";
+          processes.postgres.process-compose.readiness_probe.exec.command = with pkgs.lib; mkForce "true"; #"pg_isready -d template1";
 
           services.postgres = {
             enable = true;
@@ -122,8 +122,8 @@
               log_filename = "postgresql.log";
               log_destination = "stderr";
               logging_collector = true;
-              # log_connections = true;
-              # log_disconnections = true;
+              log_connections = true;
+              log_disconnections = true;
               lc_messages = "en_US.UTF-8";
             };
           };

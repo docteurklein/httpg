@@ -6,9 +6,9 @@ raise info $it$
 it renders detailed html of a good
 $it$;
 
-set local search_path to cpres, pg_catalog, public;
+set local search_path to desired_cpres, pg_catalog, public;
 
-insert into cpres.person (person_id, name, email, login_challenge) values (default, 'user1', '', default)
+insert into desired_cpres.person (person_id, name, email, login_challenge) values (default, 'user1', '', default)
     returning person_id into current_person_id;
 
 perform set_config('cpres.person_id', current_person_id::text, true);
@@ -27,12 +27,12 @@ set local role to person;
 
 assert (
     select every(xpath_exists('/div', html::xml))
-    from cpres.good_detail
+    from desired_cpres.good_detail
 ), 'div tags';
 
 assert (
     select xpath_exists('//script', (string_agg(html, ''))::xml)
-    from cpres.head
+    from desired_cpres.head
 ), 'has script tag';
 
 -- raise info '%', (select current_person_id());
@@ -41,7 +41,7 @@ assert (
     select
         -- string_agg(html, '')
         xpath_exists('//text()[contains(., "Welcome user1!")]', (string_agg(html, ' '))::xml)
-    from cpres.head
+    from desired_cpres.head
 )
 , 'has welcome message';
 
@@ -52,7 +52,7 @@ assert (
     select
         -- string_agg(html, '')
         xpath_exists('//text()[contains(., "Bienvenue user1!")]', (string_agg(html, ' '))::xml)
-    from cpres.head
+    from desired_cpres.head
 )
 , 'has welcome message';
 

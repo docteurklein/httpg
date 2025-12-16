@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
-insert into cpres.translation (id, lang, text) values
+insert into desired_cpres.translation (id, lang, text) values
   ('Welcome ', 'fr', 'Bienvenue ')
 , ('a little interested', 'fr', 'un peu')
 , ('interested', 'fr', 'beaucoup')

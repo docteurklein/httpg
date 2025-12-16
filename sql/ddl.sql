@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
-set local search_path to cpres, pg_catalog, public;
+set local search_path to desired_cpres, pg_catalog, public;
 
 set neon.allow_unstable_extensions='true';
 -- drop extension if exists vector cascade;
@@ -20,9 +20,9 @@ create extension if not exists rag_jina_reranker_v1_tiny_en cascade;
 create extension if not exists http schema public;
 \endif
 
-create schema cpres;
+create schema desired_cpres;
 
-create function cpres.embed_passage(content text)
+create function desired_cpres.embed_passage(content text)
 returns vector
 immutable parallel safe -- leakproof
 security definer
@@ -35,7 +35,7 @@ begin atomic
     \endif
 end;
 
-create function cpres.embed_query(query text)
+create function desired_cpres.embed_query(query text)
 returns vector
 immutable parallel safe -- leakproof
 security definer
@@ -48,7 +48,7 @@ begin atomic
     \endif
 end;
 
-create function cpres.rerank_distance(query text, content text)
+create function desired_cpres.rerank_distance(query text, content text)
 returns real
 immutable parallel safe -- leakproof
 security definer
@@ -76,14 +76,16 @@ end $$;
 
 grant person to httpg;
 
-alter role person set search_path to cpres;
-alter role httpg set search_path to cpres;
+grant usage on schema desired_cpres, url, pg_catalog to httpg;
+grant usage on schema desired_cpres, url, pg_catalog to person;
+alter role person set search_path to desired_cpres, url, pg_catalog;
+alter role httpg set search_path to desired_cpres, url, pg_catalog;
 
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;
 revoke usage on language plv8 from public, httpg, person;
 
-grant usage, create on schema cpres to person;
+grant usage, create on schema desired_cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
 -- grant execute on all functions in schema pg_catalog to person;
 
@@ -96,7 +98,7 @@ create extension if not exists vector schema public;
 -- volatile strict parallel safe -- leakproof
 -- language plpgsql
 -- security invoker
--- set search_path to cpres, pg_catalog
+-- set search_path to desired_cpres, pg_catalog
 -- as $$
 -- declare person_id uuid;
 -- begin
@@ -112,7 +114,7 @@ create or replace function current_person_id() returns uuid
 volatile strict parallel safe -- leakproof
 language sql
 security invoker
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
     select nullif(current_setting('cpres.person_id', true), '')::uuid;
 end;
@@ -135,9 +137,6 @@ create table person (
     phone text default null unique check (trim(phone) <> ''),
     login_challenge uuid default null
 );
-
-drop type if exists public_person cascade;
-create type public_person as (name text, phone text);
 
 grant select (person_id, name, phone),
     insert (name, email, phone),

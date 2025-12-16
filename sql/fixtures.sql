@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
-set local search_path to cpres, pg_catalog;
+set local search_path to desired_cpres, pg_catalog;
 
 truncate person, good, person_detail cascade;
 

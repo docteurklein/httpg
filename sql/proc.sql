@@ -1,11 +1,11 @@
 \set ON_ERROR_STOP on
 
-set local search_path to cpres, pg_catalog, public;
+set local search_path to desired_cpres, url, pg_catalog, public;
 
 create or replace function compare_search() returns trigger
 volatile strict parallel safe -- leakproof
 security definer
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, url, pg_catalog
 as $$
 begin
     with result (good_id, person_id, interest, query, rerank_distance) as (
@@ -32,7 +32,7 @@ execute procedure compare_search();
 create or replace procedure give(_good_id uuid, _receiver uuid)
 language sql
 security invoker
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
 with interest as (
     update interest
@@ -50,7 +50,7 @@ grant execute on procedure give to person;
 create or replace procedure want(_good_id uuid, level interest_level, price_ text)
 language sql
 security invoker
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
     insert into interest (good_id, person_id, origin, level, price)
     values (_good_id, current_person_id(), 'manual', level, nullif(price_, '')::numeric)
@@ -65,7 +65,7 @@ grant execute on procedure want(uuid, interest_level, text) to person;
 create or replace procedure unwant(_good_id uuid)
 language sql
 security invoker
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
     delete from interest where (good_id, person_id) = (_good_id, current_person_id());
 end;
@@ -76,12 +76,12 @@ grant execute on procedure unwant to person;
 create or replace procedure mark_late_interests()
 language sql
 security invoker
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 set parallel_setup_cost to 0
 set parallel_tuple_cost to 0
 begin atomic
     -- with late as (
-        update cpres.interest
+        update desired_cpres.interest
         set
             state = 'late',
             at = now()
@@ -108,7 +108,7 @@ create or replace function login() returns setof text
 volatile strict parallel safe -- leakproof
 language sql
 security definer
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
     with "user" as (
         update person
@@ -128,7 +128,7 @@ returns table ("from" text, "to" text, subject text, plain text, html text)
 language sql
 volatile parallel safe not leakproof
 security definer
-set search_path to cpres, pg_catalog
+set search_path to desired_cpres, pg_catalog
 begin atomic
     with login_person as (
         insert into person (name, email, login_challenge)
