@@ -1,12 +1,12 @@
 \set ON_ERROR_STOP on
 
-set local search_path to desired_cpres, url, pg_catalog, public;
+set local search_path to cpres, url, pg_catalog, public;
 
-create or replace function desired_cpres._(id_ text, lang_ text = null)
+create or replace function cpres._(id_ text, lang_ text = null)
 returns text
 immutable parallel safe -- leakproof
 security definer
-set search_path to desired_cpres, pg_catalog
+set search_path to cpres, pg_catalog
 language sql
 begin atomic
     select coalesce(
@@ -26,7 +26,7 @@ end;
 create or replace function geojson(point point, props jsonb = '{}') returns jsonb
 language sql 
 immutable strict parallel safe -- leakproof
-set search_path to desired_cpres, pg_catalog
+set search_path to cpres, pg_catalog
 begin atomic;
     select jsonb_build_object(
         'type', 'Feature',
@@ -43,7 +43,7 @@ grant execute on function geojson to person;
 create or replace function max_interest_price(good good) returns xml
 language sql
 immutable strict parallel safe -- leakproof
-set search_path to desired_cpres, pg_catalog
+set search_path to cpres, pg_catalog
 security definer
 begin atomic;
     with max(price) as (
@@ -62,7 +62,7 @@ end;
 create or replace function interest_control(good good, interest interest) returns xml
 language sql
 immutable parallel safe -- leakproof
-set search_path to desired_cpres, pg_catalog
+set search_path to cpres, pg_catalog
 begin atomic;
     select xmlconcat(
         (

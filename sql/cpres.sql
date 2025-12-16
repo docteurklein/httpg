@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
-set local search_path to desired_cpres, pg_catalog, public;
+set local search_path to cpres, pg_catalog, public;
 
 \ir url.sql
 \ir ddl.sql
