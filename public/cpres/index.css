@@ -7,7 +7,7 @@
     --color-input: white;
     --color-bg-button: green;
     --color-button: white;
-
+    --color-link: #72ff72;
 
     line-height: 1.5;
     font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
@@ -19,18 +19,19 @@
         --color-on-surface: black;
         --color-bg-input: cornsilk;
         --color-input: black;
+        --color-link: green;
     }
 }
 
 body {
     background-color: var(--color-surface);
     color: var(--color-on-surface);
-
-    & a {
-        color: var(--color-bg-button);
-    }
-
 }
+
+a {
+    color: var(--color-link);
+}
+
 
 * {
     box-sizing: border-box;
