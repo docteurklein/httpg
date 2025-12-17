@@ -50,7 +50,8 @@ insert into cpres.translation (id, lang, text) values
 , ('new row for relation "person" violates check constraint "person_name_check"', 'fr', 'Ce nom est invalide (pas de @, pas vide)')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'en', 'Connot have an empty phone')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'fr', 'Le numéro ne doit pas être vide')
-, ('current bid at %s€', 'fr', 'Certains offrent %s€')
+, ('current bid at %s€', 'fr', 'D''autres offrent %s€.')
+, ('propose ', 'fr', 'Proposer ')
 on conflict (id, lang) do update
     set text = excluded.text
 ;

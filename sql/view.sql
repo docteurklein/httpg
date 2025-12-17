@@ -158,7 +158,7 @@ select xmlelement(name article, xmlattributes(
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
-    xmlelement(name input, xmlattributes('hidden' as type, 'cpres-map' as is, (good).location as value)),
+    xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value)),
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),
             (
@@ -184,7 +184,7 @@ select xmlelement(name article, xmlattributes(
         from good_media
         where good_id = (good).good_id
     ), '')),
-    interest_control(good, interest)
+    xmlelement(name p, interest_control(good, interest))
 )::text, (good).location, 0, (good).good_id, (good).receiver
 from base good;
 
@@ -673,7 +673,10 @@ map (html) as (
 ),
 head (html) as (
     select xmlelement(name div,
-        xmlelement(name h2, _('Search')),
+        xmlelement(name h2, xmlattributes('hashover showhover' as class),  _('Search')),
+        xmlelement(name div, xmlattributes('flashes onhover' as class),
+            xmlelement(name article, xmlattributes('blue card' as class), _('findings.help'))
+        ),
         xmlelement(name nav, xmlelement(name ul, (
             select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
                 url('/query', jsonb_build_object(
@@ -819,14 +822,8 @@ select $html$<!DOCTYPE html>
 </head>
 $html$
 union all (
-    select xmlelement(name article, xmlattributes('flashes' as class),
-        xmlelement(name article, xmlattributes('blue card' as class), _('Authentifiez-vous ci dessous pour pouvoir ajouter des annonces, mémoriser vos recherches, ...'))
-    )::text
-    where current_person_id() is null
-)
-union all (
     select xmlelement(name form, xmlattributes(
-        'grid' as class,
+        'grid hashover' as class,
         'POST' as method,
         url('/email', jsonb_build_object(
             'redirect', url('/', jsonb_build_object(
@@ -843,36 +840,10 @@ union all (
     where current_person_id() is null
 )
 union all (
-    with m (color, m) as (
-        select m.key, xmltext(m.value) from q, jsonb_each_text(q->'qs'->'flash') m
-        union all (
-            select 'yellow', xmlelement(name a, xmlattributes(
-                (url('/query', jsonb_build_object(
-                    'sql', 'table head union all table "receiving activity"'
-                )) || '#' || good.title) as href
-            ), format(_('%s is waiting for you on %s'), giver.name, good.title))
-            from interest
-            join good using (good_id)
-            join person giver on (giver.person_id = good.giver)
-            where at < now() - interval '3 days'
-            and state in ('approved', 'late')
-            and interest.person_id = current_person_id()
-            order by at desc
-            limit 10
-        )
-        union all (
-            with error (error) as (
-                select nullif(current_setting('httpg.errors', true), '')::jsonb
-            )
-            select 'red', _(error->>'error')::xml
-            from error
-            where error is not null
-        )
-    )
-    select xmlelement(name div, xmlattributes('flashes' as class), coalesce(xmlagg(xmlelement(name article, xmlattributes(
-        color || ' card' as class
-    ), m))), '')::text
-    from m
+    select xmlelement(name div, xmlattributes('flashes onhover' as class),
+        xmlelement(name article, xmlattributes('blue card' as class), _('Authentifiez-vous pour pouvoir ajouter des annonces, mémoriser vos recherches et discuter de vos dons et demandes.'))
+    )::text
+    where current_person_id() is null
 )
 union all (
     select $html$
@@ -888,22 +859,42 @@ union all (
 union all select xmlelement(name nav,
     xmlelement(name ul, (
         with menu (name, sql, visible) as ( values
-            (_('Search'), 'table head union all table "findings"', true),
-            (_('Giving activity'), 'table head union all table "giving activity"', current_person_id() is not null),
-            (_('Receiving activity'), 'table head union all table "receiving activity"', current_person_id() is not null),
-            (_('my goods'), 'table head union all select html from "good admin"', current_person_id() is not null),
-            (_('About'), 'table head union all select html::text from about', true)
+            (
+                'Search',
+                'table head union all table "findings"',
+                true
+            ),
+            (
+                'Giving activity',
+                'table head union all table "giving activity"',
+                current_person_id() is not null
+            ),
+            (
+                'Receiving activity',
+                'table head union all table "receiving activity"',
+                current_person_id() is not null
+            ),
+            (
+                'my goods',
+                'table head union all select html from "good admin"',
+                current_person_id() is not null
+            ),
+            (
+                'About',
+                'table head union all select html::text from about',
+                true
+            )
         ),
         item (html) as (
             select xmlelement(name a, xmlattributes(
                 url('/query', jsonb_build_object(
                     'sql', sql
                 )) as href
-            ), name)
+            ), _(name))
             from menu, q
             where visible
         ),
-        auth (html) as (
+        profile (html) as (
             select xmlelement(name form, xmlattributes(
                     'POST' as method,
                     '/query?redirect=/' as action,
@@ -945,7 +936,7 @@ union all select xmlelement(name nav,
             where person_id = current_person_id()
         ),
         "all" (html) as (
-            select html from auth
+            select html from profile
             union all
             select html from item
             union all 
@@ -957,6 +948,38 @@ union all select xmlelement(name nav,
         limit 1
     ))
 )::text
+union all (
+    with m (color, m) as (
+        select m.key, xmltext(m.value) from q, jsonb_each_text(q->'qs'->'flash') m
+        union all (
+            select 'yellow', xmlelement(name a, xmlattributes(
+                (url('/query', jsonb_build_object(
+                    'sql', 'table head union all table "receiving activity"'
+                )) || '#' || good.title) as href
+            ), format(_('%s is waiting for you on %s'), giver.name, good.title))
+            from interest
+            join good using (good_id)
+            join person giver on (giver.person_id = good.giver)
+            where at < now() - interval '3 days'
+            and state in ('approved', 'late')
+            and interest.person_id = current_person_id()
+            order by at desc
+            limit 10
+        )
+        union all (
+            with error (error) as (
+                select nullif(current_setting('httpg.errors', true), '')::jsonb
+            )
+            select 'red', _(error->>'error')::xml
+            from error
+            where error is not null
+        )
+    )
+    select xmlelement(name div, xmlattributes('flashes' as class), coalesce(xmlagg(xmlelement(name article, xmlattributes(
+        color || ' card' as class
+    ), m))), '')::text
+    from m
+)
 ;
 grant select on table head to person;
 

@@ -154,9 +154,9 @@ article.card {
     padding: 1rem;
 
     & img, & object {
+      width: 100%;
       aspect-ratio: 3/2;
       object-fit: cover;
-      width: 100%;
     }
 }
 
@@ -177,6 +177,10 @@ a.whatsapp {
 }
 
 .flashes {
+    max-height: 20vh;
+    overflow: scroll;
+    margin-bottom: 1em;
+
     & .red {
         background-color: red;
     }
@@ -185,16 +189,38 @@ a.whatsapp {
     }
     & .blue {
         background-color: lightblue;
+        color: black;
     }
     & .yellow {
         background-color: yellow;
         color: black;
     }
-    max-height: 20vh;
-    overflow: scroll;
 
     &:empty {
         display: none;
+    }
+}
+
+.onhover {
+    display: none;
+    position: absolute;
+}
+
+@media(hover: none) {
+    .showhover::after {
+        content: ' ?';
+        font-size: 80%;
+        vertical-align: super;
+    }
+}
+
+.hashover:hover {
+    & ~ .onhover, & .onhover {
+        display: block;
+
+        &:has(:empty) {
+            display: none;
+        }
     }
 }
 

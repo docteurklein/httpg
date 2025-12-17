@@ -15,31 +15,33 @@ class IsMap extends HTMLInputElement {
   connectedCallback() {
     this.div = document.createElement('div');
 
-
     this.type = 'hidden';
 
     this.insertAdjacentElement('afterend', this.div);
     this.map = new Map(this.div);
     this.map.setZoom(1);
 
-    // this.map.locate({
-    //   setView: true
-    // });
+    if (!this.value) {
+      this.map.locate({
+        setView: true
+      });
+    }
 
     let pos = [0, 0];
     let matches = this.value.match(/\((.*),(.*)\)/);
-    console.log(matches);
     if (matches && matches.length > 1) {
       pos = [matches[1], matches[2]];
       this.map.setZoom(9);
     }
     this.map.setView(pos);
     this.marker = new Marker(pos).addTo(this.map);
-    this.map.on('click', e => {
-      this.marker.setLatLng([e.latlng.lat, e.latlng.lng]);
-      console.log(e);
-      this.value = `(${e.latlng.lat},${e.latlng.lng})`;
-    });
+
+    if (!this.readOnly) {
+      this.map.on('click', e => {
+        this.marker.setLatLng([e.latlng.lat, e.latlng.lng]);
+        this.value = `(${e.latlng.lat},${e.latlng.lng})`;
+      });
+    }
 
     const tiles = new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
