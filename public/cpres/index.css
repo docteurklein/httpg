@@ -13,6 +13,10 @@
     font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
 }
 
+* {
+    box-sizing: border-box;
+}
+
 @media only screen and (prefers-color-scheme: light) {
     :root {
         --color-surface: white;
@@ -30,11 +34,6 @@ body {
 
 a {
     color: var(--color-link);
-}
-
-
-* {
-    box-sizing: border-box;
 }
 
 nav ul {
@@ -204,6 +203,7 @@ a.whatsapp {
 .onhover {
     display: none;
     position: absolute;
+    z-index: 2;
 }
 
 @media(hover: none) {

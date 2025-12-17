@@ -7,7 +7,7 @@ use tokio_stream::StreamExt;
 
 use crate::{HttpgError, extract::query::Query};
 
-// pub mod compress_stream;
+pub mod compress_stream;
 
 pub enum Rows {
     Stream(RowStream),

@@ -32,7 +32,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 use crate::{extract::query::{Query}, response::Raw};
-// use crate::response::compress_stream;
+use crate::response::compress_stream;
 
 mod extract;
 mod sql;
@@ -220,7 +220,7 @@ async fn main() -> Result<(), HttpgError> {
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
-        // .layer(axum::middleware::from_fn(compress_stream::compress_stream)) //nope with stream
+        .layer(axum::middleware::from_fn(compress_stream::compress_stream))
         .layer(ServiceBuilder::new().layer(cors))
         .layer(TraceLayer::new_for_http())
     ;
