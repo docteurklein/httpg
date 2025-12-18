@@ -466,6 +466,7 @@ html (html) as (
                         case when interest.price is not null then
                             xmlelement(name div, format(_('For %s€'), interest.price))
                         end,
+                        ' ',
                         case when receiver.phone is not null then
                             xmlconcat(xmlelement(name a, xmlattributes(
                                 format('tel:%s', receiver.phone) as href,
@@ -473,7 +474,8 @@ html (html) as (
                             ), receiver.phone),
                             xmlelement(name a, xmlattributes(
                                 format(_('https://wa.me/%s?text=About receiving %s'), receiver.phone, title) as href,
-                                'whatsapp' as class
+                                'whatsapp' as class,
+                                'whatsapp' as title
                             ), '✆'))
                         end
                     ),
@@ -599,6 +601,7 @@ html (html) as (
                 )) as href
             ), (good).title)),
             xmlelement(name span, format(_('By %s'), (giver).name)),
+            ' ',
             case when (giver).phone is not null then
                 xmlconcat(
                     xmlelement(name a, xmlattributes(
@@ -607,7 +610,8 @@ html (html) as (
                     ), (giver).phone),
                     xmlelement(name a, xmlattributes(
                         format(_('https://wa.me/%s?text=About giving %s'), (giver).phone, (good).title) as href,
-                        'whatsapp' as class
+                        'whatsapp' as class,
+                        'whatsapp' as title
                     ), '✆')
                 )
             end
