@@ -1,6 +1,6 @@
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
-        StatusCode, header::SET_COOKIE,
+        Method, StatusCode, header::SET_COOKIE,
     }, response::{Html, IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
@@ -72,6 +72,8 @@ pub enum HttpgError {
     EmailAddress(#[from] lettre::address::AddressError),
     #[error("email: {0:#?}")]
     Smtp(#[from] lettre::transport::smtp::Error),
+    #[error("http: {0:#?}")]
+    HttpClient(#[from] reqwest::Error),
     #[error("invalid text param")]
     InvalidTextParam,
 }
@@ -217,6 +219,7 @@ async fn main() -> Result<(), HttpgError> {
         .route("/query", get(stream_query).post(post_query))
         .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
+        .route("/http", get(http).post(http))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
@@ -314,7 +317,7 @@ async fn login(
         [(SET_COOKIE, Cookie::build(("auth", builder.build(&root)?.to_base64()?))
             .http_only(true)
             .secure(false) // @TODO
-            .same_site(cookie::SameSite::Lax) // Strict breaks sending cookie after email challenge redirect
+            .same_site(cookie::SameSite::Lax) // Strict breaks setting cookie after cross-origin redirect
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
@@ -421,6 +424,49 @@ async fn email(
             .body(row.get::<&str, &str>("html").to_string())
         ?;
         mailer.send(email).await?;
+        Ok(())
+    }).await?;
+
+    tx.commit().await?;
+
+    Ok(query.redirect
+        .map(|r| Redirect::to(&r).into_response())
+        .unwrap_or(NoContent.into_response())
+    )
+}
+
+#[debug_handler]
+async fn http(
+    State(AppState {write_pool, config: HttpgConfig { anon_role, ..}, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+
+    let mut conn = write_pool.get().await?;
+    let mut tx = conn.build_transaction()
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await
+    ?;
+
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
+    }).collect();
+
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+
+    let client = reqwest::Client::new();
+    rows.err_into::<HttpgError>().try_for_each(async |row| {
+        let builder = match row.get::<&str, &str>("method") {
+            "POST" =>  client.post(row.get::<&str, &str>("url")),
+            _ =>  client.get(row.get::<&str, &str>("url")),
+        };
+        let res = builder
+            .header("TTL", 2419200)
+            .send()
+        .await?;
+        dbg!(&res);
         Ok(())
     }).await?;
 

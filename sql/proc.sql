@@ -123,7 +123,7 @@ end;
 
 grant execute on function login to person;
 
-create or replace function send_login_email(email_ text, location_ text)
+create or replace function send_login_email(email_ text, location_ text, push_endpoint_ text)
 returns table ("from" text, "to" text, subject text, plain text, html text)
 language sql
 volatile parallel safe not leakproof
@@ -138,12 +138,12 @@ begin atomic
         returning *
     ),
     person_detail as (
-        insert into person_detail (person_id, location)
-        select person_id, nullif(location_, '')::point
+        insert into person_detail (person_id, location, push_endpoint)
+        select person_id, nullif(location_, '')::point, nullif(push_endpoint_, '')
         from login_person
-        where location_ <> ''
         on conflict (person_id) do update
-            set location = excluded.location
+            set location = excluded.location,
+                push_endpoint = excluded.push_endpoint
     ),
     url as (
         select login_person.*, url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
@@ -176,4 +176,18 @@ begin atomic
 end;
 
 grant execute on function send_login_email(text, text) to person;
+
+create or replace function web_push(person_id_ uuid)
+returns table (method text, url text)
+language sql
+volatile parallel safe not leakproof
+security definer
+set search_path to cpres, pg_catalog
+begin atomic
+    select 'POST' method, push_endpoint url
+    from person_detail
+    where person_id = person_id_;
+end;
+
+grant execute on function web_push(uuid) to person;
 

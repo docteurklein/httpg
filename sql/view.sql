@@ -519,7 +519,11 @@ html (html) as (
                             'POST' as method,
                             url('/query', jsonb_build_object(
                                 'sql', 'call give($1::uuid, $2::uuid)',
-                                'redirect', 'referer'
+                                'redirect', url('/http', jsonb_build_object(
+                                    'sql', $$select * from web_push($1::uuid)$$,
+                                    'params[]', interest.person_id,
+                                    'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
+                                ))
                             )) as action
                         ),
                             xmlelement(name input, xmlattributes(
@@ -835,9 +839,10 @@ union all (
             ))
         )) as action
     ),
-        xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from send_login_email($1, $2)' as value)),
+        xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from send_login_email($1, $2, $3)' as value)),
         xmlelement(name input, xmlattributes('email' as type, 'params[]' as name, 'email' as placeholder, true as required)),
         xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class)),
+        xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'push_endpoint' as class)),
         xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
     )::text
     from q
