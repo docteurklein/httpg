@@ -960,7 +960,7 @@ union all (
             from interest
             join good using (good_id)
             join person giver on (giver.person_id = good.giver)
-            where at < now() - interval '3 days'
+            where at < now()
             and state in ('approved', 'late')
             and interest.person_id = current_person_id()
             order by at desc
