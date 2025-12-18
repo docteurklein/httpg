@@ -5,20 +5,24 @@
 set search_path to cpres;
 set lock_timeout to '50ms';
 
-select (
+select coalesce((select (
     position('POSITION' in pg_get_constraintdef(oid, true)) = 0
     or not convalidated
-) as needs_work
+)
 from pg_constraint
 where conname = 'person_name_check'
+and connamespace = to_regnamespace('cpres')
+limit 1), true) needs_work;
 \gset
+
+select :'needs_work';
 
 \if :needs_work
     begin;
-    alter table person drop constraint person_name_check;
+    alter table person drop constraint if exists person_name_check;
     alter table person add constraint person_name_check  check (trim(name) <> '' and position('@' in name) = 0) not valid;
 
-    alter table person drop constraint person_email_check;
+    alter table person drop constraint if exists person_email_check;
     alter table person add constraint person_email_check  check (trim(email) <> '' and position('@' in email) <> 0) not valid;
     commit;
 \endif
