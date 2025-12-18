@@ -18,7 +18,6 @@ jobs:
           use-flakehub: false
       - uses: 'google-github-actions/auth@v2'
         with:
-          # workload_identity_provider: 'projects/278563930937/locations/global/workloadIdentityPools/github/providers/my-repo'
           credentials_json: '${{ secrets.GCP_SA }}'
           project_id: 'gieze-421708'
       - uses: 'google-github-actions/setup-gcloud@v3'
@@ -60,6 +59,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: 'migrate'
-        run: 'psql "$PG_URI" -c "select 1"'
+        run: |
+          psql "$PG_URI" $(find migration/cpres -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
         env:
           PG_URI: ${{ secrets.PG_URI }}
