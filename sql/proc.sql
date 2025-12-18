@@ -184,9 +184,10 @@ volatile parallel safe not leakproof
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
-    select 'POST' method, push_endpoint url
+    select 'POST', push_endpoint
     from person_detail
-    where person_id = person_id_;
+    where person_id = person_id_
+    and push_endpoint is not null;
 end;
 
 grant execute on function web_push(uuid) to person;

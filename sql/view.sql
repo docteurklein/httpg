@@ -555,7 +555,6 @@ html (html) as (
             )
             from interest
             join person receiver on (interest.person_id = receiver.person_id)
-            left join person_detail receiver_detail on (receiver.person_id = receiver_detail.person_id)
             where data.good_id = interest.good_id
         ))
     )
@@ -840,7 +839,13 @@ union all (
         )) as action
     ),
         xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from send_login_email($1, $2, $3)' as value)),
-        xmlelement(name input, xmlattributes('email' as type, 'params[]' as name, 'email' as placeholder, true as required)),
+        xmlelement(name input, xmlattributes(
+            'email' as type,
+            'params[]' as name,
+            'email' as placeholder,
+            true as required,
+            'Notification.requestPermission()' as onfocus
+        )),
         xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class)),
         xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'push_endpoint' as class)),
         xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
