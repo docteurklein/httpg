@@ -58,14 +58,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: 'migrate'
+        run: |
+          psql "$PG_URI" -v ON_ERROR_STOP=1 $(find migration/cpres -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+        env:
+          PG_URI: ${{ secrets.PG_URI }}
       - name: 'deploy stateless sql'
         run: |
           psql "$PG_URI" --single-transaction -f sql/url.sql -f sql/proc.sql -f sql/view.sql -f sql/translation.sql
         env:
           PG_URI: ${{ secrets.PG_URI }}
 
-      - name: 'migrate'
-        run: |
-          psql "$PG_URI" $(find migration/cpres -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
-        env:
-          PG_URI: ${{ secrets.PG_URI }}

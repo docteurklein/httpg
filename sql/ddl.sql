@@ -151,7 +151,7 @@ create policy "owner" on person for all to person using (true) with check (
 create table person_detail (
     person_id uuid primary key default current_person_id(),
     location point default null,
-    push_endpoint text default null
+    push_endpoint jsonb default null
 );
 
 grant select (person_id, location, push_endpoint),

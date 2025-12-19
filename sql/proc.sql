@@ -139,7 +139,7 @@ begin atomic
     ),
     person_detail as (
         insert into person_detail (person_id, location, push_endpoint)
-        select person_id, nullif(location_, '')::point, nullif(push_endpoint_, '')
+        select person_id, nullif(location_, '')::point, nullif(push_endpoint_, '')::jsonb
         from login_person
         on conflict (person_id) do update
             set location = excluded.location,
@@ -175,20 +175,20 @@ begin atomic
     from url;
 end;
 
-grant execute on function send_login_email(text, text) to person;
+grant execute on function send_login_email(text, text, text) to person;
 
-create or replace function web_push(person_id_ uuid)
-returns table (method text, url text)
+create or replace function web_push(person_id_ uuid, content text)
+returns table (endpoint text, p256dh text, auth text, content bytea)
 language sql
 volatile parallel safe not leakproof
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
-    select 'POST', push_endpoint
+    select push_endpoint->>'endpoint', push_endpoint->'keys'->>'p256dh', push_endpoint->'keys'->>'auth', content::bytea
     from person_detail
     where person_id = person_id_
     and push_endpoint is not null;
 end;
 
-grant execute on function web_push(uuid) to person;
+grant execute on function web_push(uuid, text) to person;
 

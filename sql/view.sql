@@ -519,8 +519,8 @@ html (html) as (
                             'POST' as method,
                             url('/query', jsonb_build_object(
                                 'sql', 'call give($1::uuid, $2::uuid)',
-                                'redirect', url('/http', jsonb_build_object(
-                                    'sql', $$select * from web_push($1::uuid)$$,
+                                'redirect', url('/webpush', jsonb_build_object(
+                                    'sql', $$select * from web_push($1::uuid, 'hello!')$$,
                                     'params[]', interest.person_id,
                                     'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
                                 ))
@@ -824,7 +824,7 @@ select $html$<!DOCTYPE html>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
-    <script type="module" src="/cpres.js?v=1"></script>
+    <script type="module" src="/cpres.js?v=2"></script>
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
 </head>
 $html$

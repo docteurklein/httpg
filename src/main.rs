@@ -21,8 +21,9 @@ use serde_json::json;
 use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
+use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use core::{panic};
-use std::{fs, net::TcpListener, sync::Arc};
+use std::{fs::{self, File}, net::TcpListener, sync::Arc};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel, NoTls};
@@ -74,6 +75,12 @@ pub enum HttpgError {
     Smtp(#[from] lettre::transport::smtp::Error),
     #[error("http: {0:#?}")]
     HttpClient(#[from] reqwest::Error),
+    #[error("hex: {0:#?}")]
+    Hex(#[from] hex::FromHexError),
+    #[error("web_push: {0:#?}")]
+    WebPush(#[from] web_push::WebPushError),
+    #[error("no webpush private key")]
+    WebPushPrivateKey,
     #[error("invalid text param")]
     InvalidTextParam,
 }
@@ -140,8 +147,10 @@ struct TlsConfig {
 #[derive(Clone, Conf)]
 #[conf(env_prefix="HTTPG_")]
 struct HttpgConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
     private_key: Vec<u8>,
+    #[conf(env)]
+    webpush_private_key_file: Option<String>,
     #[conf(env)]
     smtp_sender: String,
     #[conf(env)]
@@ -220,6 +229,7 @@ async fn main() -> Result<(), HttpgError> {
         .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
         .route("/http", get(http).post(http))
+        .route("/webpush", get(web_push).post(web_push))
         .fallback_service(ServeDir::new("public"))
         .with_state(state)
         .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
@@ -467,6 +477,59 @@ async fn http(
             .send()
         .await?;
         dbg!(&res);
+        Ok(())
+    }).await?;
+
+    tx.commit().await?;
+
+    Ok(query.redirect
+        .map(|r| Redirect::to(&r).into_response())
+        .unwrap_or(NoContent.into_response())
+    )
+}
+
+#[debug_handler]
+async fn web_push(
+    State(AppState {write_pool, config: HttpgConfig { anon_role, webpush_private_key_file, ..}, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+
+    let mut conn = write_pool.get().await?;
+    let mut tx = conn.build_transaction()
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await
+    ?;
+
+    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
+    }).collect();
+
+    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+
+    let client = HyperWebPushClient::new();
+
+    let private_key = File::open(webpush_private_key_file.to_owned().ok_or(HttpgError::WebPushPrivateKey)?)?;
+
+    rows.err_into::<HttpgError>().try_for_each(async |row| {
+        let subscription_info = SubscriptionInfo::new(
+            row.get::<&str, &str>("endpoint"),
+            row.get::<&str, &str>("p256dh"),
+            row.get::<&str, &str>("auth"),
+        );
+
+        let mut builder = WebPushMessageBuilder::new(&subscription_info);
+        builder.set_payload(ContentEncoding::Aes128Gcm, row.get::<&str, &[u8]>("content"));
+
+        let sig_builder = VapidSignatureBuilder::from_pem(
+            &private_key,
+            &subscription_info
+        )?.build()?;
+
+        builder.set_vapid_signature(sig_builder);
+        client.send(builder.build()?).await?;
         Ok(())
     }).await?;
 

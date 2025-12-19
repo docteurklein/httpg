@@ -41,4 +41,5 @@ flate2 = "^1"
 conf = "^0"
 thiserror = "^2"
 lettre = { version = "^0", features = ["smtp-transport", "tokio1", "tokio1-native-tls"] }
-reqwest = "0.12.26"
+reqwest = "^0"
+web-push = { version = "^0", features = ["hyper-client"] }

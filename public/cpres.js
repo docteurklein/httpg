@@ -1,4 +1,4 @@
-navigator.serviceWorker.register('/service-worker.js?v=1');
+navigator.serviceWorker.register('/service-worker.js?v=3');
 
 function store_push_endpoint() {
   navigator.serviceWorker.ready
@@ -7,13 +7,16 @@ function store_push_endpoint() {
         if (subscription) {
           return subscription;
         }
-        return registration.pushManager.subscribe();
+        return registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: 'BARWc1gwXxHnUlh2vw1o2TFlWC-qjccHZ8y3cIOE5DDePt4TNOGChCM64PP7kiuGgmnV082Nagdd3juNKmb2f18',
+        });
       });
     })
     .then(async subscription => {
       Array.from(document.querySelectorAll('input.push_endpoint')).forEach(i => {
         if (!i.value) {
-          i.value = subscription.endpoint;
+          i.value = JSON.stringify(subscription);
         }
       });
     })
