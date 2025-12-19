@@ -1,4 +1,6 @@
-navigator.serviceWorker.register('/service-worker.js?v=3');
+navigator.serviceWorker.register('/service-worker.js').then(reg => {
+  reg.update();
+});
 
 function store_push_endpoint() {
   navigator.serviceWorker.ready

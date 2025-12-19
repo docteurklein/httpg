@@ -442,8 +442,11 @@ grant select on table "good admin" to person;
 
 create or replace view "giving activity" (html)
 with (security_invoker)
-as with data (good_id, title, given) as (
-    select good_id, title, exists (select from interest where good_id = good.good_id and state in ('approved', 'late', 'given'))
+as with q (body) as (
+    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'
+),
+data (good_id, giver_id, title, given) as (
+    select good_id, good.giver, title, exists (select from interest where good_id = good.good_id and state in ('approved', 'late', 'given'))
     from good
     where giver = current_person_id()
     and exists (select from interest where good_id = good.good_id)
@@ -496,7 +499,11 @@ html (html) as (
                     xmlelement(name form, xmlattributes(
                         'POST' as method,
                         url('/query', jsonb_build_object(
-                            'redirect', 'referer'
+                            'redirect', url('/webpush', jsonb_build_object(
+                                'sql', format($$select * from web_push($1::uuid, format(_('[cpres] New message from %%s'), %L), %L)$$, (giver).name, body->'params'->>0),
+                                'params[]', interest.person_id,
+                                'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
+                            ))
                         )) as action
                     ),
                         xmlelement(name input, xmlattributes(
@@ -520,7 +527,7 @@ html (html) as (
                             url('/query', jsonb_build_object(
                                 'sql', 'call give($1::uuid, $2::uuid)',
                                 'redirect', url('/webpush', jsonb_build_object(
-                                    'sql', $$select * from web_push($1::uuid, 'hello!')$$,
+                                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] %%s gave you %%s'), %L, %L)))$$, giver.name, title),
                                     'params[]', interest.person_id,
                                     'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
                                 ))
@@ -555,10 +562,11 @@ html (html) as (
             )
             from interest
             join person receiver on (interest.person_id = receiver.person_id)
+            join person giver on (data.giver_id = giver.person_id)
             where data.good_id = interest.good_id
         ))
     )
-    from data
+    from data, q
 )
 select xmlelement(name h2, _('Giving activity'))::text
 union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
@@ -572,11 +580,15 @@ create type public_person as (name text, phone text);
 
 create or replace view "receiving activity" (html)
 with (security_invoker)
-as with data (good, giver, receiver_detail, interest) as (
-    select good, row(giver_.name, giver_.phone)::public_person, receiver_detail, interest
+as with q (body) as (
+    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'
+),
+data (good, giver, receiver, receiver_detail, interest) as (
+    select good, row(giver_.name, giver_.phone)::public_person, receiver_, receiver_detail, interest
     from interest
     join good using (good_id)
     join person giver_ on (good.giver = giver_.person_id)
+    join person receiver_ on (interest.person_id = receiver_.person_id)
     left join person_detail receiver_detail on (good.receiver = receiver_detail.person_id)
     where interest.person_id = current_person_id()
     order by
@@ -636,7 +648,11 @@ html (html) as (
         xmlelement(name form, xmlattributes(
             'POST' as method,
             url('/query', jsonb_build_object(
-                'redirect', 'referer'
+                'redirect', url('/webpush', jsonb_build_object(
+                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] New message from %%s'), %L), %L)$$, (receiver).name, body->'params'->>0),
+                    'params[]', (interest).person_id,
+                    'redirect', '/query?sql=table head union all table "receiving activity"&flash[green]=notified'
+                ))
             )) as action
         ),
             xmlelement(name input, xmlattributes(
@@ -658,7 +674,7 @@ html (html) as (
             else interest_control(good, interest)
         end
     )
-    from data
+    from data, q
 )
 select xmlelement(name h2, _('Receiving activity'))::text
 union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
@@ -824,7 +840,7 @@ select $html$<!DOCTYPE html>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
-    <script type="module" src="/cpres.js?v=2"></script>
+    <script type="module" src="/cpres.js?v=3"></script>
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
 </head>
 $html$
