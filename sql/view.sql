@@ -487,12 +487,11 @@ html (html) as (
                             select *
                             from message
                             where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
-                            order by at asc
                         )
                         select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
                             format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
                             xmlelement(name pre, content)
-                        )), ''))
+                        ) order by at), ''))
                         from message
                         join person author on (author.person_id = message.author)
                     ),
@@ -599,18 +598,16 @@ data (good, giver, receiver, interest) as (
     join person giver_ on (good.giver = giver_.person_id)
     join person receiver_ on (interest.person_id = receiver_.person_id)
     where interest.person_id = current_person_id()
-    order by
-        coalesce(good.updated_at, good.created_at) desc
 ),
-html (html) as (
-    select xmlelement(name article, xmlattributes('interest card' as class),
+html (good, html) as (
+    select good, xmlelement(name article, xmlattributes('interest card' as class),
         case when (interest).origin = 'automatic' then
             xmlelement(name div,
                 xmlelement(name a, xmlattributes(
                     url('/query', jsonb_build_object(
                         'sql', 'table head union all table "findings"',
                         'q', (interest).query,
-                        'use_primary', true
+                        'use_primary', null
                     )) as href
                 ), format('found via search: %s', (interest).query))
             )
@@ -644,12 +641,13 @@ html (html) as (
                 select *
                 from message
                 where (message.good_id, message.person_id) = ((interest).good_id, (interest).person_id)
-                order by at asc
             )
-                select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
-                format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
-                xmlelement(name pre, content)
-            )), ''))
+            select xmlelement(name div, xmlattributes('messages' as class),
+                coalesce(xmlagg(
+                    xmlelement(name article, format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
+                    xmlelement(name pre, content)
+                ) order by at asc), '')
+            )
             from message
             join person author on (author.person_id = message.author)
         ),
@@ -694,7 +692,8 @@ html (html) as (
     from data, q
 )
 select xmlelement(name h2, _('Receiving activity'))::text
-union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
+union all select xmlelement(name div, xmlattributes('grid good' as class),
+    coalesce(xmlagg(html order by coalesce((good).updated_at, (good).created_at) desc), ''))::text from html
 union all select _('Nothing yet.') where not exists (select from html limit 1)
 ;
 
@@ -722,9 +721,9 @@ head (html) as (
                 url('/query', jsonb_build_object(
                     'q', query,
                     'sql', 'table head union all table "findings"',
-                    'use_primary', true
+                    'use_primary', null
                 )) as href
-            ), query))), '')
+            ), query)) order by query asc), '')
             from search
         ))),
         xmlelement(name form, xmlattributes(
@@ -759,7 +758,8 @@ head (html) as (
                 url('/query', jsonb_build_object(
                     'redirect', url('/query', jsonb_build_object(
                         'sql', 'table head union all table "findings"',
-                        'q', qs->>'q'
+                        'q', qs->>'q',
+                        'use_primary', null
                     ))
                 )) as action),
                 xmlelement(name input, xmlattributes(
@@ -812,17 +812,18 @@ head (html) as (
     )
     from q
 ),
-result (good_id, rerank_distance) as (
+result (good_id, rerank_distance, sort) as (
     select good_id, case when qs->>'q' <> '' then
         rerank_distance(qs->>'q', passage)
         else -1
-    end
+    end,
+    case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
     from q, good
-    order by case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
+    order by 3
     limit 500
 ),
-list (html) as (
-    select xmlelement(name article, xmlattributes('card' as class), d.html::xml)
+list (sort, html) as (
+    select sort, xmlelement(name article, xmlattributes('card' as class), d.html::xml)
     from result
     join "good_detail" d using (good_id)
     where rerank_distance < 0
@@ -835,7 +836,7 @@ list (html) as (
 select html::text from head
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
     xmlelement(name div, (select html from map where exists (select from list limit 1))),
-    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html) from list))
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from list))
 )::text
 union all select _('Nothing yet.') where not exists (select from list limit 1)
 ;
