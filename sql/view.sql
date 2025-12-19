@@ -500,7 +500,16 @@ html (html) as (
                         'POST' as method,
                         url('/query', jsonb_build_object(
                             'redirect', url('/webpush', jsonb_build_object(
-                                'sql', format($$select * from web_push($1::uuid, format(_('[cpres] New message from %%s'), %L), %L)$$, (giver).name, body->'params'->>0),
+                                'sql', format(
+                                    $$select * from web_push(
+                                        $1::uuid,
+                                        format(
+                                            _('[cpres] New message from %%s'),
+                                            %L
+                                        ),
+                                        ''
+                                    )$$, giver.name
+                                ),
                                 'params[]', interest.person_id,
                                 'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
                             ))
@@ -509,7 +518,7 @@ html (html) as (
                         xmlelement(name input, xmlattributes(
                             'hidden' as type,
                             'sql' as name,
-                            format('insert into message (good_id, person_id, content) values(%L, %L, $1)', interest.good_id, interest.person_id) as value
+                            format('insert into message (good_id, person_id, content) values (%L, %L, $1)', interest.good_id, interest.person_id) as value
                         )),
                         xmlelement(name textarea, xmlattributes(
                             'params[]' as name,
@@ -527,7 +536,7 @@ html (html) as (
                             url('/query', jsonb_build_object(
                                 'sql', 'call give($1::uuid, $2::uuid)',
                                 'redirect', url('/webpush', jsonb_build_object(
-                                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] %%s gave you %%s'), %L, %L)))$$, giver.name, title),
+                                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] %%s gave you %%s'), %L, %L), null)$$, giver.name, title),
                                     'params[]', interest.person_id,
                                     'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
                                 ))
@@ -583,13 +592,12 @@ with (security_invoker)
 as with q (body) as (
     select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'
 ),
-data (good, giver, receiver, receiver_detail, interest) as (
-    select good, row(giver_.name, giver_.phone)::public_person, receiver_, receiver_detail, interest
+data (good, giver, receiver, interest) as (
+    select good, row(giver_.name, giver_.phone)::public_person, row(receiver_.name, receiver_.phone)::public_person, interest
     from interest
     join good using (good_id)
     join person giver_ on (good.giver = giver_.person_id)
     join person receiver_ on (interest.person_id = receiver_.person_id)
-    left join person_detail receiver_detail on (good.receiver = receiver_detail.person_id)
     where interest.person_id = current_person_id()
     order by
         coalesce(good.updated_at, good.created_at) desc
@@ -649,7 +657,16 @@ html (html) as (
             'POST' as method,
             url('/query', jsonb_build_object(
                 'redirect', url('/webpush', jsonb_build_object(
-                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] New message from %%s'), %L), %L)$$, (receiver).name, body->'params'->>0),
+                    'sql', format($$
+                        select * from web_push(
+                            $1::uuid,
+                            format(
+                                _('[cpres] New message from %%s'),
+                                %L
+                            ),
+                            ''
+                        )$$, (receiver).name
+                    ),
                     'params[]', (interest).person_id,
                     'redirect', '/query?sql=table head union all table "receiving activity"&flash[green]=notified'
                 ))
@@ -658,7 +675,7 @@ html (html) as (
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                format('insert into message (good_id, person_id, content) values(%L, %L, $1)', (interest).good_id, (interest).person_id) as value
+                format('insert into message (good_id, person_id, content) values (%L, %L, $1)', (interest).good_id, (interest).person_id) as value
             )),
             xmlelement(name textarea, xmlattributes(
                 'params[]' as name,

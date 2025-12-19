@@ -126,7 +126,7 @@ grant execute on function login to person;
 create or replace function send_login_email(email_ text, location_ text, push_endpoint_ text)
 returns table ("from" text, "to" text, subject text, plain text, html text)
 language sql
-volatile parallel safe not leakproof
+volatile parallel safe -- leakproof
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
@@ -180,7 +180,7 @@ grant execute on function send_login_email(text, text, text) to person;
 create or replace function web_push(person_id_ uuid, title text, content text)
 returns table (endpoint text, p256dh text, auth text, content bytea)
 language sql
-volatile parallel safe not leakproof
+volatile parallel safe -- leakproof
 security definer
 set search_path to cpres, pg_catalog
 begin atomic
