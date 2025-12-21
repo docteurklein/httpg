@@ -69,11 +69,20 @@ begin atomic;
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/query', jsonb_build_object(
-                    'sql', format('call want(%L, $2, $1)', good.good_id),
-                    'redirect', 'referer'
+                    'sql', format('call want(%L, $2, $1)', good.good_id)
                 )) as action,
                 null as class
             ),
+                xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'redirect' as name,
+                    url('/webpush', jsonb_build_object(
+                        'sql', 'select * from web_push_want($1::uuid, $2::uuid)',
+                        'params[0]', interest.good_id,
+                        'params[1]', interest.person_id,
+                        'redirect', 'referer'
+                    )) as value
+                )),
                 max_interest_price(good),
                 _('propose '),
                 xmlelement(name input, xmlattributes(
@@ -456,6 +465,7 @@ data (good_id, giver_id, title, given) as (
 html (html) as (
     select xmlelement(name article, xmlattributes('card' as class),
         xmlelement(name h2, xmlelement(name a, xmlattributes(
+            title as id,
             url('/query', jsonb_build_object(
                 'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
                 'params[]', good_id
@@ -463,7 +473,7 @@ html (html) as (
         ), title)),
         xmlelement(name div, xmlattributes('grid interest' as class), (
             select xmlagg(
-                xmlelement(name article, xmlattributes('card' as class),
+                xmlelement(name article, xmlattributes('card' as class, format('%s-%s', interest.good_id, interest.person_id) as id),
                     xmlelement(name div, xmlattributes('inline' as class),
                         xmlelement(name h4, format(_('%s is %s'), receiver.name, _(interest.level))),
                         case when interest.price is not null then
@@ -488,63 +498,64 @@ html (html) as (
                             from message
                             where (message.good_id, message.person_id) = (interest.good_id, interest.person_id)
                         )
-                        select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(xmlelement(name article,
-                            format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
-                            xmlelement(name pre, content)
-                        ) order by at), ''))
+                        select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(
+                            xmlelement(name article, xmlattributes(message_id as id),
+                                format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
+                                xmlelement(name pre, content)
+                            ) order by at), ''))
                         from message
                         join person author on (author.person_id = message.author)
                     ),
-                    xmlelement(name form, xmlattributes(
+                    (with message_id (message_id) as (select gen_random_uuid())
+                    select xmlelement(name form, xmlattributes(
                         'POST' as method,
-                        url('/query', jsonb_build_object(
-                            'redirect', url('/webpush', jsonb_build_object(
-                                'sql', format(
-                                    $$select * from web_push(
-                                        $1::uuid,
-                                        format(
-                                            _('[cpres] New message from %%s'),
-                                            %L
-                                        ),
-                                        ''
-                                    )$$, giver.name
-                                ),
-                                'params[]', interest.person_id,
-                                'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
-                            ))
-                        )) as action
+                        '/query' as action
                     ),
                         xmlelement(name input, xmlattributes(
                             'hidden' as type,
                             'sql' as name,
-                            format('insert into message (good_id, person_id, content) values (%L, %L, $1)', interest.good_id, interest.person_id) as value
+                            format('insert into message (message_id, good_id, person_id, content) values (%L, %L, %L, $1)', message_id, interest.good_id, interest.person_id) as value
+                        )),
+                        xmlelement(name input, xmlattributes(
+                            'hidden' as type,
+                            'redirect' as name,
+                            url('/webpush', jsonb_build_object(
+                                'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
+                                'params[0]', message_id,
+                                'params[1]', interest.person_id,
+                                'redirect', '/query?sql=table head union all table "giving activity"'
+                            )) as value
                         )),
                         xmlelement(name textarea, xmlattributes(
                             'params[]' as name,
-                            'message' as placeholder
+                            'message' as placeholder,
+                            true as required
                         ), ''),
                         xmlelement(name input, xmlattributes(
                             'submit' as type,
                             _('Send message') as value
                         ))
-                    ),
+                    ) from message_id),
                     case when interest.state in ('approved', 'late', 'given')
                         then xmltext(_('Winner'))
                         when not given then xmlelement(name form, xmlattributes(
                             'POST' as method,
-                            url('/query', jsonb_build_object(
-                                'sql', 'call give($1::uuid, $2::uuid)',
-                                'redirect', url('/webpush', jsonb_build_object(
-                                    'sql', format($$select * from web_push($1::uuid, format(_('[cpres] %%s gave you %%s'), %L, %L), null)$$, giver.name, title),
-                                    'params[]', interest.person_id,
-                                    'redirect', '/query?sql=table head union all table "giving activity"&flash[green]=notified'
-                                ))
-                            )) as action
+                            '/query' as action
                         ),
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
-                                'params[]' as name,
-                                interest.good_id as value
+                                'sql' as name,
+                                'call give($1::uuid, $2::uuid)' as value
+                            )),
+                            xmlelement(name input, xmlattributes(
+                                'hidden' as type,
+                                'redirect' as name,
+                                url('/webpush', jsonb_build_object(
+                                    'sql', 'select * from web_push_gift($1::uuid, $2::uuid)',
+                                    'params[0]', interest.good_id,
+                                    'params[1]', interest.person_id,
+                                    'redirect', '/query?sql=table head union all table "giving activity"'
+                                )) as value
                             )),
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
@@ -642,48 +653,45 @@ html (good, html) as (
                 from message
                 where (message.good_id, message.person_id) = ((interest).good_id, (interest).person_id)
             )
-            select xmlelement(name div, xmlattributes('messages' as class),
-                coalesce(xmlagg(
-                    xmlelement(name article, format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
+            select xmlelement(name div, xmlattributes('messages' as class), coalesce(xmlagg(
+                xmlelement(name article, xmlattributes(message_id as id),
+                    format(_('%s at %s: '), author.name, to_char(message.at, _('HH24:MI, TMDay DD/MM'))),
                     xmlelement(name pre, content)
                 ) order by at asc), '')
             )
             from message
             join person author on (author.person_id = message.author)
         ),
-        xmlelement(name form, xmlattributes(
+        (with message_id (message_id) as (select gen_random_uuid())
+        select xmlelement(name form, xmlattributes(
             'POST' as method,
-            url('/query', jsonb_build_object(
-                'redirect', url('/webpush', jsonb_build_object(
-                    'sql', format($$
-                        select * from web_push(
-                            $1::uuid,
-                            format(
-                                _('[cpres] New message from %%s'),
-                                %L
-                            ),
-                            ''
-                        )$$, (receiver).name
-                    ),
-                    'params[]', (interest).person_id,
-                    'redirect', '/query?sql=table head union all table "receiving activity"&flash[green]=notified'
-                ))
-            )) as action
+            '/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                format('insert into message (good_id, person_id, content) values (%L, %L, $1)', (interest).good_id, (interest).person_id) as value
+                format('insert into message (message_id, good_id, person_id, content) values (%L, %L, %L, $1)', message_id, (interest).good_id, (interest).person_id) as value
+            )),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'redirect' as name,
+                url('/webpush', jsonb_build_object(
+                    'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
+                    'params[0]', message_id,
+                    'params[1]', (good).giver,
+                    'redirect', '/query?sql=table head union all table "receiving activity"'
+                )) as value
             )),
             xmlelement(name textarea, xmlattributes(
                 'params[]' as name,
-                'message' as placeholder
+                'message' as placeholder,
+                true as required
             ), ''),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
                 _('Send message') as value
             ))
-        ),
+        ) from message_id),
         case when (interest).state in ('approved', 'given', 'late')
             then xmltext(_('Winner'))
             else interest_control(good, interest)
@@ -998,7 +1006,7 @@ union all select xmlelement(name nav,
 )::text
 union all (
     with m (color, m) as (
-        select m.key, xmltext(m.value) from q, jsonb_each_text(q->'qs'->'flash') m
+        select m.key, xmltext(_(m.value)) from q, jsonb_each_text(q->'qs'->'flash') m
         union all (
             select 'yellow', xmlelement(name a, xmlattributes(
                 (url('/query', jsonb_build_object(
@@ -1032,6 +1040,7 @@ union all (
 grant select on table head to person;
 
 create or replace view about (html)
+with (security_invoker)
 as select xmlelement(name h2, _('About'))
 union all select xmlelement(name p, 'Fait avec amour et passion par Florian Klein.')
 union all select xmlelement(name a, xmlattributes('https://github.com/docteurklein/httpg' as href), 'code source')

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use axum::{
     Json, extract::{FromRequest, Multipart, Request}, http::{
-        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER}
+        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER, ORIGIN}
     }, response::{IntoResponse, Response}
 };
 use bytes::Bytes;
@@ -130,6 +130,8 @@ pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accept_language: Option<String>,
@@ -233,6 +235,8 @@ where
                 .and_then(|host| host.to_str().ok()),
         };
 
+        let origin = headers.get(ORIGIN).and_then(|value| value.to_str().ok()).map(str::to_string);
+
         let order = qs.order.to_owned().or(body.order.to_owned());
 
         let sql = qs.sql.as_ref().or(body.sql.as_ref())
@@ -293,6 +297,7 @@ where
             qs: raw_qs,
             body: raw_body,
             host: host.map(str::to_string),
+            origin,
             redirect: redirect.map(str::to_string),
             accept,
             accept_language,

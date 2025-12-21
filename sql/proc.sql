@@ -177,22 +177,110 @@ end;
 
 grant execute on function send_login_email(text, text, text) to person;
 
-create or replace function web_push(person_id_ uuid, title text, content text)
+drop function if exists web_push(uuid, text, text);
+create or replace function web_push(person_id_ uuid, title text, content text, path text)
 returns table (endpoint text, p256dh text, auth text, content bytea)
 language sql
 volatile parallel safe -- leakproof
-security definer
+security definer -- bypass RLS to access other's person_detail
 set search_path to cpres, pg_catalog
 begin atomic
     select push_endpoint->>'endpoint', push_endpoint->'keys'->>'p256dh', push_endpoint->'keys'->>'auth',
         jsonb_build_object(
             'title', title,
-            'content', content
+            'content', content,
+            'path', path
         )::text::bytea
     from person_detail
     where person_id = person_id_
     and push_endpoint is not null;
 end;
 
-grant execute on function web_push(uuid, text, text) to person;
+grant execute on function web_push(uuid, text, text, text) to person;
 
+drop function if exists web_push_message(uuid, text);
+
+create or replace function web_push_message(message_id_ uuid, to_ uuid)
+returns table (endpoint text, p256dh text, auth text, content bytea)
+language sql
+volatile parallel safe -- leakproof
+security definer
+set search_path to cpres, pg_catalog
+begin atomic
+select p.*
+from message m
+join person author on m.author = author.person_id,
+web_push(
+    to_,
+    format(
+        _('New message from %s'),
+        author.name
+    ),
+    content,
+    url('/query', jsonb_build_object(
+        'sql', format('table head union all table %I', case m.author
+            when m.person_id then 'giving activity' -- author is the one interested, so we show message to giver
+            else 'receiving activity' end
+        )
+    )) || '#' || message_id
+) p
+where m.message_id = message_id_;
+end;
+
+grant execute on function web_push_message(uuid, uuid) to person;
+
+create or replace function web_push_gift(good_id_ uuid, receiver_id_ uuid)
+returns table (endpoint text, p256dh text, auth text, content bytea)
+language sql
+volatile parallel safe -- leakproof
+security definer
+set search_path to cpres, pg_catalog
+begin atomic
+select p.*
+from interest
+join good on (good.good_id = interest.good_id)
+join person giver on good.giver = giver.person_id,
+web_push(
+    interest.person_id,
+    format(
+        _('%s gave you %s'),
+        giver.name,
+        good.title
+    ),
+    null,
+    url('/query', jsonb_build_object(
+        'sql', 'table head union all table "receiving activity"'
+    )) || '#' || good.title
+) p
+where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);
+end;
+
+grant execute on function web_push_gift(uuid, uuid) to person;
+
+create or replace function web_push_want(good_id_ uuid, receiver_id_ uuid)
+returns table (endpoint text, p256dh text, auth text, content bytea)
+language sql
+volatile parallel safe -- leakproof
+security definer
+set search_path to cpres, pg_catalog
+begin atomic
+select p.*
+from interest
+join good on (good.good_id = interest.good_id)
+join person receiver on interest.person_id = receiver.person_id,
+web_push(
+    interest.person_id,
+    format(
+        _('%s is interested by %s'),
+        receiver.name,
+        good.title
+    ),
+    null,
+    url('/query', jsonb_build_object(
+        'sql', 'table head union all table "giving activity"'
+    )) || format('#%s-%s', good.good_id, receiver.person_id)
+) p
+where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);
+end;
+
+grant execute on function web_push_want(uuid, uuid) to person;

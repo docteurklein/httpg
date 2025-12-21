@@ -27,7 +27,7 @@
       perSystem = { config, self', inputs', pkgs, system, ... }: let
         n2c = inputs.nix2container.packages.x86_64-linux;
         craneLib = crane.mkLib pkgs;
-        crate =  {
+        crate = {
           src = craneLib.cleanCargoSource ./.;
 
           doCheck = false;

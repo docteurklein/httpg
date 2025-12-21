@@ -228,8 +228,9 @@ a.whatsapp {
     display: none;
 }
 
-.interest:has(:target) {
+:target {
    background-color: yellow;
+   color: black;
 }
 
 .messages {

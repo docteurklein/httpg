@@ -1,9 +1,10 @@
+use http::Uri;
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
-        Method, StatusCode, header::SET_COOKIE,
+        StatusCode, header::SET_COOKIE,
     }, response::{Html, IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
 };
-use axum_extra::extract::cookie::Cookie;
+use axum_extra::extract::{cookie::Cookie};
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 use conf::Conf;
@@ -173,19 +174,6 @@ struct HttpgConfig {
 
 impl HttpgConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
-        // let port = env::var("PORT").unwrap_or("3000".to_string());
-        // let config = config::Config::builder()
-        //     .add_source(
-        //         config::Environment::default()
-        //         .source(Some(HashMap::from([("port".to_string(), port.to_string())])))
-        //     )
-        //     .add_source(config::Environment::default()
-        //         .prefix("HTTPG")
-        //     )
-        //     .build()
-        //     .unwrap()
-        // ;
-
         Ok(HttpgConfig::parse())
     }
 }
@@ -294,7 +282,7 @@ async fn index(
 
     query.sql = state.config.index_sql.to_owned();
 
-    stream_query(state.clone(), biscuit, query).await
+    stream_query(state.to_owned(), biscuit, query).await
 }
 
 #[debug_handler]
@@ -331,7 +319,7 @@ async fn login(
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
-        Redirect::to(&query.redirect.unwrap_or("/".to_string())).into_response()
+        Redirect::to(query.redirect.as_deref().unwrap_or("/")).into_response()
     ))
 }
 
@@ -349,7 +337,7 @@ async fn logout(
                 .to_string()
             ),
         ],
-        Redirect::to(&query.redirect.unwrap_or("/".to_string())).into_response()
+        Redirect::to(query.redirect.as_deref().unwrap_or("/")).into_response()
     ))
 }
 
@@ -414,7 +402,7 @@ async fn email(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
     let creds = Credentials::new(smtp_user, smtp_password);
 
@@ -464,7 +452,7 @@ async fn http(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
     let client = reqwest::Client::new();
     rows.err_into::<HttpgError>().try_for_each(async |row| {
@@ -507,13 +495,13 @@ async fn web_push(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
     let client = HyperWebPushClient::new();
 
-    let private_key = File::open(webpush_private_key_file.to_owned().ok_or(HttpgError::WebPushPrivateKey)?)?;
+    let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
 
-    rows.err_into::<HttpgError>().try_for_each(async |row| {
+    let res = rows.err_into::<HttpgError>().try_for_each(async |row| {
         let subscription_info = SubscriptionInfo::new(
             row.get::<&str, &str>("endpoint"),
             row.get::<&str, &str>("p256dh"),
@@ -529,16 +517,24 @@ async fn web_push(
         )?.build()?;
 
         builder.set_vapid_signature(sig_builder);
-        client.send(builder.build()?).await?;
-        Ok(())
-    }).await?;
 
-    tx.commit().await?;
+        client.send(builder.build()?).await.map_err(Into::into)
+    }).await;
 
-    Ok(query.redirect
-        .map(|r| Redirect::to(&r).into_response())
-        .unwrap_or(NoContent.into_response())
-    )
+    let redirect = query.redirect.as_deref().unwrap_or("/").parse(Uri)?;
+
+    match res {
+        Ok(_) => {
+            tx.commit().await?;
+            redirect.query_pairs_mut().append_pair("flash[green]", "notified");
+        },
+        Err(err) => {
+            redirect.query_pairs_mut().append_pair("flash[yellow]", "could not notify");
+            dbg!(&err);
+        },
+    }
+
+    Ok(Redirect::to(&[redirect.path(), "?", redirect.query().unwrap_or_default()].join("")).into_response())
 }
 
 #[debug_handler]
@@ -565,7 +561,7 @@ async fn stream_query(
         (param, param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(&query.sql.to_owned(), sql_params).await?;
+    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
     Ok(response::HttpResult {
         query: query.to_owned(),

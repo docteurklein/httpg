@@ -16,16 +16,20 @@ self.addEventListener('push', function(event) {
     console.log(payload);
     event.waitUntil(
       self.registration.showNotification(payload.title, payload.content && {
-        body: payload.content
+        body: payload.content,
+        data: {
+          path: payload.path
+        }
       })
     );
   }
 });
 
 self.addEventListener('notificationclick', event => {
+  console.log(event, event.notification.data);
   event.waitUntil(
-    clients
-      .openWindow(self.location.origin)
-      .then(windowClient => windowClient.focus())
+    self.clients
+      .openWindow(new URL(event.notification.data.path, self.location.origin).toString())
+      .then(w => w.focus())
   );
 });
