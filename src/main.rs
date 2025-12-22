@@ -526,7 +526,7 @@ async fn web_push(
     }).await.iter().count();
 
     let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
-    let serde_qs = serde_qs::Config::new(0, true);
+    let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
 
     let mut qs = match redirect.query() {
         Some(r) => {

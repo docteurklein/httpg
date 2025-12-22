@@ -158,7 +158,11 @@ where
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let headers = req.headers().to_owned();
         let uri = req.uri().to_owned();
-        let serde_qs = serde_qs::Config::new(5, false); // non-strict for browsers
+
+        let serde_qs = serde_qs::Config::new()
+            .max_depth(5)
+            .use_form_encoding(true) // non-strict for browsers
+        ;
 
         let raw_qs = match uri.query() {
             Some(qs) => match serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(qs) {
