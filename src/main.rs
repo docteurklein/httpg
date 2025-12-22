@@ -505,7 +505,7 @@ async fn web_push(
 
     let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
 
-    let res = rows.err_into::<HttpgError>().try_for_each(async |row| {
+    let n = rows.err_into::<HttpgError>().try_for_each(async |row| {
         let subscription_info = SubscriptionInfo::new(
             row.get::<&str, &str>("endpoint"),
             row.get::<&str, &str>("p256dh"),
@@ -523,7 +523,7 @@ async fn web_push(
         builder.set_vapid_signature(sig_builder);
 
         client.send(builder.build()?).await.map_err(Into::into)
-    }).await;
+    }).await.iter().count();
 
     let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
     let serde_qs = serde_qs::Config::new(0, false); // non-strict for browsers
@@ -534,14 +534,13 @@ async fn web_push(
         },
         None => serde_json::Map::new(),
     };
-    match res {
-        Ok(_) => {
+    match n {
+        n if n > 0 => {
             tx.commit().await?;
             qs.insert("flash[green]".into(), "notified".into());
         },
-        Err(err) => {
+        _ => {
             qs.insert("flash[yellow]".into(), "could not notify".into());
-            dbg!(&err);
         },
     }
 
