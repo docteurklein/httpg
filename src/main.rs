@@ -80,6 +80,10 @@ pub enum HttpgError {
     Hex(#[from] hex::FromHexError),
     #[error("web_push: {0:#?}")]
     WebPush(#[from] web_push::WebPushError),
+    #[error("uri: {0:#?}")]
+    Uri(#[from] http::uri::InvalidUri),
+    #[error("querystring: {0:#?}")]
+    QueryString(#[from] serde_qs::Error),
     #[error("no webpush private key")]
     WebPushPrivateKey,
     #[error("invalid text param")]
@@ -521,20 +525,31 @@ async fn web_push(
         client.send(builder.build()?).await.map_err(Into::into)
     }).await;
 
-    let redirect = query.redirect.as_deref().unwrap_or("/").parse(Uri)?;
+    let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
+    let serde_qs = serde_qs::Config::new(5, false); // non-strict for browsers
 
+    let mut qs = match redirect.query() {
+        Some(r) => {
+            serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(r)?
+        },
+        None => serde_json::Map::new(),
+    };
     match res {
         Ok(_) => {
             tx.commit().await?;
-            redirect.query_pairs_mut().append_pair("flash[green]", "notified");
+            qs.insert("flash[green]".into(), "notified".into());
         },
         Err(err) => {
-            redirect.query_pairs_mut().append_pair("flash[yellow]", "could not notify");
+            qs.insert("flash[yellow]".into(), "could not notify".into());
             dbg!(&err);
         },
     }
 
-    Ok(Redirect::to(&[redirect.path(), "?", redirect.query().unwrap_or_default()].join("")).into_response())
+    dbg!(&redirect, &qs, &[redirect.path(), "?", serde_qs::to_string(&qs)?.as_str()].join(""));
+    let builder = http::uri::Builder::from(redirect.to_owned());
+    let builder = builder.path_and_query([redirect.path(), "?", serde_qs::to_string(&qs)?.as_str()].join(""));
+
+    Ok(Redirect::to(builder.build()?.to_string().as_str()).into_response())
 }
 
 #[debug_handler]

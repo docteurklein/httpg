@@ -43,5 +43,4 @@ thiserror = "^2"
 lettre = { version = "^0", features = ["smtp-transport", "tokio1", "tokio1-native-tls"] }
 reqwest = "^0"
 web-push = { version = "^0", features = ["hyper-client"] }
-url = "2.5.7"
-http = "1.4.0"
+http = "^1"

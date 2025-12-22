@@ -232,7 +232,7 @@ select xmlelement(name form, xmlattributes(
         url('/query', jsonb_build_object(
             'redirect', url('/query', jsonb_build_object(
                 'sql', 'table head union all select html from "good admin"',
-                'flash[green]', _('Saved successfully')
+                'flash[green]', 'Saved successfully'
             ))
         )) as action
     ),
@@ -523,7 +523,7 @@ html (html) as (
                                 'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
                                 'params[0]', message_id,
                                 'params[1]', interest.person_id,
-                                'redirect', '/query?sql=table head union all table "giving activity"'
+                                'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
                             )) as value
                         )),
                         xmlelement(name textarea, xmlattributes(
@@ -554,7 +554,7 @@ html (html) as (
                                     'sql', 'select * from web_push_gift($1::uuid, $2::uuid)',
                                     'params[0]', interest.good_id,
                                     'params[1]', interest.person_id,
-                                    'redirect', '/query?sql=table head union all table "giving activity"'
+                                    'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
                                 )) as value
                             )),
                             xmlelement(name input, xmlattributes(
@@ -679,7 +679,7 @@ html (good, html) as (
                     'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
                     'params[0]', message_id,
                     'params[1]', (good).giver,
-                    'redirect', '/query?sql=table head union all table "receiving activity"'
+                    'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "receiving activity"'))
                 )) as value
             )),
             xmlelement(name textarea, xmlattributes(
@@ -876,7 +876,7 @@ union all (
         'POST' as method,
         url('/email', jsonb_build_object(
             'redirect', url('/', jsonb_build_object(
-                'flash[green]', _('Check your emails')
+                'flash[green]', 'Check your emails'
             ))
         )) as action
     ),

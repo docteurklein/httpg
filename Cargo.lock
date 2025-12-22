@@ -1771,7 +1771,6 @@ dependencies = [
  "tower-http",
  "tracing",
  "tracing-subscriber",
- "url",
  "web-push",
 ]
 
