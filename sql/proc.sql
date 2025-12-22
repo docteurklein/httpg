@@ -269,7 +269,7 @@ from interest
 join good on (good.good_id = interest.good_id)
 join person receiver on interest.person_id = receiver.person_id,
 web_push(
-    interest.person_id,
+    good.giver,
     format(
         _('%s is interested by %s'),
         receiver.name,

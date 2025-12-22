@@ -526,7 +526,7 @@ async fn web_push(
     }).await;
 
     let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
-    let serde_qs = serde_qs::Config::new(5, false); // non-strict for browsers
+    let serde_qs = serde_qs::Config::new(0, false); // non-strict for browsers
 
     let mut qs = match redirect.query() {
         Some(r) => {
@@ -545,7 +545,6 @@ async fn web_push(
         },
     }
 
-    dbg!(&redirect, &qs, &[redirect.path(), "?", serde_qs::to_string(&qs)?.as_str()].join(""));
     let builder = http::uri::Builder::from(redirect.to_owned());
     let builder = builder.path_and_query([redirect.path(), "?", serde_qs::to_string(&qs)?.as_str()].join(""));
 
