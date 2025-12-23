@@ -185,7 +185,10 @@ volatile parallel safe -- leakproof
 security definer -- bypass RLS to access other's person_detail
 set search_path to cpres, pg_catalog
 begin atomic
-    select push_endpoint->>'endpoint', push_endpoint->'keys'->>'p256dh', push_endpoint->'keys'->>'auth',
+    select
+        push_endpoint->>'endpoint',
+        push_endpoint->'keys'->>'p256dh',
+        push_endpoint->'keys'->>'auth',
         jsonb_build_object(
             'title', title,
             'content', content,
@@ -193,7 +196,8 @@ begin atomic
         )::text::bytea
     from person_detail
     where person_id = person_id_
-    and push_endpoint is not null;
+    and push_endpoint is not null
+    and exists (select from person where person_id = nullif(current_setting('cpres.person_id', true), '')::uuid);
 end;
 
 grant execute on function web_push(uuid, text, text, text) to person;

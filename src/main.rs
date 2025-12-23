@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 use crate::{extract::query::{Query}, response::Raw};
-use crate::response::compress_stream;
+// use crate::response::compress_stream;
 
 mod extract;
 mod sql;
@@ -482,12 +482,12 @@ async fn http(
 
 #[debug_handler]
 async fn web_push(
-    State(AppState {write_pool, config: HttpgConfig { anon_role, webpush_private_key_file, ..}, ..}): State<AppState>,
+    State(AppState {read_pool, config: HttpgConfig { anon_role, webpush_private_key_file, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    let mut conn = write_pool.get().await?;
+    let mut conn = read_pool.get().await?;
     let mut tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
@@ -505,7 +505,7 @@ async fn web_push(
 
     let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
 
-    let n = rows.err_into::<HttpgError>().try_for_each(async |row| {
+    let n = rows.err_into::<HttpgError>().try_fold(0, async |acc, row| {
         let subscription_info = SubscriptionInfo::new(
             row.get::<&str, &str>("endpoint"),
             row.get::<&str, &str>("p256dh"),
@@ -522,8 +522,11 @@ async fn web_push(
 
         builder.set_vapid_signature(sig_builder);
 
-        client.send(builder.build()?).await.map_err(Into::into)
-    }).await.iter().count();
+        client.send(builder.build()?).await?;
+        Ok(acc + 1)
+    }).await;
+
+    tx.commit().await?;
 
     let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
     let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
@@ -535,13 +538,15 @@ async fn web_push(
         None => serde_json::Map::new(),
     };
     match n {
-        n if n > 0 => {
-            tx.commit().await?;
+        Ok(n) if n > 0 => {
             qs.insert("flash[green]".into(), "notified".into());
+        },
+        Err(e) => {
+            tracing::error!("{e:#?}");
         },
         _ => {
             qs.insert("flash[yellow]".into(), "could not notify".into());
-        },
+        }
     }
 
     let builder = http::uri::Builder::from(redirect.to_owned());
