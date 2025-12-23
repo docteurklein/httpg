@@ -33,7 +33,7 @@ use deadpool_postgres::{CreatePoolError, Pool, PoolError, Runtime, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{extract::query::{Query}, response::Raw};
+use crate::{extract::query::{Query}};
 // use crate::response::compress_stream;
 
 mod extract;
@@ -489,7 +489,7 @@ async fn web_push(
 
     let mut conn = read_pool.get().await?;
     let mut tx = conn.build_transaction()
-        .isolation_level(IsolationLevel::Serializable)
+        .isolation_level(IsolationLevel::RepeatableRead)
         .start().await
     ?;
 
@@ -584,9 +584,7 @@ async fn stream_query(
     Ok(response::HttpResult {
         query: query.to_owned(),
         rows: response::Rows::Stream(rows)
-        
     })
-
 }
 
 #[debug_handler]
@@ -656,7 +654,7 @@ async fn post_query(
 
     Ok(response::HttpResult {
         query,
-        rows: response::Rows::Vec(rows)
+        rows: response::Rows::StringVec(rows)
     }.into_response())
 }
 
@@ -681,10 +679,7 @@ async fn raw_http(
 
     Ok(response::HttpResult {
         query,
-        rows: response::Rows::Raw(result.iter()
-            .map(|row| serde_json::from_str::<Raw>(row.get::<usize, String>(0).as_str()).unwrap())
-            .collect()
-        )
+        rows: response::Rows::Raw(result)
     }.into_response())
 }
 

@@ -1,7 +1,9 @@
 
+use std::str::FromStr;
+
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
-use serde::{Deserialize, Serialize};
+// use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
@@ -11,16 +13,8 @@ pub mod compress_stream;
 
 pub enum Rows {
     Stream(RowStream),
-    Vec(Vec<Row>),
-    Raw(Vec<Raw>),
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum Raw {
-    Status(u16),
-    Header(String, String),
-    Body(Vec<u8>),
+    StringVec(Vec<Row>),
+    Raw(Vec<Row>),
 }
 
 pub struct HttpResult {
@@ -28,19 +22,22 @@ pub struct HttpResult {
     pub rows: Rows,
 }
 
-fn from_raw(rows: Vec<Raw>) -> Result<Response, HttpgError> {
+fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
     let mut builder = Response::builder();
     let mut body = BytesMut::new();
     for row in rows.iter() {
-        match row {
-            Raw::Status(status) => {
-                builder = builder.status(StatusCode::from_u16(status.to_owned())?);
-            },
-            Raw::Header(k, v) => {
-                builder = builder.header(HeaderName::from_bytes(k.as_bytes())?, HeaderValue::from_str(v)?);
-            },
-            Raw::Body(content) => {
-                body.put(content.as_slice());
+        for (i, col) in row.columns().iter().enumerate() {
+            match col.name() {
+                "status" => {
+                    builder = builder.status(StatusCode::from_u16(row.get::<usize, u32>(i) as u16)?);
+                },
+                "header" => {
+                    builder = builder.header(HeaderName::from_str(row.get(i))?, HeaderValue::from_str(row.get(i + 1))?);
+                },
+                "body" => {
+                    body.put(row.get::<usize, &[u8]>(i));
+                }
+                _ => {}
             }
         }
     }
@@ -63,12 +60,12 @@ impl IntoResponse for HttpResult {
                         ),
                     ).into_response(),
 
-                    Rows::Vec(rows) => Body::from(
+                    Rows::StringVec(rows) => Body::from(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows).into_response()
+                        from_col_name(rows).into_response()
                     }
                 }
             },
@@ -85,12 +82,12 @@ impl IntoResponse for HttpResult {
                         ).into_response()
                     ).into_response(),
 
-                    Rows::Vec(rows) => Html(
+                    Rows::StringVec(rows) => Html(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows).into_response()
+                        from_col_name(rows).into_response()
                     }
                 }
             },
@@ -114,12 +111,12 @@ impl IntoResponse for HttpResult {
                         ).into_response()
                     },
 
-                    Rows::Vec(rows) => Body::from(
+                    Rows::StringVec(rows) => Body::from(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {
-                        from_raw(rows).into_response()
+                        from_col_name(rows).into_response()
                     }
                 }
             },
