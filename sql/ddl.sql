@@ -135,7 +135,8 @@ create table person (
     name text not null unique check (trim(name) <> '' and position('@' in name) = 0),
     email text not null unique check (trim(email) <> '' and position('@' in email) <> 0),
     phone text default null unique check (trim(phone) <> ''),
-    login_challenge uuid default null
+    login_challenge uuid default null,
+    challenge_used_at timestamptz default null
 );
 
 grant select (person_id, name, phone),

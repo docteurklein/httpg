@@ -185,6 +185,7 @@ a.whatsapp {
     }
     & .green {
         background-color: green;
+        color: white;
     }
     & .blue {
         background-color: lightblue;

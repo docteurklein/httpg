@@ -112,7 +112,11 @@ set search_path to cpres, pg_catalog
 begin atomic
     with "user" as (
         update person
-        set login_challenge = null
+        set login_challenge = case when challenge_used_at < now() - interval '1 hour'
+            then null
+            else login_challenge
+        end,
+        challenge_used_at = coalesce(challenge_used_at, now())
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'login_challenge')::uuid
         returning person_id
     )
@@ -134,7 +138,8 @@ begin atomic
         insert into person (name, email, login_challenge)
         values (replace($1, '@', '-at-'), $1, gen_random_uuid())
         on conflict (email) do update
-            set login_challenge = excluded.login_challenge
+            set login_challenge = excluded.login_challenge,
+                challenge_used_at = null
         returning *
     ),
     person_detail as (
@@ -159,6 +164,7 @@ begin atomic
 
             Un nouveau lien d'authentification a été crée pour vous authentifier: %s
 
+            Ce lien sera valide 1 heure.
             Ignorez ce lien si vous n'êtes pas à l'origine de la demande.
 
             Cordialement, l'admin.
@@ -169,6 +175,7 @@ begin atomic
             xmlelement(name a, xmlattributes(
                 url as href
             ), url)
+            , xmlelement(name p, 'Ce lien sera valide 1 heure.')
             , xmlelement(name p, 'Ignorez ce lien si vous n''êtes pas a l''origine de la demande.')
             , xmlelement(name p, 'Cordialement, l''admin.')
         )
