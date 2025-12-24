@@ -92,6 +92,7 @@ pub enum HttpgError {
 
 impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
+        tracing::error!("{self:#?}");
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
     }
 }
@@ -195,7 +196,7 @@ async fn main() -> Result<(), HttpgError> {
         .with(tracing_subscriber::EnvFilter::new(
             env::var("RUST_LOG").unwrap_or("httpg=debug".to_string()),
         ))
-        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::fmt::layer().json().flatten_event(true))
         .init();
 
 

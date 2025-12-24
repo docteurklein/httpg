@@ -218,8 +218,8 @@ language sql
 begin atomic
 with query (q, good_id, redirect, errors) as (
     with q (q, errors) as (
-        select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}'),
-        coalesce(nullif(current_setting('httpg.errors', true), '')::jsonb, '{}')
+        select nullif(current_setting('httpg.query', true), '')::jsonb,
+        nullif(current_setting('httpg.errors', true), '')::jsonb
     )
     select q,
     q->'body'->>'form.id',
@@ -290,7 +290,7 @@ grant execute on function good_form to person;
 create or replace view "good admin" (html)
 with (security_invoker)
 as with query (q) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')
+    select nullif(current_setting('httpg.query', true), '')::jsonb
 ),
 result (html, good_id) as (
     select xmlelement(name article, xmlattributes('card' as class),
@@ -452,7 +452,7 @@ grant select on table "good admin" to person;
 create or replace view "giving activity" (html)
 with (security_invoker)
 as with q (body) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'body'
 ),
 data (good_id, giver_id, title, given) as (
     select good_id, good.giver, title, exists (select from interest where good_id = good.good_id and state in ('approved', 'late', 'given'))
@@ -600,7 +600,7 @@ create type public_person as (name text, phone text);
 create or replace view "receiving activity" (html)
 with (security_invoker)
 as with q (body) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'body'
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'body'
 ),
 data (good, giver, receiver, interest) as (
     select good, row(giver_.name, giver_.phone)::public_person, row(receiver_.name, receiver_.phone)::public_person, interest
@@ -710,7 +710,7 @@ grant select on table "receiving activity" to person;
 create or replace view "findings" (html)
 with (security_invoker)
 as with q (qs) as (
-    select coalesce(nullif(current_setting('httpg.query', true), '')::jsonb, '{}')->'qs'
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
 ),
 map (html) as (
     select $html$
