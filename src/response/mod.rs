@@ -29,13 +29,19 @@ fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
         for (i, col) in row.columns().iter().enumerate() {
             match col.name() {
                 "status" => {
-                    builder = builder.status(StatusCode::from_u16(row.get::<usize, u32>(i) as u16)?);
+                    if let Some(status) = row.get::<usize, Option<i32>>(i) {
+                        builder = builder.status(StatusCode::from_u16(status as u16)?);
+                    }
                 },
                 "header" => {
-                    builder = builder.header(HeaderName::from_str(row.get(i))?, HeaderValue::from_str(row.get(i + 1))?);
+                    if let Some(name) = row.get::<usize, Option<&str>>(i) {
+                        builder = builder.header(HeaderName::from_str(name)?, HeaderValue::from_str(row.get(i + 1))?);
+                    }
                 },
                 "body" => {
-                    body.put(row.get::<usize, &[u8]>(i));
+                    if let Some(chunk) = row.get::<usize, Option<&[u8]>>(i) {
+                        body.put(chunk);
+                    }
                 }
                 _ => {}
             }
