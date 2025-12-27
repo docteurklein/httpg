@@ -11,7 +11,7 @@ use conf::Conf;
 
 use config::ConfigError;
 use cookie::time::{Duration, OffsetDateTime};
-use futures::{TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use lettre::{
     message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
     AsyncTransport, Message, Tokio1Executor,
@@ -94,6 +94,30 @@ impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
         tracing::error!("{self:#?}");
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+    }
+}
+#[derive(Clone, Debug, Conf)]
+#[conf(env_prefix="PG_")]
+struct PostgresConfig {
+    #[conf(env)]
+    host: String,
+    #[conf(env)]
+    user: String,
+    #[conf(env)]
+    password: String,
+    #[conf(env)]
+    dbname: String,
+}
+
+impl PostgresConfig {
+    pub fn from_env() -> tokio_postgres::Config {
+        let cfg = Self::parse();
+        tokio_postgres::Config::new()
+            .user(cfg.user)
+            .password(cfg.password)
+            .dbname(cfg.dbname)
+            .host(cfg.host)
+            .to_owned()
     }
 }
 
@@ -179,7 +203,7 @@ struct HttpgConfig {
 
 impl HttpgConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
-        Ok(HttpgConfig::parse())
+        Ok(Self::parse())
     }
 }
 
@@ -231,6 +255,25 @@ async fn main() -> Result<(), HttpgError> {
         .layer(TraceLayer::new_for_http())
     ;
 
+    let (client, mut conn) = PostgresConfig::from_env().connect(NoTls).await?;
+
+    tokio::spawn(async move {
+        let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+
+        while let Some(Ok(m)) = stream.next().await {
+            match m {
+                tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
+                tokio_postgres::AsyncMessage::Notification(n) => {
+                    dbg!(&n);
+                },
+                _ => todo!(),
+            }
+        }
+
+        Ok::<(), HttpgError>(())
+    });
+    client.simple_query("listen job").await?;
+
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
         httpg_config.port,
@@ -238,25 +281,23 @@ async fn main() -> Result<(), HttpgError> {
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on {}", tcp.local_addr()?);
 
-    
     match httpg_config.tls {
         Some(tls) =>  {
             let config = RustlsConfig::from_pem_file(
                 tls.pem,
                 tls.pem_key,
-            )
-            .await;
+            ).await?;
 
-            axum_server::from_tcp_rustls(tcp, config?)?
+            axum_server::from_tcp_rustls(tcp, config)?
                 .serve(app.into_make_service())
-                .await?
+            .await?
         },
         None => {
             tcp.set_nonblocking(true)?;
 
             axum_server::from_tcp(tcp)?
                 .serve(app.into_make_service())
-                .await?
+            .await?
         },
     };
     Ok(())
