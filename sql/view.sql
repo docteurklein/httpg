@@ -167,6 +167,9 @@ select xmlelement(name article, xmlattributes(
     case when bird_distance_km is not null then
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
+    xmlelement(name a, xmlattributes(
+        format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[1], (good).location[2]) as href
+    ), _('go with google maps')),
     xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value)),
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),

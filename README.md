@@ -22,16 +22,13 @@ It's up to you to grant correct permissions, be it row-level policies or table a
 Select queries are run in read-only transactions (and rollbacked once done, even tho ["it doesn't matter"](https://www.postgresql.org/message-id/flat/07FDEE0ED7455A48AC42AC2070EDFF7C67EBDF%40corpsrv2.tazznetworks.com)).
 
 ```
-nix develop --impure -c $SHELL
+nix develop . -c $SHELL
 
 generate keypair: https://doc.biscuitsec.org/usage/command-line.html
 export HTTPG_PRIVATE_KEY=private-key-file
 
-devenv up --tui=false
+n run .#container -- create --update-changed --start
 
-export PG_DATABASE=httpg
-export PG_HOST=$PGHOST
-cargo run
 ```
 
 visit http://0:3000

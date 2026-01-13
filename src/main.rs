@@ -34,7 +34,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
 use crate::{extract::query::{Query}};
-// use crate::response::compress_stream;
+use crate::response::compress_stream;
 
 mod extract;
 mod sql;
@@ -103,7 +103,7 @@ struct PostgresConfig {
     host: String,
     #[conf(env)]
     user: String,
-    #[conf(env)]
+    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     password: String,
     #[conf(env)]
     dbname: String,
@@ -168,9 +168,9 @@ impl DeadPoolConfig {
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(fs::read_to_string(file)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     pem: String,
-    #[conf(env, value_parser = |file: &str| -> Result<_, Box<dyn std::error::Error>> { Ok(fs::read_to_string(file)?) })]
+    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     pem_key: String,
 }
 
@@ -185,7 +185,7 @@ struct HttpgConfig {
     smtp_sender: String,
     #[conf(env)]
     smtp_user: String,
-    #[conf(env)]
+    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     smtp_password: String,
     #[conf(env)]
     smtp_relay: String,
@@ -235,36 +235,54 @@ async fn main() -> Result<(), HttpgError> {
         config: httpg_config.to_owned(),
     };
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any);
-
     let app = Router::new()
         .route("/", get(index))
-        .route("/login", get(login).post(login))
         .route("/logout", get(logout).post(logout))
         .route("/query", get(stream_query).post(post_query))
         .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
         .route("/http", get(http).post(http))
         .route("/webpush", get(web_push).post(web_push))
+        // .layer(axum::middleware::from_fn_with_state(state.clone(), pre))
+        .route("/login", get(login).post(login))
         .fallback_service(ServeDir::new("public"))
-        .with_state(state)
-        .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
-        // .layer(axum::middleware::from_fn(compress_stream::compress_stream))
-        .layer(ServiceBuilder::new().layer(cors))
-        .layer(TraceLayer::new_for_http())
+        .with_state(state.to_owned())
+        .layer(ServiceBuilder::new()
+            .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
+            .layer(axum::middleware::from_fn(compress_stream::compress_stream))
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::new().allow_origin(Any))
+        )
     ;
-
-    let (client, mut conn) = PostgresConfig::from_env().connect(NoTls).await?;
-
     tokio::spawn(async move {
+
+        let (client, mut conn) = PostgresConfig::from_env().connect(NoTls).await?;
+
         let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+
+        let state = axum::extract::State(state);
+
+        client.simple_query("listen web_push").await?;
+        // client.simple_query("listen job").await?;
 
         while let Some(Ok(m)) = stream.next().await {
             match m {
                 tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
                 tokio_postgres::AsyncMessage::Notification(n) => {
-                    dbg!(&n);
+                    match n.channel() {
+                        "web_push" => {
+                            let res = web_push(
+                                    state.to_owned(),
+                                    None,
+                                    Query::default()
+                                )
+                                .await?
+                                .into_response()
+                            ;
+                            dbg!(&res);
+                        }
+                        _ => todo!("{n:#?}")
+                    }
                 },
                 _ => todo!(),
             }
@@ -272,7 +290,6 @@ async fn main() -> Result<(), HttpgError> {
 
         Ok::<(), HttpgError>(())
     });
-    client.simple_query("listen job").await?;
 
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
@@ -452,11 +469,10 @@ async fn email(
 
     let creds = Credentials::new(smtp_user, smtp_password);
 
-    let mailer: AsyncSmtpTransport<Tokio1Executor> =
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_relay)
-            .unwrap()
-            .credentials(creds)
-            .build();
+    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_relay)?
+        .credentials(creds)
+        .build()
+    ;
 
     rows.err_into::<HttpgError>().try_for_each(async |row| {
         let email = Message::builder()
