@@ -117,6 +117,10 @@ impl PostgresConfig {
             .password(cfg.password)
             .dbname(cfg.dbname)
             .host(cfg.host)
+            .ssl_mode(match env::var("PG_SSLMODE").as_deref() {
+                Ok("require") => tokio_postgres::config::SslMode::Require,
+                _ => tokio_postgres::config::SslMode::Prefer,
+            })
             .to_owned()
     }
 }
