@@ -51,7 +51,7 @@
         packages.oci = n2c.nix2container.buildImage {
           name = "docteurklein/httpg";
           config = {
-            entrypoint = ["${self'.packages.httpg}/bin/httpg"];
+            entrypoint = ["${self'.packages.httpg-release}/bin/httpg"];
           };
           copyToRoot = pkgs.buildEnv {
             name = "assets";
