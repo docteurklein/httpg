@@ -168,7 +168,8 @@ select xmlelement(name article, xmlattributes(
         xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
     xmlelement(name a, xmlattributes(
-        format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[1], (good).location[2]) as href
+        format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[0], (good).location[1]) as href,
+        '_blank' as target
     ), _('go with google maps')),
     xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value)),
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
