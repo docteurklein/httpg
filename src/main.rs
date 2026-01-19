@@ -3,7 +3,7 @@ mod sql;
 mod response;
 mod postgres;
 
-use crate::postgres::{DeadPoolConfig, NoCertificateVerification, PostgresConfig};
+use crate::postgres::{DeadPoolConfig, PostgresConn};
 
 use http::Uri;
 use axum::{
@@ -24,12 +24,11 @@ use lettre::{
     AsyncTransport, Message, Tokio1Executor,
 };
 use serde_json::json;
-use tokio_postgres_rustls::MakeRustlsConnect;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use core::{panic};
-use std::{fs::{self, File}, net::TcpListener, sync::Arc};
+use std::{fs::{self, File}, net::TcpListener};
 use std::env;
 use std::net::SocketAddr;
 use tokio_postgres::{IsolationLevel};
@@ -188,14 +187,8 @@ async fn main() -> Result<(), HttpgError> {
     ;
     tokio::spawn(async move {
 
-        let cfg = PostgresConfig::from_env();
-        let tls_config = rustls::ClientConfig::builder()
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-            .with_no_client_auth()
-        ;
-
-        let (client, mut conn) = cfg.connect(MakeRustlsConnect::new(tls_config)).await?;
+        let mut cfg = PostgresConn::from_env();
+        let (client, mut conn) = cfg.connect().await?;
 
         let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
 

@@ -123,7 +123,7 @@
                         "PG_READ_PG_HOST=10.250.0.2"
                         "PG_WRITE_PG_HOST=10.250.0.2"
                         "PORT=3000"
-                        "RUST_LOG=tokio_postgres=trace,httpg=debug,tower_http=debug"
+                        "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
                       ];
                     };
                   };
@@ -180,9 +180,9 @@
                       log_temp_files = 0;
                       # logging_collector = true;
                       # log_destination = nixpkgs.lib.mkForce "syslog";
-                      log_statement = "all";
-                      "auto_explain.log_nested_statements" = true;
-                      "auto_explain.log_min_duration" = 0;
+                      # log_statement = "all";
+                      # "auto_explain.log_nested_statements" = true;
+                      # "auto_explain.log_min_duration" = 0;
                       shared_preload_libraries = "auto_explain,pg_hint_plan,pg_stat_statements";
                       max_connections = 100;
                       # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM

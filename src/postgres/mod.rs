@@ -2,10 +2,10 @@
 use std::{env, fs, sync::Arc};
 
 use conf::Conf;
-use deadpool_postgres::{Pool, Runtime, SslMode};
+use deadpool_postgres::{Pool, Runtime};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
 use serde::{Deserialize, Serialize};
-use tokio_postgres::NoTls;
+use tokio_postgres::{Client, Connection, Socket, tls::TlsStream};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::{HttpgError};
@@ -23,10 +23,13 @@ pub struct PostgresConfig {
     dbname: String,
 }
 
-impl PostgresConfig {
-    pub fn from_env() -> tokio_postgres::Config {
-        let cfg = Self::parse();
-        tokio_postgres::Config::new()
+#[derive(Clone, Debug)]
+pub struct PostgresConn(tokio_postgres::Config);
+
+impl PostgresConn {
+    pub fn from_env() -> Self {// tokio_postgres::Config {
+        let cfg = PostgresConfig::parse();
+        Self(tokio_postgres::Config::new()
             .user(cfg.user)
             .password(cfg.password)
             .dbname(cfg.dbname)
@@ -36,6 +39,17 @@ impl PostgresConfig {
                 _ => tokio_postgres::config::SslMode::Prefer,
             })
             .to_owned()
+        )
+    }
+
+    pub async fn connect(&mut self) -> Result<(Client, Connection<Socket, impl TlsStream>), HttpgError> {
+        let tls_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+            .with_no_client_auth()
+        ;
+
+        self.0.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
     }
 }
 
@@ -83,19 +97,14 @@ impl DeadPoolConfig {
     }
 
     pub fn create_pool(&mut self) -> Result<Pool, HttpgError> {
-        match self.pg.ssl_mode {
-            Some(SslMode::Require) | Some(SslMode::Prefer) => {
-                let tls_config = rustls::ClientConfig::builder()
-                    .dangerous()
-                    .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
-                    .with_no_client_auth()
-                ;
-                let tls = MakeRustlsConnect::new(tls_config);
+        let tls_config = rustls::ClientConfig::builder()
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
+            .with_no_client_auth()
+        ;
+        let tls = MakeRustlsConnect::new(tls_config);
 
-                self.pg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
-            },
-            _ =>  self.pg.create_pool(Some(Runtime::Tokio1), NoTls).map_err(Into::into)
-        }
+        self.pg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
     }
 }
 
