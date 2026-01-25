@@ -27,7 +27,7 @@ pub struct PostgresConfig {
 pub struct PostgresConn(tokio_postgres::Config);
 
 impl PostgresConn {
-    pub fn from_env() -> Self {// tokio_postgres::Config {
+    pub fn from_env() -> Self {
         let cfg = PostgresConfig::parse();
         Self(tokio_postgres::Config::new()
             .user(cfg.user)

@@ -18,7 +18,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let state = AppState::from_ref(state);
-        let root = KeyPair::from(&PrivateKey::from_bytes(&state.config.private_key)?);
+        let root = KeyPair::from(&PrivateKey::from_bytes(&state.config.private_key_file)?);
         let cookies = CookieJar::from_headers(&parts.headers);
         match cookies.get("auth") {
             Some(token) => {

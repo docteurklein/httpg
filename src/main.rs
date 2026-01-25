@@ -1,9 +1,8 @@
+mod error;
 mod extract;
 mod sql;
 mod response;
 mod postgres;
-
-use crate::postgres::{DeadPoolConfig, PostgresConn};
 
 use http::Uri;
 use axum::{
@@ -11,7 +10,7 @@ use axum::{
         StatusCode, header::SET_COOKIE,
     }, response::{Html, IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
 };
-use axum_extra::extract::{cookie::Cookie};
+use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 use conf::Conf;
@@ -27,109 +26,49 @@ use serde_json::json;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
-use core::{panic};
-use std::{fs::{self, File}, net::TcpListener};
-use std::env;
-use std::net::SocketAddr;
-use tokio_postgres::{IsolationLevel};
-use tokio_postgres::types::{ToSql, Type};
-use deadpool_postgres::{CreatePoolError, Pool, PoolError, Transaction};
+use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}};
+use tokio_postgres::{IsolationLevel, types::{ToSql, Type}};
+use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{extract::query::{Query}};
-use crate::response::compress_stream;
-
-#[derive(thiserror::Error, Debug)]
-pub enum HttpgError {
-    #[error("io: {0:#?}")]
-    Io(#[from] std::io::Error),
-    #[error("config: {0:#?}")]
-    Config(#[from] config::ConfigError),
-    #[error("postgres: {0:#?}")]
-    Postgres(#[from] tokio_postgres::Error),
-    #[error("deadpool: {0:#?}")]
-    Deadpool(#[from] PoolError),
-    #[error("deadpool config: {0:#?}")]
-    DeadpoolConfig(#[from] CreatePoolError),
-    #[error("biscuit token: {0:#?}")]
-    BiscuitToken(#[from] biscuit_auth::error::Token),
-    #[error("biscuit format: {0:#?}")]
-    BiscuitFormat(#[from] biscuit_auth::error::Format),
-    #[error("serde: {0:#?}")]
-    Serde(#[from] serde_json::Error),
-    #[error("axum: {0:#?}")]
-    Axum(#[from] axum::http::Error),
-    #[error("axum header name: {0:#?}")]
-    AxumHeaderName(#[from] axum::http::header::InvalidHeaderName),
-    #[error("axum header value: {0:#?}")]
-    AxumHeaderValue(#[from] axum::http::header::InvalidHeaderValue),
-    #[error("axum code: {0:#?}")]
-    AxumCode(#[from] axum::http::status::InvalidStatusCode),
-    #[error("axum multipart: {0:#?}")]
-    AxumMultipart(#[from] axum::extract::multipart::MultipartError),
-    #[error("email: {0:#?}")]
-    Email(#[from] lettre::error::Error),
-    #[error("email: {0:#?}")]
-    EmailAddress(#[from] lettre::address::AddressError),
-    #[error("email: {0:#?}")]
-    Smtp(#[from] lettre::transport::smtp::Error),
-    #[error("http: {0:#?}")]
-    HttpClient(#[from] reqwest::Error),
-    #[error("hex: {0:#?}")]
-    Hex(#[from] hex::FromHexError),
-    #[error("web_push: {0:#?}")]
-    WebPush(#[from] web_push::WebPushError),
-    #[error("uri: {0:#?}")]
-    Uri(#[from] http::uri::InvalidUri),
-    #[error("querystring: {0:#?}")]
-    QueryString(#[from] serde_qs::Error),
-    #[error("no webpush private key")]
-    WebPushPrivateKey,
-    #[error("invalid text param")]
-    InvalidTextParam,
-}
-
-impl IntoResponse for HttpgError {
-    fn into_response(self) -> Response {
-        tracing::error!("{self:#?}");
-        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
-    }
-}
+use crate::{error::HttpgError, extract::query::Query, postgres::{DeadPoolConfig, PostgresConn}, response::compress_stream};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
-    pem: String,
-    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
-    pem_key: String,
+    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    pem_file: String,
+    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    pem_key_file: String,
 }
 
 #[derive(Clone, Conf)]
 #[conf(env_prefix="HTTPG_")]
 struct HttpgConfig {
-    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
-    private_key: Vec<u8>,
-    #[conf(env)]
+    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
+    private_key_file: Vec<u8>,
+    #[conf(long, env)]
     webpush_private_key_file: Option<String>,
-    #[conf(env)]
+    #[conf(long, env)]
     smtp_sender: String,
-    #[conf(env)]
+    #[conf(long, env)]
     smtp_user: String,
-    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
-    smtp_password: String,
-    #[conf(env)]
+    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    smtp_password_file: Option<String>,
+    #[conf(long, env)]
     smtp_relay: String,
-    #[conf(env)]
+    #[conf(long, env)]
     anon_role: String,
-    #[conf(env)]
+    #[conf(long, env)]
     index_sql: String,
-    #[conf(env)]
+    #[conf(long, env)]
     login_query: String,
-    #[conf(env, default_value="3000")]
+    #[conf(long, env, default_value="3000")]
     port: u16,
     #[conf(flatten)]
     tls: Option<TlsConfig>,
+    #[conf(long, env, default_value="public")]
+    public_dir: String,
 }
 
 impl HttpgConfig {
@@ -176,17 +115,17 @@ async fn main() -> Result<(), HttpgError> {
         .route("/webpush", get(web_push).post(web_push))
         // .layer(axum::middleware::from_fn_with_state(state.clone(), pre))
         .route("/login", get(login).post(login))
-        .fallback_service(ServeDir::new("public"))
+        .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
-            .layer(DefaultBodyLimit::disable()) //max(1024 * 100))
+            .layer(DefaultBodyLimit::disable()) // .max(1024 * 100))
             .layer(axum::middleware::from_fn(compress_stream::compress_stream))
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::new().allow_origin(Any))
         )
     ;
-    tokio::spawn(async move {
 
+    tokio::spawn(async move {
         let mut cfg = PostgresConn::from_env();
         let (client, mut conn) = cfg.connect().await?;
 
@@ -233,8 +172,8 @@ async fn main() -> Result<(), HttpgError> {
     match httpg_config.tls {
         Some(tls) =>  {
             let config = RustlsConfig::from_pem_file(
-                tls.pem,
-                tls.pem_key,
+                tls.pem_file,
+                tls.pem_key_file,
             ).await?;
 
             axum_server::from_tcp_rustls(tcp, config)?
@@ -266,11 +205,11 @@ async fn index(
 
 #[debug_handler]
 async fn login(
-    State(AppState {write_pool, config: HttpgConfig { login_query, anon_role, private_key, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { login_query, anon_role, private_key_file, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key)?);
+    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key_file)?);
 
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction()
@@ -323,6 +262,7 @@ async fn logout(
 async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;
+    tx.batch_execute(&format!("set local statement_timeout to 500")).await?;
 
     if let Some(lang) = &query.accept_language {
         let mut lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
@@ -364,7 +304,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
 #[debug_handler]
 async fn email(
-    State(AppState {write_pool, config: HttpgConfig { smtp_sender, smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { smtp_sender, smtp_user, smtp_password_file, smtp_relay, anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
@@ -383,12 +323,13 @@ async fn email(
 
     let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
-    let creds = Credentials::new(smtp_user, smtp_password);
+    let mut mailer = AsyncSmtpTransport::<Tokio1Executor>::from_url(&smtp_relay)?;
 
-    let mailer = AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_relay)?
-        .credentials(creds)
-        .build()
-    ;
+    if let Some(smtp_password) = smtp_password_file {
+        let creds = Credentials::new(smtp_user, smtp_password);
+        mailer = mailer.credentials(creds);
+    }
+    let mailer = mailer.build();
 
     rows.err_into::<HttpgError>().try_for_each(async |row| {
         let email = Message::builder()
@@ -438,10 +379,7 @@ async fn http(
             "POST" =>  client.post(row.get::<&str, &str>("url")),
             _ =>  client.get(row.get::<&str, &str>("url")),
         };
-        let res = builder
-            .header("TTL", 2419200)
-            .send()
-        .await?;
+        let res = builder.send().await?;
         dbg!(&res);
         Ok(())
     }).await?;

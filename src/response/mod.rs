@@ -1,4 +1,3 @@
-
 use std::str::FromStr;
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
@@ -47,7 +46,7 @@ fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
             }
         }
     }
-    builder.body(Body::from(body.to_vec())).map_err(Into::into)
+    builder.body(Body::from(body.freeze())).map_err(Into::into)
 }
 
 impl IntoResponse for HttpResult {

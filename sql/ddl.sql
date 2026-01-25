@@ -8,7 +8,8 @@ set neon.allow_unstable_extensions='true';
 -- drop extension if not exists rag_bge_small_en_v15 cascade; 
 -- drop extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
-select current_setting('neon.project_id', true) is not null as is_neon \gset
+select current_setting('neon.project_id', true) is not null as is_neon
+\gset
 
 create extension if not exists vector cascade;
 create extension if not exists fuzzystrmatch cascade;
@@ -67,8 +68,10 @@ end;
 
 
 \if :{?password}
-select format('create user httpg with password %L noinherit', :'password')\gexec
+select format('create user httpg with password %L noinherit', :'password')
+\gexec
 \endif
+
 do $$ begin
     create role person noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
@@ -78,8 +81,13 @@ grant person to httpg;
 
 grant usage on schema cpres, url, pg_catalog to httpg;
 grant usage on schema cpres, url, pg_catalog to person;
-alter role person set search_path to cpres, url, pg_catalog;
 alter role httpg set search_path to cpres, url, pg_catalog;
+alter role person set search_path to cpres, url, pg_catalog;
+
+alter role httpg set statement_timeout to "500ms"; -- only at login time, se we set on http user, not person role
+alter role httpg set transaction_timeout to "500ms";
+alter role httpg set lock_timeout to "500ms";
+alter role httpg set idle_in_transaction_session_timeout to "500ms";
 
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;
@@ -232,7 +240,7 @@ with check (
 
 create domain interest_level as text
 default 'interested'
-check (value = any (array['a little interested', 'interested', 'highly interested']));
+check (array['a little interested', 'interested', 'highly interested'] @> array[value]);
     
 create table interest (
     good_id uuid not null

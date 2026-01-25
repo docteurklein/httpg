@@ -26,7 +26,7 @@ select :'needs_work';
 \endif
 
 do $$ begin
-perform 1;
+perform 1; -- to set FOUND = 1
 while FOUND loop
     with r as materialized (
         select person_id from person

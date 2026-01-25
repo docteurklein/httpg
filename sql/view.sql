@@ -6,6 +6,7 @@ create or replace function cpres._(id_ text, lang_ text = null)
 returns text
 immutable parallel safe -- leakproof
 security definer
+
 set search_path to cpres, pg_catalog
 language sql
 begin atomic
@@ -211,7 +212,6 @@ as select geojson(location, jsonb_build_object(
 )) geojson, bird_distance_km
 from "good_detail"
 where receiver is null;
-;
 
 grant select on table nearby to person;
 
