@@ -1,3 +1,5 @@
+import imageCompression from 'https://esm.run/browser-image-compression@2.0.1';
+
 navigator.serviceWorker.register('/service-worker.js').then(reg => {
   reg.update();
 });
@@ -57,3 +59,29 @@ Array.from(document.querySelectorAll('.messages')).forEach(e => {
   e.scrollTop = e.scrollHeight;
 });
 
+document.addEventListener('submit', async event => {
+  const options = {
+    maxSizeMB: 0.5,
+    maxIteration: 20,
+    maxWidthOrHeight: 1800,
+    useWebWorker: true,
+  };
+  let formData = new FormData(event.target);
+  if (formData.has('file') && formData.get('file').type.startsWith('image/')) {
+    event.preventDefault();
+    formData.set('file', await imageCompression(formData.get('file'), options), formData.get('file').name);
+    fetch(event.target.action, {
+      method: 'POST',
+      headers: {
+        'Accept': 'text/html',
+      },
+      body: formData,
+    })
+    .then(response => response.text())
+    .then(result => {
+      let parser = new DOMParser();
+      let doc = parser.parseFromString(result, 'text/html');
+      document.replaceChild(doc.documentElement, document.documentElement);
+    });
+  }
+});

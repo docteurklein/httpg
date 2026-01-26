@@ -118,10 +118,13 @@ async fn main() -> Result<(), HttpgError> {
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
-            .layer(DefaultBodyLimit::disable()) // .max(1024 * 100))
+            .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
             .layer(axum::middleware::from_fn(compress_stream::compress_stream))
             .layer(TraceLayer::new_for_http())
-            .layer(CorsLayer::new().allow_origin(Any))
+            .layer(CorsLayer::new()
+                .allow_origin(Any)
+                .expose_headers(Any)
+            )
         )
     ;
 
