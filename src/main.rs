@@ -119,7 +119,7 @@ async fn main() -> Result<(), HttpgError> {
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
             .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
-            .layer(axum::middleware::from_fn(compress_stream::compress_stream))
+            // .layer(axum::middleware::from_fn(compress_stream::compress_stream))
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::new()
                 .allow_origin(Any)
