@@ -15,17 +15,12 @@
     };
   };
 
-  nixConfig = {
-  };
-
   outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      imports = [
-      ];
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
 
       perSystem = { config, self', inputs', pkgs, lib, system, ... }: let
-        n2c = inputs.nix2container.packages.x86_64-linux;
+        n2c = inputs.nix2container.packages.${system};
         craneLib = crane.mkLib pkgs;
         crate = {
           src = craneLib.cleanCargoSource ./.;
@@ -87,6 +82,13 @@
             containers.httpg = {
               ephemeral = true;
               autoStart = true;
+
+              extraFlags = [
+                "--drop-capability=CAP_SYS_CHROOT"
+                "-U"
+                "--private-users=pick"
+                "--private-users-ownership=chown"
+              ];
 
               extra.addressPrefix = "10.250.0";
 
@@ -176,7 +178,7 @@
                   ];
                   initialScript = pkgs.writeText "backend-init-script" ''
                     CREATE ROLE postgres WITH SUPERUSER LOGIN CREATEDB;
-                    CREATE ROLE httpg WITH LOGIN CREATEDB;
+                    CREATE USER httpg;
                   '';
 
                   authentication = pkgs.lib.mkForce ''
@@ -218,7 +220,7 @@
                 services.mailcatcher = {
                   enable = true;
                   http.ip = "0.0";
-                  smtp.ip = "0.0";
+                  # smtp.ip = "0.0";
                 };
               });
             };

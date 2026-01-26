@@ -1,8 +1,7 @@
-use std::str::FromStr;
+use std::{str::FromStr};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
-// use serde::{Deserialize, Serialize};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
@@ -57,11 +56,13 @@ impl IntoResponse for HttpResult {
         match self.query.accept {
             Some(a) if a.starts_with("application/json") => {
                 match self.rows {
-                    Rows::Stream(rows) =>  (
+                    Rows::Stream(rows) => (
                         [("content-type", a)],
-                        Body::from_stream(rows
-                            .map(|row| Bytes::from(row.unwrap().get::<usize, String>(0) + "\n"))
-                            .map(Ok::<_, axum::Error>)
+                        Body::from_stream(
+                            rows.map(|row| {
+                                Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
+                            })
+                            .map(Ok::<_, HttpgError>)
                         ),
                     ).into_response(),
 
@@ -84,7 +85,7 @@ impl IntoResponse for HttpResult {
                                     .map_or_else(|e| HttpgError::Postgres(e).to_string() + "\n", |v| v + "\n")
                             )
                             .map(Ok::<_, HttpgError>)
-                        ).into_response()
+                        )
                     ).into_response(),
 
                     Rows::StringVec(rows) => Html(

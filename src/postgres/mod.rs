@@ -1,10 +1,9 @@
 
-use std::{env, fs, sync::Arc};
+use std::{fs, sync::Arc};
 
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
-use serde::{Deserialize, Serialize};
 use tokio_postgres::{Client, Connection, Socket, tls::TlsStream};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
@@ -14,89 +13,75 @@ use crate::{HttpgError};
 #[conf(env_prefix="PG_")]
 pub struct PostgresConfig {
     #[conf(env)]
-    host: String,
+    read_host: String,
+    #[conf(env)]
+    write_host: String,
     #[conf(env)]
     user: String,
     #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     password: String,
     #[conf(env)]
     dbname: String,
+    #[conf(env)]
+    channel_binding: Option<String>,
+    #[conf(env)]
+    ssl_mode: Option<String>,
 }
 
-#[derive(Clone, Debug)]
-pub struct PostgresConn(tokio_postgres::Config);
+impl PostgresConfig {
+    pub fn read_pool(&self) -> Result<Pool, HttpgError> {
+        let mut cfg = deadpool_postgres::Config::new();
 
-impl PostgresConn {
-    pub fn from_env() -> Self {
-        let cfg = PostgresConfig::parse();
-        Self(tokio_postgres::Config::new()
-            .user(cfg.user)
-            .password(cfg.password)
-            .dbname(cfg.dbname)
-            .host(cfg.host)
-            .ssl_mode(match env::var("PG_SSLMODE").as_deref() {
-                Ok("require") => tokio_postgres::config::SslMode::Require,
-                _ => tokio_postgres::config::SslMode::Prefer,
-            })
-            .to_owned()
-        )
+        cfg.host = Some(self.read_host.clone());
+        self.rest(&mut cfg)
     }
 
-    pub async fn connect(&mut self) -> Result<(Client, Connection<Socket, impl TlsStream>), HttpgError> {
+    pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream>), HttpgError> {
+        let cfg = tokio_postgres::Config::new()
+            .user(self.user.clone())
+            .password(self.password.clone())
+            .dbname(self.dbname.clone())
+            .host(self.write_host.clone())
+            .ssl_mode(match self.ssl_mode.as_deref() {
+                Some("require") => tokio_postgres::config::SslMode::Require,
+                _ => tokio_postgres::config::SslMode::Prefer,
+            })
+            .channel_binding(match self.channel_binding.as_deref() {
+                Some("require") => tokio_postgres::config::ChannelBinding::Require,
+                _ => tokio_postgres::config::ChannelBinding::Prefer,
+            })
+            .to_owned()
+        ;
+
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_no_client_auth()
         ;
 
-        self.0.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct DeadPoolConfig {
-    #[serde(default)]
-    pg: deadpool_postgres::Config,
-}
-
-impl DeadPoolConfig {
-    pub fn read() -> Result<Self, config::ConfigError> {
-        let config = config::Config::builder()
-            .add_source(config::Environment::default()
-                .prefix("PG")
-                .separator("_")
-                .keep_prefix(true)
-            )
-            .add_source(config::Environment::default()
-                .prefix("PG_READ")
-                .separator("_")
-                .keep_prefix(false)
-            )
-            .build()?
-        ;
-
-        config.try_deserialize::<Self>()
+        cfg.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
     }
 
-    pub fn write() -> Result<Self, config::ConfigError> {
-        let config = config::Config::builder()
-            .add_source(config::Environment::default()
-                .prefix("PG")
-                .separator("_")
-                .keep_prefix(true)
-            )
-            .add_source(config::Environment::default()
-                .prefix("PG_WRITE")
-                .separator("_")
-                .keep_prefix(false)
-            )
-            .build()?
-        ;
+    pub fn write_pool(&self) -> Result<Pool, HttpgError> {
+        let mut cfg = deadpool_postgres::Config::new();
 
-        config.try_deserialize::<Self>()
+        cfg.host = Some(self.write_host.clone());
+        self.rest(&mut cfg)
     }
 
-    pub fn create_pool(&mut self) -> Result<Pool, HttpgError> {
+    fn rest(&self, cfg: &mut deadpool_postgres::Config) -> Result<Pool, HttpgError> {
+        cfg.user = Some(self.user.clone());
+        cfg.password = Some(self.password.clone());
+        cfg.dbname = Some(self.dbname.clone());
+        cfg.ssl_mode = Some(match self.ssl_mode.as_deref() {
+            Some("require") => deadpool_postgres::SslMode::Require,
+            _ => deadpool_postgres::SslMode::Prefer,
+        });
+        cfg.channel_binding = Some(match self.channel_binding.as_deref() {
+            Some("require") => deadpool_postgres::ChannelBinding::Require,
+            _ => deadpool_postgres::ChannelBinding::Prefer,
+        });
+
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
@@ -104,10 +89,9 @@ impl DeadPoolConfig {
         ;
         let tls = MakeRustlsConnect::new(tls_config);
 
-        self.pg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
+        cfg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
     }
 }
-
 
 #[derive(Debug)]
 pub struct NoCertificateVerification {}

@@ -27,7 +27,6 @@ postgres-types = { version = "^0", features = ["derive"] }
 deadpool-postgres = { version = "^0", features = ["serde"] }
 biscuit-auth = "^5"
 hex = "^0"
-config = "^0"
 tokio-postgres-rustls = "^0"
 rustls = "^0"
 axum-server = { version = "^0", features = ["tls-rustls"] }

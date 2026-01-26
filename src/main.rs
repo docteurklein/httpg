@@ -15,7 +15,6 @@ use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 use conf::Conf;
 
-use config::ConfigError;
 use cookie::time::{Duration, OffsetDateTime};
 use futures::{StreamExt, TryStreamExt};
 use lettre::{
@@ -32,7 +31,7 @@ use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{error::HttpgError, extract::query::Query, postgres::{DeadPoolConfig, PostgresConn}, response::compress_stream};
+use crate::{error::HttpgError, extract::query::Query, postgres::PostgresConfig, response::compress_stream};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
@@ -72,8 +71,8 @@ struct HttpgConfig {
 }
 
 impl HttpgConfig {
-    pub fn from_env() -> Result<Self, ConfigError> {
-        Ok(Self::parse())
+    pub fn from_env() -> Result<Self, conf::Error> {
+        Self::try_parse()
     }
 }
 
@@ -96,8 +95,9 @@ async fn main() -> Result<(), HttpgError> {
 
     let httpg_config = HttpgConfig::from_env()?;
 
-    let read_pool = DeadPoolConfig::read()?.create_pool()?;
-    let write_pool = DeadPoolConfig::write()?.create_pool()?;
+    let cfg = PostgresConfig::parse();
+    let read_pool = cfg.read_pool()?;
+    let write_pool = cfg.write_pool()?;
     
     let state = AppState {
         read_pool,
@@ -126,7 +126,6 @@ async fn main() -> Result<(), HttpgError> {
     ;
 
     tokio::spawn(async move {
-        let mut cfg = PostgresConn::from_env();
         let (client, mut conn) = cfg.connect().await?;
 
         let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
@@ -262,7 +261,7 @@ async fn logout(
 async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;
-    tx.batch_execute(&format!("set local statement_timeout to 500")).await?;
+    tx.batch_execute("set local statement_timeout to 500").await?;
 
     if let Some(lang) = &query.accept_language {
         let mut lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");

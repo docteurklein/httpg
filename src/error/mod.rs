@@ -8,8 +8,8 @@ use lettre::{address, transport};
 pub enum HttpgError {
     #[error("io: {0:#?}")]
     Io(#[from] std::io::Error),
-    #[error("config: {0:#?}")]
-    Config(#[from] config::ConfigError),
+    #[error("conf: {0:#?}")]
+    Conf(#[from] conf::Error),
     #[error("postgres: {0:#?}")]
     Postgres(#[from] tokio_postgres::Error),
     #[error("deadpool: {0:#?}")]
