@@ -269,6 +269,7 @@ select xmlelement(name form, xmlattributes(
     )),
     xmlelement(name textarea, xmlattributes(
         'params[1]' as name,
+        '10' as rows,
         'description' as placeholder
     ), coalesce(params->>1, '')),
     xmlelement(name input, xmlattributes(
@@ -532,6 +533,7 @@ html (html) as (
                         )),
                         xmlelement(name textarea, xmlattributes(
                             'params[]' as name,
+                            '10' as rows,
                             'message' as placeholder,
                             true as required
                         ), ''),
@@ -688,6 +690,7 @@ html (good, html) as (
             )),
             xmlelement(name textarea, xmlattributes(
                 'params[]' as name,
+                '10' as rows,
                 'message' as placeholder,
                 true as required
             ), ''),

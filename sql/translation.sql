@@ -27,7 +27,7 @@ insert into cpres.translation (id, lang, text) values
 , ('Remove alert', 'fr', 'Supprimer cette alerte')
 , (' from %s', 'fr', ' de %s')
 , ('Send message', 'fr', 'Envoyer')
-, ('New good', 'fr', 'Créer un nouveau bien')
+, ('New good', 'fr', 'Ajouter un nouveau bien')
 , ('Existing goods', 'fr', 'Mes biens')
 , ('Submit', 'fr', 'Enregistrer')
 , ('Add file', 'fr', 'Ajouter ce fichier')
@@ -52,6 +52,9 @@ insert into cpres.translation (id, lang, text) values
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'fr', 'Le numéro ne doit pas être vide')
 , ('current bid at %s€', 'fr', 'D''autres offrent %s€.')
 , ('propose ', 'fr', 'Proposer ')
+, ('Price?', 'fr', 'Prix?')
+, ('go with google maps', 'fr', 'ouvrir dans google maps')
+, ('For %s€', 'fr', 'Pour %s€')
 on conflict (id, lang) do update
     set text = excluded.text
 ;
