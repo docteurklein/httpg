@@ -1,4 +1,4 @@
-use std::{str::FromStr};
+use std::{backtrace::Backtrace, str::FromStr};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
@@ -82,7 +82,7 @@ impl IntoResponse for HttpResult {
                             rows.map(|row|
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
-                                    .map_or_else(|e| HttpgError::Postgres(e).to_string() + "\n", |v| v + "\n")
+                                    .map_or_else(|e| HttpgError::Postgres{source: e, backtrace: Backtrace::capture()}.to_string() + "\n", |v| v + "\n")
                             )
                             .map(Ok::<_, HttpgError>)
                         )

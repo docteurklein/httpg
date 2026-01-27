@@ -43,3 +43,4 @@ lettre = { version = "^0", features = ["smtp-transport", "tokio1", "tokio1-nativ
 reqwest = "^0"
 web-push = { version = "^0", features = ["hyper-client"] }
 http = "^1"
+snafu = { version = "0.8.9", features = ["backtrace"] }

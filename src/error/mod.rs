@@ -4,59 +4,127 @@ use deadpool_postgres::{CreatePoolError, PoolError};
 use http::StatusCode;
 use lettre::{address, transport};
 
-#[derive(thiserror::Error, Debug)]
+#[derive(Debug, snafu::Snafu)]
+#[snafu(visibility(pub(crate)))]
 pub enum HttpgError {
-    #[error("io: {0:#?}")]
-    Io(#[from] std::io::Error),
-    #[error("conf: {0:#?}")]
-    Conf(#[from] conf::Error),
-    #[error("postgres: {0:#?}")]
-    Postgres(#[from] tokio_postgres::Error),
-    #[error("deadpool: {0:#?}")]
-    Deadpool(#[from] PoolError),
-    #[error("deadpool config: {0:#?}")]
-    DeadpoolConfig(#[from] CreatePoolError),
-    #[error("biscuit token: {0:#?}")]
-    BiscuitToken(#[from] error::Token),
-    #[error("biscuit format: {0:#?}")]
-    BiscuitFormat(#[from] error::Format),
-    #[error("serde: {0:#?}")]
-    Serde(#[from] serde_json::Error),
-    #[error("axum: {0:#?}")]
-    Axum(#[from] http::Error),
-    #[error("axum header name: {0:#?}")]
-    AxumHeaderName(#[from] header::InvalidHeaderName),
-    #[error("axum header value: {0:#?}")]
-    AxumHeaderValue(#[from] header::InvalidHeaderValue),
-    #[error("axum code: {0:#?}")]
-    AxumCode(#[from] http::status::InvalidStatusCode),
-    #[error("axum multipart: {0:#?}")]
-    AxumMultipart(#[from] multipart::MultipartError),
-    #[error("email: {0:#?}")]
-    Email(#[from] lettre::error::Error),
-    #[error("email: {0:#?}")]
-    EmailAddress(#[from] address::AddressError),
-    #[error("email: {0:#?}")]
-    Smtp(#[from] transport::smtp::Error),
-    #[error("http: {0:#?}")]
-    HttpClient(#[from] reqwest::Error),
-    #[error("hex: {0:#?}")]
-    Hex(#[from] hex::FromHexError),
-    #[error("web_push: {0:#?}")]
-    WebPush(#[from] web_push::WebPushError),
-    #[error("uri: {0:#?}")]
-    Uri(#[from] http::uri::InvalidUri),
-    #[error("querystring: {0:#?}")]
-    QueryString(#[from] serde_qs::Error),
-    #[error("no webpush private key")]
-    WebPushPrivateKey,
-    #[error("invalid text param")]
+    #[snafu(transparent)]
+    Io {
+        source: std::io::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Conf {
+        source: conf::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Postgres {
+        // #[snafu(source(from(tokio_postgres::Error, Box::new)))]
+        source: tokio_postgres::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Deadpool {
+        source: PoolError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    DeadpoolConfig {
+        source: CreatePoolError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    BiscuitToken {
+        source: error::Token,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    BiscuitFormat {
+        // #[snafu(source(from(error::Format, Box::new)))]
+        source: error::Format,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Serde {
+        source: serde_json::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Axum {
+        source: http::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    AxumHeaderName {
+        source: header::InvalidHeaderName,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    AxumHeaderValue {
+        source: header::InvalidHeaderValue,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    AxumCode {
+        source: http::status::InvalidStatusCode,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    AxumMultipart {
+        source: multipart::MultipartError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Email {
+        source: lettre::error::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    EmailAddress {
+        source: address::AddressError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Smtp {
+        source: transport::smtp::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    HttpClient {
+        source: reqwest::Error,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Hex {
+        source: hex::FromHexError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    WebPush {
+        source: web_push::WebPushError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    Uri {
+        source: http::uri::InvalidUri,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    QueryString {
+        source: serde_qs::Error,
+        backtrace: snafu::Backtrace,
+    },
+    WebPushPrivateKey, //{ source: valid text param" }]
     InvalidTextParam,
 }
 
 impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
         tracing::error!("{self:#?}");
+        if let Some(b) = snafu::ErrorCompat::backtrace(&self) {
+            eprintln!("{:?}", &b);
+        }
+
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
     }
 }
