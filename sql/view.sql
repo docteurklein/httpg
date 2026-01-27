@@ -729,7 +729,7 @@ head (html) as (
     select xmlelement(name div,
         xmlelement(name h2, xmlattributes('hashover showhover' as class),  _('Search')),
         xmlelement(name div, xmlattributes('flashes onhover' as class),
-            xmlelement(name article, xmlattributes('blue card' as class), _('findings.help'))
+            xmlelement(name article, xmlattributes('blue card' as class), _('findings.help')::xml)
         ),
         xmlelement(name nav, xmlelement(name ul, (
             select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
@@ -919,7 +919,7 @@ union all (
     from q
     where (q->'qs'->>'debug') is not null
 )
-union all select xmlelement(name nav,
+union all select xmlelement(name nav, xmlattributes('menu' as class),
     xmlelement(name ul, (
         with menu (name, sql, visible) as ( values
             (

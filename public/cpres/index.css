@@ -1,6 +1,6 @@
 :root {
     color-scheme: dark light;
-    --color-surface: dark;
+    --color-surface: #1c1b22;
     --color-on-surface: white;
     --color-destructive: red;
     --color-bg-input: #2b2a33;
@@ -44,6 +44,17 @@ nav ul {
         display: inline-block;
         margin-right: 1ch;
     }
+}
+
+nav.menu {
+    position: sticky;
+    top: 0px;
+    z-index: 30;
+    background: linear-gradient(to bottom, var(--color-surface), hsl(from var(--color-surface) h s l / 50%));
+}
+
+.leaflet-container {
+    z-index: 1;
 }
 
 form {
@@ -123,7 +134,6 @@ input.price {
 
 .search-results #map {
     height: 80vh;
-    position: sticky;
 }
 
 #map:empty {

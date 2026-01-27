@@ -55,6 +55,7 @@ insert into cpres.translation (id, lang, text) values
 , ('Price?', 'fr', 'Prix?')
 , ('go with google maps', 'fr', 'ouvrir dans google maps')
 , ('For %s€', 'fr', 'Pour %s€')
+, ('findings.help', 'fr', '<b>a</b> b')
 on conflict (id, lang) do update
     set text = excluded.text
 ;
