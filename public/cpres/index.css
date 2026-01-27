@@ -173,6 +173,14 @@ article.card {
     }
 }
 
+img.marker-icon {
+    display: none;
+
+    .list & {
+        display: block;
+    }
+}
+
 input.destructive {
     background-color: transparent;
     border: 2px solid var(--color-destructive);
@@ -186,6 +194,10 @@ a.whatsapp {
 }
 
 .error {
+    background-color: red;
+}
+
+input[type="submit"].delete-account {
     background-color: red;
 }
 
@@ -218,7 +230,7 @@ a.whatsapp {
 .onhover {
     display: none;
     position: absolute;
-    z-index: 2;
+    z-index: 100;
 }
 
 @media(hover: none) {
@@ -255,4 +267,8 @@ a.whatsapp {
     & pre {
         white-space: pre-wrap;
     }
+}
+
+pre {
+    text-wrap: wrap;
 }

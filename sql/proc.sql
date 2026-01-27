@@ -127,6 +127,16 @@ end;
 
 grant execute on function login to person;
 
+create or replace procedure delete_account()
+language sql
+security invoker
+set search_path to cpres, pg_catalog
+begin atomic
+    delete from person where person_id = current_person_id();
+end;
+
+grant execute on procedure delete_account to person;
+
 create or replace function send_login_email(email_ text, location_ text, push_endpoint_ text)
 returns table ("from" text, "to" text, subject text, plain text, html text)
 language sql

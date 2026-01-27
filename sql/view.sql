@@ -896,8 +896,8 @@ union all (
             true as required,
             'Notification.requestPermission()' as onfocus
         )),
-        xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class)),
-        xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'push_endpoint' as class)),
+        xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class, 'off' as autocomplete)),
+        xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'push_endpoint' as class, 'off' as autocomplete)),
         xmlelement(name input, xmlattributes('submit' as type, _('Send login challenge') as value))
     )::text
     from q
@@ -1003,8 +1003,27 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
             select html from profile
             union all
             select html from item
-            union all 
+            union all
             select xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
+            where current_person_id() is not null
+            union all
+            select xmlelement(name form, xmlattributes(
+                'POST' as method,
+                url('/query', jsonb_build_object(
+                    'sql', 'call delete_account()',
+                    'redirect', '/logout'
+                )) as action
+            ),
+                xmlelement(name input, xmlattributes(
+                    'submit' as type,
+                    'delete-account' as class,
+                    format('return confirm(%L)', _('Are you sure?')) as onclick,
+                    _('Delete account') as value
+                ))
+            )
+            -- select xmlelement(name a, xmlattributes(
+            --     query('/query') as href
+            -- ), _('Delete account'))
             where current_person_id() is not null
         )
         select xmlagg(xmlelement(name li, html))
@@ -1052,5 +1071,37 @@ with (security_invoker)
 as select xmlelement(name h2, _('About'))
 union all select xmlelement(name p, 'Fait avec amour et passion par Florian Klein.')
 union all select xmlelement(name a, xmlattributes('https://github.com/docteurklein/httpg' as href), 'code source')
+union all select xmlelement(name h2, 'Mentions légales')
+union all select xmlelement(name p, '
+    Editeur: Florian Klein <br/>
+    florian.klein@free.fr <br/>
+    Hébergé en europe sur google cloud et neon.tech.
+'::xml)
+union all select xmlelement(name h2, 'Politique de confidentialité')
+union all select xmlelement(name pre, $$
+Les administrateurs s’engagent à ce que la collecte et le traitement de vos données, effectués à partir du portail economie.gouv.fr, soient conformes au règlement général sur la protection des données (RGPD) et à la loi Informatique et Libertés.
+
+En application de la réglementation relative à la protection des données personnelles (le Règlement UE 2016/679 et la Loi Informatique et Libertés du 6 janvier 1978), le Bureau de l'assistance et des technologies numériques traite les données recueillies pour gérer et traiter vos demandes. Vous disposez d'un droit d'accès, de rectification, d'effacement, de limitation et d'opposition sur vos données. Vous pouvez exercer ce droit en envoyant un courrier à :
+
+Ministères économiques et financiers
+SG-SIRCOM, Bureau de l'assistance et des technologies numériques
+teledoc 581
+139 rue de Bercy
+75572 Paris cedex 12
+
+En cas de non-conformité relative au traitement de vos données, vous avez le droit d'introduire une réclamation auprès de l’autorité de contrôle, la CNIL, 3, Place de Fontenoy TSA 80715 75334 PARIS Cedex 07.
+$$)
+union all select xmlelement(name h2, 'Cookies')
+union all select xmlelement(name pre, $$
+Seul 1 cookie essentiel est utilisé pour maintenir l'utilisateur connecté.
+$$)
+union all select xmlelement(name h2, 'Données personnelles')
+union all select xmlelement(name pre, $$
+Seul votre email est nécessairement stocké pour garantir de pouvoir se reconnecter.
+vous pouvez optionnellement stocker votre pseudonyme et votre numéro de téléphone si vous souhaitez être contacté par les autres utilisatuers du site.
+Votre position géographique (tel que renseignée par votre navigateur) peut être sauvegardée si vous le désirez pour faciliter la recherche locale de biens et calculer les distances de trajets.
+
+Vous pouvez a tout moment effacer ces données optionnelles, voire même l'entiereté de votre compte, auquel cas **toutes** vos données sont instantanément éffacées.
+$$)
 ;
 grant select on table about to person;
