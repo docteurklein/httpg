@@ -167,6 +167,10 @@ article.card {
       aspect-ratio: 3/2;
       object-fit: cover;
     }
+    & img.marker-icon {
+        width: 25px;
+        height: 41px;
+    }
 }
 
 input.destructive {

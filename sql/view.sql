@@ -161,6 +161,7 @@ select xmlelement(name article, xmlattributes(
             'params[]', (good).good_id
         )) as href
     ), (good).title)),
+    xmlelement(name img, xmlattributes('https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png' as src, 'marker-icon' as class)),
     xmlelement(name span, format(_('By %s'), giver_name)),
     ', ',
     xmlelement(name span, xmlattributes((good).created_at as title), format(_('at %s'), to_char((good).created_at, _('TMDay DD/MM')))),

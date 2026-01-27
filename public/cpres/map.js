@@ -35,3 +35,12 @@ const tiles = new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 19,
   attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
 }).addTo(map);
+
+document.addEventListener('click', (event) => {
+  if (event.target.className !== 'marker-icon') {
+    return;
+  }
+  event.preventDefault();
+  let geojson = JSON.parse(event.target.parentNode.getAttribute('data-geojson'));
+  map.setView(geojson.geometry.coordinates.reverse(), 16);
+});
