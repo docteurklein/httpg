@@ -16,6 +16,13 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
         with:
           use-flakehub: false
+
+      - name: 'test sql'
+        run: |
+          psql "$PG_URI" -v ON_ERROR_STOP=1 $(find tests/sql -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+        env:
+          PG_URI: ${{ secrets.PG_URI }}
+
       - run: |
           nix --accept-flake-config run .#httpg-test --print-build-logs
 
