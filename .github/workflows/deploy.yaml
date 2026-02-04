@@ -16,6 +16,24 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
         with:
           use-flakehub: false
+      - run: |
+          nix --accept-flake-config run .#httpg-test --print-build-logs
+
+      - run: |
+          nix --accept-flake-config build .#httpg-release --print-build-logs
+
+
+  deploy:
+    needs: [build]
+    environment: production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: 'google-github-actions/auth@v2'
         with:
           credentials_json: '${{ secrets.GCP_SA }}'
@@ -32,12 +50,7 @@ jobs:
           nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
-
-      - run: |
-          nix --accept-flake-config build .#httpg-release --print-build-logs
-
-      - run: nix --accept-flake-config run .#oci.copyToRegistry
-
+          
       - id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v3'
         with:
@@ -48,7 +61,9 @@ jobs:
 
       - name: 'deploy url'
         run: 'echo "${{ steps.deploy.outputs.url }}"'
+  
   migrate:
+    needs: [build]
     environment: production
     runs-on: ubuntu-latest
     permissions:

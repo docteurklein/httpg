@@ -172,7 +172,7 @@ begin atomic
         format($$
             Bonjour %s,
 
-            Un nouveau lien a été crée pour vous authentifier: %s
+            Un nouveau lien a été crée pour vous authentifier sur cpres: %s
 
             Ce lien sera valide 1 heure.
             Ignorez ce lien si vous n'êtes pas à l'origine de la demande.
@@ -181,7 +181,7 @@ begin atomic
         $$, name, url),
         xmlconcat(
             xmlelement(name h1, format(_('Bonjour %s'), name)),
-            xmlelement(name p, 'Un nouveau lien a été crée pour vous authentifier: '),
+            xmlelement(name p, 'Un nouveau lien a été crée pour vous authentifier sur cpres: '),
             xmlelement(name a, xmlattributes(
                 url as href
             ), url)

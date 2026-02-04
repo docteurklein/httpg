@@ -24,6 +24,7 @@
         craneLib = crane.mkLib pkgs;
         crate = {
           src = craneLib.cleanCargoSource ./.;
+          strictDeps = true;
 
           doCheck = false;
 
@@ -37,9 +38,21 @@
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
           };
         };
+        cargoArtifacts = craneLib.buildDepsOnly crate;
       in {
-        packages.httpg-dev = craneLib.buildPackage (crate // { CARGO_PROFILE = "dev"; });
-        packages.httpg-release = craneLib.buildPackage (crate // { CARGO_PROFILE = "release"; });
+        packages.httpg-dev = craneLib.buildPackage (crate // {
+          CARGO_PROFILE = "dev";
+          inherit cargoArtifacts;
+        });
+        packages.httpg-release = craneLib.buildPackage (crate // {
+          CARGO_PROFILE = "release";
+          inherit cargoArtifacts;
+        });
+        packages.httpg-test = craneLib.cargoTest (crate // {
+          CARGO_PROFILE = "dev";
+          inherit cargoArtifacts;
+          doCheck = true;
+        });
 
         packages.default = self'.packages.httpg-release;
 
@@ -127,18 +140,19 @@
                       "HTTPG_ANON_ROLE=person"
                       "HTTPG_INDEX_SQL='table head union all table findings'"
                       "HTTPG_LOGIN_QUERY='select login()'"
-                      "HTTPG_SMTP_SENDER=sideral.underground@gmail.com"
-                      "HTTPG_SMTP_USER=sideral.underground@gmail.com"
+                      "HTTPG_SMTP_SENDER=florian.klein@free.fr"
+                      "HTTPG_SMTP_USER=florian.klein@free.fr"
                       "HTTPG_SMTP_RELAY=smtp://127.0.0.1:1025"
                       "HTTPG_PUBLIC_DIR=${builtins.getEnv "PWD"}/public"
                       "PG_USER=httpg"
                       "PG_PASSWORD=${builtins.getEnv "PWD"}/pg-password"
                       "PG_DBNAME=httpg"
                       "PG_HOST=10.250.0.2"
-                      "PG_READ_PG_HOST=10.250.0.2"
-                      "PG_WRITE_PG_HOST=10.250.0.2"
+                      "PG_READ_HOST=10.250.0.2"
+                      "PG_WRITE_HOST=10.250.0.2"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
+                      "RUST_BACKTRACE=1"
                     ];
                   };
                 };

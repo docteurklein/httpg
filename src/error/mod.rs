@@ -19,9 +19,8 @@ pub enum HttpgError {
     },
     #[snafu(transparent)]
     Postgres {
-        // #[snafu(source(from(tokio_postgres::Error, Box::new)))]
         source: tokio_postgres::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: std::backtrace::Backtrace,
     },
     #[snafu(transparent)]
     Deadpool {
@@ -40,7 +39,6 @@ pub enum HttpgError {
     },
     #[snafu(transparent)]
     BiscuitFormat {
-        // #[snafu(source(from(error::Format, Box::new)))]
         source: error::Format,
         backtrace: snafu::Backtrace,
     },
@@ -114,7 +112,7 @@ pub enum HttpgError {
         source: serde_qs::Error,
         backtrace: snafu::Backtrace,
     },
-    WebPushPrivateKey, //{ source: valid text param" }]
+    WebPushPrivateKey,
     InvalidTextParam,
 }
 
@@ -122,7 +120,7 @@ impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
         tracing::error!("{self:#?}");
         if let Some(b) = snafu::ErrorCompat::backtrace(&self) {
-            eprintln!("{:?}", &b);
+            dbg!(&b);
         }
 
         (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()

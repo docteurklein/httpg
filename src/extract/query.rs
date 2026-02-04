@@ -296,7 +296,7 @@ where
         Ok(Self {
             sql: sql.unwrap_or_default(),
             order,
-            params,//: params.or(Err(StatusCode::BAD_REQUEST.into_response()))?,
+            params,
             files,
             qs: raw_qs,
             body: raw_body,
@@ -318,16 +318,19 @@ mod tests {
 
     use axum::extract::FromRequest;
     use crate::extract::query::{Param, Query};
-    // use std::collections::HashMap;
 
     #[tokio::test]
     async fn test_json_body() {
         let req = Request::post("http://example.com/test")
             .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"sql": "", "params": "b"}"#))
+            .body(Body::from(r#"{"sql": "", "params": ["b", "c"]}"#))
             .unwrap();
 
-        assert_eq!(Query::from_request(req, &()).await.unwrap(), Query {sql: "".to_string(), params: vec![Param::Text("b".to_string())], ..Default::default()});
+        let q = Query::from_request(req, &()).await.unwrap();
+
+        assert_eq!(q.sql, "".to_string());
+        assert_eq!(q.params[0], Param::Text("b".into()));
+        assert_eq!(q.params[1], Param::Text("c".into()));
     }
 
     #[tokio::test]
@@ -337,7 +340,11 @@ mod tests {
             .body(Body::from("sql=select%201&params[]=b&params[]=c"))
             .unwrap();
 
-        assert_eq!(Query::from_request(req, &()).await.unwrap(), Query {sql: "select 1".to_string(), params: vec![Param::Text("b".to_string()), Param::Text("c".to_string())], ..Default::default()});
+        let q = Query::from_request(req, &()).await.unwrap();
+
+        assert_eq!(q.sql, "select 1".to_string());
+        assert_eq!(q.params[0], Param::Text("b".into()));
+        assert_eq!(q.params[1], Param::Text("c".into()));
     }
 }
 

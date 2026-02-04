@@ -5,11 +5,17 @@ edition = "2024"
 publish = false
 
 [profile.dev]
-debug = false
+debug = true
 strip = "debuginfo"
 
 [profile.dev.build-override]
 debug = false
+strip = "debuginfo"
+
+[profile.dev.package."*"]
+debug = false
+strip = "debuginfo"
+# opt-level = 1
 
 [dependencies]
 axum = { version = "^0", features = ["http2", "multipart"] }
@@ -43,4 +49,4 @@ lettre = { version = "^0", features = ["smtp-transport", "tokio1", "tokio1-nativ
 reqwest = "^0"
 web-push = { version = "^0", features = ["hyper-client"] }
 http = "^1"
-snafu = { version = "0.8.9", features = ["backtrace"] }
+snafu = { version = "^0", features = ["backtrace"] }
