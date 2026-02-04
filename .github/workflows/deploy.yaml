@@ -17,18 +17,26 @@ jobs:
         with:
           use-flakehub: false
 
+      - name: 'deploy stateless sql'
+        run: |
+          psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 --single-transaction -c 'drop schema if exists cpres cascade' -f sql/cpres.sql
+        env:
+          PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
+
+      - name: 'grant person to neondb_owner'
+        run: |
+          psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 -c 'grant person to neondb_owner'
+        env:
+          PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
       - name: 'test sql'
         run: |
-          psql "$PG_URI" -v ON_ERROR_STOP=1 $(find tests/sql -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
+          psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 $(find tests/sql -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
         env:
-          PG_URI: ${{ secrets.PG_URI }}
+          PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
 
-      - run: |
-          nix --accept-flake-config run .#httpg-test --print-build-logs
-
-      - run: |
-          nix --accept-flake-config build .#httpg-release --print-build-logs
-
+      - name: 'test httpg'
+        run: |
+          nix --accept-flake-config build .#httpg-test
 
   deploy:
     needs: [build]
@@ -48,6 +56,10 @@ jobs:
       - uses: 'google-github-actions/setup-gcloud@v3'
         with:
           project_id: 'gieze-421708'
+      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: DeterminateSystems/magic-nix-cache-action@main
+        with:
+          use-flakehub: false
 
       - id: image_name
         run: |
@@ -57,6 +69,8 @@ jobs:
           nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+
+      - run: nix --accept-flake-config run .#oci.copyToRegistry
           
       - id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v3'
