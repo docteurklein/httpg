@@ -1,6 +1,6 @@
 import imageCompression from 'https://esm.run/browser-image-compression@2.0.1';
 
-navigator.serviceWorker.register('/service-worker.js').then(reg => {
+navigator.serviceWorker.register('/cpres/service-worker.js').then(reg => {
   reg.update();
 });
 

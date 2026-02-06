@@ -872,8 +872,8 @@ select $html$<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-    <link rel="stylesheet" href="/cpres/index.css?v=1" />
-    <script type="module" src="/cpres.js?v=3"></script>
+    <link rel="stylesheet" href="/cpres/index.css?v=2" />
+    <script type="module" src="/cpres/cpres.js?v=4"></script>
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
 </head>
 $html$
