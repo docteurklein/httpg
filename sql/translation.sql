@@ -56,6 +56,8 @@ insert into cpres.translation (id, lang, text) values
 , ('go with google maps', 'fr', 'ouvrir dans google maps')
 , ('For %s€', 'fr', 'Pour %s€')
 , ('findings.help', 'fr', '<b>a</b> b')
+, ('notified', 'fr', 'Cette personne a été notifiée.')
+, ('could not notify', 'fr', 'Impossible de notifier cette personne.')
 on conflict (id, lang) do update
     set text = excluded.text
 ;

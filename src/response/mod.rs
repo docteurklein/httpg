@@ -82,7 +82,12 @@ impl IntoResponse for HttpResult {
                             rows.map(|row|
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
-                                    .map_or_else(|e| HttpgError::Postgres{source: e, backtrace: Backtrace::capture()}.to_string() + "\n", |v| v + "\n")
+                                    .map_or_else(
+                                        |e| snafu::Report::from_error(
+                                            HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
+                                        ).to_string() + "\n",
+                                        |v| v + "\n"
+                                    )
                             )
                             .map(Ok::<_, HttpgError>)
                         )

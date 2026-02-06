@@ -264,7 +264,6 @@ async fn logout(
 async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;
-    tx.batch_execute("set local statement_timeout to 500").await?;
 
     if let Some(lang) = &query.accept_language {
         let mut lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
@@ -538,8 +537,8 @@ async fn post_query(
 
             tx.query_typed_raw(
                 "select set_config('httpg.errors', $1, true)",
-                vec![(serde_json::to_string(&errors)?, Type::TEXT)])
-            .await?;
+                vec![(serde_json::to_string(&errors)?, Type::TEXT)]
+            ).await?;
 
             match &query.on_error {
                 Some(on_error) => {

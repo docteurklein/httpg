@@ -6,7 +6,6 @@ create or replace function cpres._(id_ text, lang_ text = null)
 returns text
 immutable parallel safe -- leakproof
 security definer
-
 set search_path to cpres, pg_catalog
 language sql
 begin atomic
@@ -100,8 +99,8 @@ begin atomic;
                 (
                     select xmlagg(
                         xmlelement(name label, case when interest.level = value
-                            then xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, true as required, true as checked))
-                            else xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, true as required))
+                            then xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, 'required' as required, true as checked))
+                            else xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, 'required' as required))
                     end, _(value)))
                     from unnest(array['a little interested', 'interested', 'highly interested']) a (value)
                 ),
@@ -265,7 +264,7 @@ select xmlelement(name form, xmlattributes(
         'text' as type,
         'params[0]' as name,
         _('title') as placeholder,
-        true as required,
+        'required' as required,
         params->>0 as value
     )),
     xmlelement(name textarea, xmlattributes(
@@ -280,7 +279,7 @@ select xmlelement(name form, xmlattributes(
         _('location: (lat,lng)') as placeholder,
         'location' as class,
         '\(.+,.+\)' as pattern,
-        true as required,
+        'required' as required,
         params->>2 as value
     )),
     xmlelement(name input, xmlattributes(
@@ -391,7 +390,7 @@ result (html, good_id) as (
                 xmlelement(name input, xmlattributes(
                     'file' as type,
                     'file' as name,
-                    true as required
+                    'required' as required
                     -- true as multiple
                 )),
                 xmlelement(name input, xmlattributes(
@@ -536,7 +535,7 @@ html (html) as (
                             'params[]' as name,
                             '10' as rows,
                             'message' as placeholder,
-                            true as required
+                            'required' as required
                         ), ''),
                         xmlelement(name input, xmlattributes(
                             'submit' as type,
@@ -693,7 +692,7 @@ html (good, html) as (
                 'params[]' as name,
                 '10' as rows,
                 'message' as placeholder,
-                true as required
+                'required' as required
             ), ''),
             xmlelement(name input, xmlattributes(
                 'submit' as type,
@@ -893,7 +892,7 @@ union all (
             'email' as type,
             'params[]' as name,
             'email' as placeholder,
-            true as required,
+            'required' as required,
             'Notification.requestPermission()' as onfocus
         )),
         xmlelement(name input, xmlattributes('hidden' as type, 'params[]' as name, 'location' as class, 'off' as autocomplete)),
@@ -972,7 +971,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
                     'inline-name' as class,
                     _('name') as placeholder,
                     greatest(4, length(name)) as size,
-                    true as required,
+                    'required' as required,
                     name as value
                 )),
                 ' ',
@@ -982,7 +981,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
                     'inline-name' as class,
                     _('phone') as placeholder,
                     greatest(4, length(phone)) as size,
-                    true as required,
+                    'required' as required,
                     phone as value
                 )),
                 xmlelement(name input, xmlattributes(

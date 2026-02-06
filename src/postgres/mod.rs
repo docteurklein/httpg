@@ -36,6 +36,13 @@ impl PostgresConfig {
         self.rest(&mut cfg)
     }
 
+    pub fn write_pool(&self) -> Result<Pool, HttpgError> {
+        let mut cfg = deadpool_postgres::Config::new();
+
+        cfg.host = Some(self.write_host.clone());
+        self.rest(&mut cfg)
+    }
+
     pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream>), HttpgError> {
         let cfg = tokio_postgres::Config::new()
             .user(self.user.clone())
@@ -50,6 +57,7 @@ impl PostgresConfig {
                 Some("require") => tokio_postgres::config::ChannelBinding::Require,
                 _ => tokio_postgres::config::ChannelBinding::Prefer,
             })
+            // .options("-c statement_timeout=600ms")
             .to_owned()
         ;
 
@@ -60,13 +68,6 @@ impl PostgresConfig {
         ;
 
         cfg.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
-    }
-
-    pub fn write_pool(&self) -> Result<Pool, HttpgError> {
-        let mut cfg = deadpool_postgres::Config::new();
-
-        cfg.host = Some(self.write_host.clone());
-        self.rest(&mut cfg)
     }
 
     fn rest(&self, cfg: &mut deadpool_postgres::Config) -> Result<Pool, HttpgError> {
@@ -81,6 +82,8 @@ impl PostgresConfig {
             Some("require") => deadpool_postgres::ChannelBinding::Require,
             _ => deadpool_postgres::ChannelBinding::Prefer,
         });
+
+        // cfg.options = Some("-c statement_timeout=600ms".into());
 
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()

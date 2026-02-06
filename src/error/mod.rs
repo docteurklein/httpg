@@ -120,10 +120,10 @@ impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
         tracing::error!("{self:#?}");
         if let Some(b) = snafu::ErrorCompat::backtrace(&self) {
-            dbg!(&b);
+            tracing::error!("{b}");
         }
+        let r = snafu::Report::from_error(self);
 
-        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+        (StatusCode::INTERNAL_SERVER_ERROR, r.to_string()).into_response()
     }
 }
-

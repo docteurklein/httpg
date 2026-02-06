@@ -37,20 +37,20 @@
           env = {
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
           };
+          # cargoArtifacts = craneLib.buildDepsOnly crate;
         };
-        cargoArtifacts = craneLib.buildDepsOnly crate;
       in {
         packages.httpg-dev = craneLib.buildPackage (crate // {
           CARGO_PROFILE = "dev";
-          inherit cargoArtifacts;
+          # inherit cargoArtifacts;
         });
         packages.httpg-release = craneLib.buildPackage (crate // {
           CARGO_PROFILE = "release";
-          inherit cargoArtifacts;
+          # inherit cargoArtifacts;
         });
         packages.httpg-test = craneLib.cargoTest (crate // {
           CARGO_PROFILE = "dev";
-          inherit cargoArtifacts;
+          # inherit cargoArtifacts;
           doCheck = true;
         });
 
@@ -85,6 +85,7 @@
               gke-gcloud-auth-plugin
             ]))
           ];
+          PGHOST = "10.250.0.2";
         };
 
         packages.container = extra-container.lib.buildContainers {
