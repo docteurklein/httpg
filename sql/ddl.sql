@@ -218,7 +218,7 @@ create policy "owner" on good for all to person using (true) with check (
 
 create table good_media (
     good_id uuid not null references good (good_id) on delete cascade,
-    content bytea not null,
+    content bytea not null check (length(content) < 1024 * 1000),
     content_hash bytea not null generated always as (sha256(content)) stored,
     content_type text not null,
     name text not null,

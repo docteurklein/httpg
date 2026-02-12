@@ -134,4 +134,40 @@ impl IntoResponse for HttpResult {
         }
     }
 }
-  
+
+#[cfg(test)]
+mod tests {
+    use axum::response::IntoResponse;
+    use conf::Conf;
+    use postgres_types::Type;
+    use crate::{extract::query::Query, response};
+    use http_body_util::BodyExt;
+
+    #[tokio::test]
+    async fn test_into_response_status() {
+        let cfg = crate::postgres::PostgresConfig::parse();
+        let conn = cfg.read_pool().unwrap().get().await.unwrap();
+
+        let query = Query {
+            sql: "select 'a'::text".into(),
+            accept: Some("text/html".to_string()),
+            ..Default::default()
+        };
+
+        let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+            (param, param.to_owned().into())
+        }).collect();
+
+        let rows = conn.query_typed_raw(query.sql.as_ref(), sql_params).await.unwrap();
+
+        let rows = response::Rows::Stream(rows);
+        let res = response::HttpResult {
+            query: query.clone(),
+            rows
+        };
+
+        let (_parts, body) = res.into_response().into_parts();
+
+        assert_eq!(body.collect().await.unwrap().to_bytes(), "a\n".to_string().as_bytes());
+    }
+} 

@@ -50,6 +50,8 @@ insert into cpres.translation (id, lang, text) values
 , ('new row for relation "person" violates check constraint "person_name_check"', 'fr', 'Ce nom est invalide (pas de @, pas vide)')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'en', 'Connot have an empty phone')
 , ('new row for relation "person" violates check constraint "person_phone_check"', 'fr', 'Le numéro ne doit pas être vide')
+, ('new row for relation "good_media" violates check constraint "good_media_content_check"', 'en', 'The file must not exceed 1MB in size.')
+, ('new row for relation "good_media" violates check constraint "good_media_content_check"', 'fr', 'Le fichier ne doit pas dépasser 1MB.')
 , ('current bid at %s€', 'fr', 'D''autres offrent %s€.')
 , ('propose ', 'fr', 'Proposer ')
 , ('Price?', 'fr', 'Prix?')

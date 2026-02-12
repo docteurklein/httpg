@@ -50,3 +50,6 @@ reqwest = "^0"
 web-push = { version = "^0", features = ["hyper-client"] }
 http = "^1"
 snafu = { version = "^0", features = ["backtrace"] }
+
+[dev-dependencies]
+http-body-util = "^0"

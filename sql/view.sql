@@ -388,6 +388,11 @@ result (html, good_id) as (
                     $$, good_id) as value
                 )),
                 xmlelement(name input, xmlattributes(
+                    'hidden' as type,
+                    'on_error' as name,
+                    coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'table head union all select html from "good admin"') as value
+                )),
+                xmlelement(name input, xmlattributes(
                     'file' as type,
                     'file' as name,
                     'required' as required
@@ -448,7 +453,6 @@ union all select xmlelement(name div, xmlattributes('grid good' as class),
     array_agg(html)
 )::text
 from result
--- group by good_id
 union all select _('Nothing yet.') where not exists (select from result limit 1)
 ;
 

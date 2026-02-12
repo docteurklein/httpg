@@ -1,3 +1,3 @@
-- fix image scale on all browsers
+[x] fix image scale on all browsers
 
 
