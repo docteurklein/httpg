@@ -166,7 +166,7 @@ mod tests {
             rows
         };
 
-        let (_parts, body) = res.into_response().into_parts();
+        let body = res.into_response().into_body();
 
         assert_eq!(body.collect().await.unwrap().to_bytes(), "a\n".to_string().as_bytes());
     }
