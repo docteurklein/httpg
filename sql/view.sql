@@ -260,28 +260,32 @@ select xmlelement(name form, xmlattributes(
         'on_error' as name,
         coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'table head union all select html from "good admin"') as value
     )),
-    xmlelement(name input, xmlattributes(
-        'text' as type,
-        'params[0]' as name,
-        _('title') as placeholder,
-        'required' as required,
-        params->>0 as value
-    )),
-    xmlelement(name textarea, xmlattributes(
-        'params[1]' as name,
-        '10' as rows,
-        'description' as placeholder
-    ), coalesce(params->>1, '')),
-    xmlelement(name input, xmlattributes(
-        'text' as type,
-        'cpres-map' as is,
-        'params[2]' as name,
-        _('location: (lat,lng)') as placeholder,
-        'location' as class,
-        '\(.+,.+\)' as pattern,
-        'required' as required,
-        params->>2 as value
-    )),
+    xmlelement(name div, xmlattributes('grid' as class),
+        xmlelement(name div,
+            xmlelement(name input, xmlattributes(
+                'text' as type,
+                'params[0]' as name,
+                _('title') as placeholder,
+                'required' as required,
+                params->>0 as value
+            )),
+            xmlelement(name textarea, xmlattributes(
+                'params[1]' as name,
+                '10' as rows,
+                'description' as placeholder
+            ), coalesce(params->>1, ''))
+        ),
+        xmlelement(name input, xmlattributes(
+            'text' as type,
+            'cpres-map' as is,
+            'params[2]' as name,
+            _('location: (lat,lng)') as placeholder,
+            'location' as class,
+            '\(.+,.+\)' as pattern,
+            'required' as required,
+            params->>2 as value
+        ))
+    ),
     xmlelement(name input, xmlattributes(
         'submit' as type,
         _('Submit') as value
@@ -1024,9 +1028,6 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
                     _('Delete account') as value
                 ))
             )
-            -- select xmlelement(name a, xmlattributes(
-            --     query('/query') as href
-            -- ), _('Delete account'))
             where current_person_id() is not null
         )
         select xmlagg(xmlelement(name li, html))
@@ -1104,7 +1105,7 @@ Seul votre email est nécessairement stocké pour garantir de pouvoir se reconne
 vous pouvez optionnellement stocker votre pseudonyme et votre numéro de téléphone si vous souhaitez être contacté par les autres utilisatuers du site.
 Votre position géographique (tel que renseignée par votre navigateur) peut être sauvegardée si vous le désirez pour faciliter la recherche locale de biens et calculer les distances de trajets.
 
-Vous pouvez a tout moment effacer ces données optionnelles, voire même l'entiereté de votre compte, auquel cas **toutes** vos données sont instantanément éffacées.
+Vous pouvez à tout moment effacer ces données optionnelles, voire même l'entiereté de votre compte, auquel cas **toutes** vos données sont instantanément éffacées.
 $$)
 ;
 grant select on table about to person;

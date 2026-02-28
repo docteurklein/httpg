@@ -158,7 +158,9 @@ create policy "owner" on person for all to person using (true) with check (
 );
 
 create table person_detail (
-    person_id uuid primary key default current_person_id(),
+    person_id uuid primary key default current_person_id()
+        references person (person_id)
+            on delete cascade,
     location point default null,
     push_endpoint jsonb default null
 );
@@ -299,7 +301,9 @@ using (
 with check (author = current_person_id());
 
 create table search (
-    person_id uuid not null default current_person_id(),
+    person_id uuid not null default current_person_id()
+        references person (person_id)
+            on delete cascade,
     query text not null,
     embedding vector(384) not null generated always as (embed_query(query)) stored,
     interest interest_level not null,

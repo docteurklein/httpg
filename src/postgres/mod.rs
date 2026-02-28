@@ -26,6 +26,8 @@ pub struct PostgresConfig {
     channel_binding: Option<String>,
     #[conf(env)]
     ssl_mode: Option<String>,
+    #[conf(env, default_value="httpg")]
+    application_name: String,
 }
 
 impl PostgresConfig {
@@ -57,6 +59,7 @@ impl PostgresConfig {
                 Some("require") => tokio_postgres::config::ChannelBinding::Require,
                 _ => tokio_postgres::config::ChannelBinding::Prefer,
             })
+            .application_name(self.application_name.to_owned())
             // .options("-c statement_timeout=600ms")
             .to_owned()
         ;
@@ -82,6 +85,7 @@ impl PostgresConfig {
             Some("require") => deadpool_postgres::ChannelBinding::Require,
             _ => deadpool_postgres::ChannelBinding::Prefer,
         });
+        cfg.application_name = Some(self.application_name.to_owned());
 
         // cfg.options = Some("-c statement_timeout=600ms".into());
 

@@ -77,8 +77,8 @@ create or replace procedure mark_late_interests()
 language sql
 security invoker
 set search_path to cpres, pg_catalog
-set parallel_setup_cost to 0
-set parallel_tuple_cost to 0
+-- set parallel_setup_cost to 0
+-- set parallel_tuple_cost to 0
 begin atomic
     -- with late as (
         update cpres.interest
