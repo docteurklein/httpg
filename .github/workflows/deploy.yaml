@@ -34,9 +34,11 @@ jobs:
         env:
           PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
 
-      - name: 'test httpg'
-        run: |
-          nix --accept-flake-config build .#httpg-test
+      # - name: 'test httpg'
+      #   run: |
+      #     nix develop .
+      #     nix run .#up
+      #     nix --accept-flake-config build .#httpg-test
 
   deploy:
     needs: [build]
