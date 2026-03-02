@@ -69,7 +69,7 @@ begin atomic;
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/query', jsonb_build_object(
-                    'sql', format('call want(%L, $2, $1)', good.good_id)
+                    'sql', format('call want(%L, $2::interest_level, $1)', good.good_id)
                 )) as action,
                 null as class
             ),
@@ -95,14 +95,13 @@ begin atomic;
                     _('Price?') as placeholder
                 )),
                 xmlelement(name span, xmlattributes('inline' as class), '€'),
-                -- xmlelement(name select, xmlattributes('params[]' as name),
                 (
                     select xmlagg(
                         xmlelement(name label, case when interest.level = value
                             then xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, 'required' as required, true as checked))
                             else xmlelement(name input, xmlattributes('radio' as type, value, 'params[]' as name, 'required' as required))
-                    end, _(value)))
-                    from unnest(array['a little interested', 'interested', 'highly interested']) a (value)
+                    end, _(value::text)))
+                    from unnest(enum_range(null::interest_level)) a (value)
                 ),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
@@ -488,7 +487,7 @@ html (html) as (
             select xmlagg(
                 xmlelement(name article, xmlattributes('card' as class, format('%s-%s', interest.good_id, interest.person_id) as id),
                     xmlelement(name div, xmlattributes('inline' as class),
-                        xmlelement(name h4, format(_('%s is %s'), receiver.name, _(interest.level))),
+                        xmlelement(name h4, format(_('%s is %s'), receiver.name, _(interest.level::text))),
                         case when interest.price is not null then
                             xmlelement(name div, format(_('For %s€'), interest.price))
                         end,
@@ -570,6 +569,11 @@ html (html) as (
                                     'params[1]', interest.person_id,
                                     'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
                                 )) as value
+                            )),
+                            xmlelement(name input, xmlattributes(
+                                'hidden' as type,
+                                'params[]' as name,
+                                interest.good_id as value
                             )),
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
@@ -733,22 +737,47 @@ map (html) as (
         <script type="module" src="/cpres/map.js"></script>
     $html$::xml
 ),
-head (html) as (
+control (html) as (
     select xmlelement(name div,
-        xmlelement(name h2, xmlattributes('hashover showhover' as class),  _('Search')),
         xmlelement(name div, xmlattributes('flashes onhover' as class),
             xmlelement(name article, xmlattributes('blue card' as class), _('findings.help')::xml)
         ),
-        xmlelement(name nav, xmlelement(name ul, (
-            select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
-                url('/query', jsonb_build_object(
-                    'q', query,
-                    'sql', 'table head union all table "findings"',
-                    'use_primary', null
-                )) as href
-            ), query)) order by query asc), '')
-            from search
-        ))),
+        xmlelement(name div, xmlattributes('grid' as class),
+            xmlelement(name nav,
+                xmlelement(name h4, _('Mes alertes en cours: ')),
+                xmlelement(name ul, (
+                    select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
+                        url('/query', jsonb_build_object(
+                            'q', query,
+                            'sql', 'table head union all table "findings"',
+                            'use_primary', null
+                        )) as href
+                    ), query)) order by query asc), '')
+                    from search
+                    where person_id = current_person_id()
+                )),
+                (select _('Nothing yet.')::xml where not exists (
+                    select from search
+                    where person_id = current_person_id()
+                    limit 1
+                ))
+            ),
+            xmlelement(name nav,
+                xmlelement(name h4, _('Ce que d''autres cherchent: ')),
+                xmlelement(name ul, (
+                    select coalesce(xmlagg(xmlelement(name li, format(_('%s asks for %s'), person.name, query)) order by query asc), '')
+                    from search
+                    join person using (person_id)
+                    where person_id <> current_person_id()
+                )),
+                (select _('Nothing yet.')::xml where not exists (
+                    select from search
+                    where person_id <> current_person_id()
+                    limit 1
+                ))
+            )
+        ),
+        xmlelement(name h2, xmlattributes('hashover showhover' as class),  _('Search')),
         xmlelement(name form, xmlattributes(
             'grid' as class,
             'GET' as method,
@@ -801,7 +830,7 @@ head (html) as (
                 ))
             )
             where qs->>'q' <> ''
-            and not exists (select from search where query = qs->>'q')
+            and not exists (select from search where query = qs->>'q' and person_id = current_person_id())
             and current_person_id() is not null
         ),
         (
@@ -830,7 +859,7 @@ head (html) as (
                     _('Remove alert') as value
                 ))
             )
-            where exists (select from search where query = qs->>'q')
+            where exists (select from search where query = qs->>'q' and person_id = current_person_id())
         )
     )
     from q
@@ -856,7 +885,7 @@ list (sort, html) as (
         and state in ('approved', 'late', 'given')
     )
 )
-select html::text from head
+select html::text from control
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
     xmlelement(name div, (select html from map where exists (select from list limit 1))),
     xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from list))
@@ -880,7 +909,7 @@ select $html$<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-    <link rel="stylesheet" href="/cpres/index.css?v=2" />
+    <link rel="stylesheet" href="/cpres/index.css?v=3" />
     <script type="module" src="/cpres/cpres.js?v=4"></script>
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
 </head>
@@ -895,7 +924,7 @@ union all (
             ))
         )) as action
     ),
-        xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from send_login_email($1, $2, $3)' as value)),
+        xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from cpres.send_login_email($1, $2, $3)' as value)),
         xmlelement(name input, xmlattributes(
             'email' as type,
             'params[]' as name,
@@ -912,7 +941,7 @@ union all (
 )
 union all (
     select xmlelement(name div, xmlattributes('flashes onhover' as class),
-        xmlelement(name article, xmlattributes('blue card' as class), _('Authentifiez-vous pour pouvoir ajouter des annonces, mémoriser vos recherches et discuter de vos dons et demandes.'))
+        xmlelement(name article, xmlattributes('blue card' as class), _('Authentifiez vous pour pouvoir ajouter des annonces, mémoriser vos recherches et discuter de vos dons et demandes.'))
     )::text
     where current_person_id() is null
 )
@@ -1023,7 +1052,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
             ),
                 xmlelement(name input, xmlattributes(
                     'submit' as type,
-                    'delete-account' as class,
+                    'destructive' as class,
                     format('return confirm(%L)', _('Are you sure?')) as onclick,
                     _('Delete account') as value
                 ))

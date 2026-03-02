@@ -197,10 +197,6 @@ a.whatsapp {
     background-color: red;
 }
 
-input[type="submit"].delete-account {
-    background-color: red;
-}
-
 .flashes {
     max-height: 20vh;
     overflow: scroll;

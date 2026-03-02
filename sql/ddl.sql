@@ -153,7 +153,9 @@ grant select (person_id, name, phone),
     delete on table person to person;
 
 alter table person enable row level security;
-create policy "owner" on person for all to person using (true) with check (
+create policy "owner" on person for all to person
+using (true)
+with check (
     person_id = current_person_id()
 );
 
@@ -214,7 +216,9 @@ grant select, --(good_id, title, description, tags, location, giver, created_at,
 on table good to person;
 
 alter table good enable row level security;
-create policy "owner" on good for all to person using (true) with check (
+create policy "owner" on good for all to person
+using (true)
+with check (
     giver = current_person_id()
 );
 
@@ -240,10 +244,10 @@ with check (
     )
 );
 
-create domain interest_level as text
-default 'interested'
-check (array['a little interested', 'interested', 'highly interested'] @> array[value]);
-    
+create type interest_level as enum ('a little interested', 'interested', 'highly interested');
+create type interest_state as enum ('in progress', 'late', 'approved', 'given');
+create type interest_origin as enum ('automatic', 'manual');
+
 create table interest (
     good_id uuid not null
         references good (good_id)
@@ -251,10 +255,10 @@ create table interest (
     person_id uuid not null
         references person (person_id)
             on delete cascade,
-    state text not null default 'in progress' check (state in ('in progress', 'late', 'approved', 'given')),
-    origin text not null check (origin in ('automatic', 'manual')),
+    state interest_state not null default 'in progress',
+    origin interest_origin not null,
+    level interest_level not null default 'interested',
     query text default null,
-    level interest_level not null,
     price numeric default null,
     at timestamptz not null default now(),
     primary key (good_id, person_id)
@@ -306,7 +310,7 @@ create table search (
             on delete cascade,
     query text not null,
     embedding vector(384) not null generated always as (embed_query(query)) stored,
-    interest interest_level not null,
+    interest interest_level not null default 'interested',
     primary key (person_id, query)
 );
 
@@ -314,6 +318,7 @@ grant select, insert, delete, update on table search to person;
 
 alter table search enable row level security;
 create policy "owner" on search for all to person
-using (
+using (true)
+with check (
     person_id = current_person_id()
 );

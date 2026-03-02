@@ -37,7 +37,7 @@
           env = {
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
           };
-          # cargoArtifacts = craneLib.buildDepsOnly crate;
+          cargoArtifacts = craneLib.buildDepsOnly crate;
         };
       in {
         packages.httpg-dev = craneLib.buildPackage (crate // {
@@ -94,7 +94,7 @@
           HTTPG_LOGIN_QUERY = "select login()";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
-          HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025";
+          HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
           PG_USER = "httpg";
           PG_PASSWORD = "pg-password";
@@ -119,7 +119,7 @@
 
           config = {
             containers.httpg = {
-              ephemeral = true;
+              ephemeral = false;
               autoStart = true;
 
               extraFlags = [
@@ -232,7 +232,7 @@
                     log_temp_files = 0;
                     # logging_collector = true;
                     # log_destination = nixpkgs.lib.mkForce "syslog";
-                    # log_statement = "all";
+                    log_statement = "all";
                     # "auto_explain.log_nested_statements" = true;
                     # "auto_explain.log_min_duration" = 0;
                     shared_preload_libraries = "auto_explain,pg_hint_plan,pg_stat_statements";
@@ -260,7 +260,7 @@
                 services.mailcatcher = {
                   enable = true;
                   http.ip = "0.0";
-                  # smtp.ip = "0.0";
+                  smtp.ip = "0.0";
                 };
               });
             };
