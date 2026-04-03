@@ -2,32 +2,32 @@
 
 set local search_path to cpres, url, pg_catalog, public;
 
--- create or replace function compare_search() returns trigger
--- volatile strict parallel safe -- leakproof
--- security definer
--- set search_path to cpres, url, pg_catalog
--- as $$
--- begin
---     with result (good_id, person_id, interest, query, rerank_distance) as (
---         select new.good_id, person_id, interest, query, rerank_distance(query, new.passage)
---         from search
---         where person_id <> new.giver
---         order by (new.embedding <=> search.embedding)
---         limit 100
---     )
---     insert into interest (good_id, person_id, level, origin, query)
---     select good_id, person_id, interest, 'automatic', query
---     from result
---     where rerank_distance < 0;
+create or replace function compare_search() returns trigger
+volatile strict parallel safe -- leakproof
+security definer
+set search_path to cpres, url, pg_catalog
+as $$
+begin
+    with result (good_id, person_id, interest, query, rerank_distance) as (
+        select new.good_id, person_id, interest, query, rerank_distance(query, new.passage)
+        from search
+        where person_id <> new.giver
+        order by (new.embedding <=> search.embedding)
+        limit 100
+    )
+    insert into interest (good_id, person_id, level, origin, query)
+    select good_id, person_id, interest, 'automatic', query
+    from result
+    where rerank_distance < 0;
 
---     return null;
--- end;
--- $$ language plpgsql;
+    return null;
+end;
+$$ language plpgsql;
 
--- create or replace trigger compare_search
--- after insert or update of title, description on good
--- for each row
--- execute procedure compare_search();
+create or replace trigger compare_search
+after insert or update of title, description on good
+for each row
+execute procedure compare_search();
 
 create or replace procedure give(_good_id uuid, _receiver uuid)
 language sql

@@ -13,6 +13,8 @@ select current_setting('neon.project_id', true) is not null as is_neon
 
 create extension if not exists vector cascade;
 create extension if not exists fuzzystrmatch cascade;
+create extension if not exists postgis cascade;
+create extension if not exists pgrouting cascade;
 \if :is_neon
 create extension if not exists rag cascade;
 create extension if not exists rag_bge_small_en_v15 cascade;
