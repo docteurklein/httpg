@@ -1,6 +1,7 @@
 import imageCompression from 'https://esm.run/browser-image-compression@2.0.1';
+// import {default as photon_init} from 'https://cdn.jsdelivr.net/npm/@silvia-odwyer/photon/+esm';
 
-navigator.serviceWorker.register('/cpres/service-worker.js').then(reg => {
+navigator.serviceWorker && navigator.serviceWorker.register('/cpres/service-worker.js').then(reg => {
   reg.update();
 });
 
@@ -60,16 +61,34 @@ Array.from(document.querySelectorAll('.messages')).forEach(e => {
 });
 
 document.addEventListener('submit', async event => {
-  const options = {
-    maxSizeMB: 0.5,
-    maxIteration: 20,
-    maxWidthOrHeight: 1800,
-    useWebWorker: true,
-  };
   let formData = new FormData(event.target);
   if (formData.has('file') && formData.get('file').type.startsWith('image/')) {
     event.preventDefault();
-    formData.set('file', await imageCompression(formData.get('file'), options), formData.get('file').name);
+
+    formData.set('file', await imageCompression(formData.get('file'), {
+      maxSizeMB: 0.5,
+      maxIteration: 20,
+      maxWidthOrHeight: 1800,
+      useWebWorker: true,
+    }), formData.get('file').name);
+
+    // let canvas = document.createElement('canvas');
+    // document.body.appendChild(canvas);
+    // canvas.width = 1080;
+    // canvas.height = 768;
+
+    // let ctx = canvas.getContext('2d');
+    // ctx.drawImage(await createImageBitmap(formData.get('file')), 0, 0);
+
+    // let photon = await photon_init();
+
+    // let photon_img = photon.open_image(canvas, ctx);
+    // let newcanvas = photon.resize_img_browser(photon_img, 360, 239, 1);
+    // // let newcanvas = photon_img.resize
+
+    // const blob = await new Promise(resolve => newcanvas.toBlob(resolve));
+    // formData.set('file', blob, formData.get('file').name);
+
     fetch(event.target.action, {
       method: 'POST',
       headers: {
@@ -84,4 +103,35 @@ document.addEventListener('submit', async event => {
       document.replaceChild(doc.documentElement, document.documentElement);
     });
   }
+});
+
+document.addEventListener('click', (event) => {
+  if (event.target.className !== 'marker-icon') {
+    return;
+  }
+  event.preventDefault();
+  document.getElementById('map')?.openPopup(event.target.getAttribute('for'));
+});
+
+
+document.addEventListener('DOMContentLoaded', () => {
+  window.map?.on('click', e => {
+    window.map.removeGroup('route');
+    window.map.removeGroup('good');
+    let href = new URL(window.map.getAttribute('href'), window.location.href);
+    let loc = new URL(window.location.href);
+
+    href.searchParams.set('location', window.map.value);
+    href.searchParams.set('q', loc.searchParams.get('q') || '');
+    href.searchParams.set('distance', loc.searchParams.get('distance') || '');
+    href.searchParams.set('use_primary', loc.searchParams.get('use_primary') || '');
+    fetch(href.toString(), {
+      headers: {
+        'Accept': 'application/json'
+      }
+    })
+      .then(response => response.json())
+      .then(window.map.geojson.bind(window.map))
+    ;
+  });
 });

@@ -9,36 +9,20 @@ security definer
 set search_path to cpres, pg_catalog
 language sql
 begin atomic
+    with t (text) as (
+        select text
+        from translation
+        where (id, lang) = (id_, coalesce(
+            lang_,
+            substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-?\w*,?.*')
+        ))
+        limit 1
+    )
     select coalesce(
-        (
-            with a (accept_language) as (
-                select substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-?\w*,?.*')
-            )
-            select text
-            from translation, a
-            where (id, lang) = (id_, coalesce(lang_, accept_language, 'fr'))
-            limit 1
-        ),
+        (select text from t),
         id_
     );
 end;
-
-create or replace function geojson(point point, props jsonb = '{}') returns jsonb
-language sql 
-immutable strict parallel safe -- leakproof
-set search_path to cpres, pg_catalog
-begin atomic;
-    select jsonb_build_object(
-        'type', 'Feature',
-        'properties', props,
-        'geometry', jsonb_build_object(
-            'type', 'Point',
-            'coordinates', array[point[1], point[0]]
-        )
-    );
-end;
-
-grant execute on function geojson to person;
 
 create or replace function max_interest_price(good good) returns xml
 language sql
@@ -139,8 +123,14 @@ end;
 
 create or replace view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
-as with looker (location) as (
-    select location from person_detail where person_id = current_person_id() limit 1
+as with q (qs) as (
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
+),
+looker (location) as (
+    select coalesce((qs->>'location')::point, location)
+    from person_detail, q
+    where person_id = current_person_id()
+    limit 1
 ),
 base as (
     select good, interest, giver.name as giver_name,
@@ -150,28 +140,33 @@ base as (
     join person giver on (good.giver = giver.person_id)
     left join looker on true
 )
-select xmlelement(name article, xmlattributes(
-    geojson((good).location) as "data-geojson"
-),
+select xmlelement(name article,
     xmlelement(name h2, xmlelement(name a, xmlattributes(
         url('/query', jsonb_build_object(
             'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
-            'params[]', (good).good_id
+            'params[]', (good).good_id,
+            'show_map', true
         )) as href
     ), (good).title)),
-    xmlelement(name img, xmlattributes('https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png' as src, 'marker-icon' as class)),
+    xmlelement(name img, xmlattributes(
+        'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png' as src,
+        'marker-icon' as class,
+         (good).good_id as "for"
+    )),
     xmlelement(name span, format(_('By %s'), giver_name)),
     ', ',
     xmlelement(name span, xmlattributes((good).created_at as title), format(_('at %s'), to_char((good).created_at, _('TMDay DD/MM')))),
     xmlelement(name p, (good).description),
     case when bird_distance_km is not null then
-        xmlelement(name div, format('distance: %s km', round(bird_distance_km::numeric, 2)))
+        xmlelement(name div, format('bird distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
     xmlelement(name a, xmlattributes(
         format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[0], (good).location[1]) as href,
         '_blank' as target
     ), _('go with google maps')),
-    xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value)),
+    case when qs->>'show_map' is not null then
+        xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value))
+    end,
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),
             (
@@ -197,22 +192,11 @@ select xmlelement(name article, xmlattributes(
         from good_media
         where good_id = (good).good_id
     ), '')),
-    xmlelement(name p, interest_control(good, interest))
-)::text, (good).location, 0, (good).good_id, (good).receiver
-from base good;
+    interest_control(good, interest)
+)::text, (good).location, bird_distance_km::int, (good).good_id, (good).receiver
+from base good, q;
 
 grant select on table "good_detail" to person;
-
-create or replace view nearby (geojson, bird_distance_km)
-with (security_invoker)
-as select geojson(location, jsonb_build_object(
-    'description', html,
-    'bird_distance_km', bird_distance_km
-)) geojson, bird_distance_km
-from "good_detail"
-where receiver is null;
-
-grant select on table nearby to person;
 
 create or replace function good_form(id text, params jsonb, sql text) returns xml
 security invoker
@@ -480,7 +464,8 @@ html (html) as (
             title as id,
             url('/query', jsonb_build_object(
                 'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
-                'params[]', good_id
+                'params[]', good_id,
+                'show_map', true
             )) as href
         ), title)),
         xmlelement(name div, xmlattributes('grid interest' as class), (
@@ -646,7 +631,8 @@ html (good, html) as (
                 (good).title as id,
                 url('/query', jsonb_build_object(
                     'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
-                    'params[]', (good).good_id
+                    'params[]', (good).good_id,
+                    'show_map', true
                 )) as href
             ), (good).title)),
             xmlelement(name span, format(_('By %s'), (giver).name)),
@@ -726,35 +712,236 @@ union all select _('Nothing yet.') where not exists (select from html limit 1)
 
 grant select on table "receiving activity" to person;
 
-create or replace view "findings" (html)
+create or replace view finding_list (sort, good_id, location, html)
 with (security_invoker)
 as with q (qs) as (
     select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
 ),
-map (html) as (
-    select $html$
-        <div id="map"></div>
-        <script type="module" src="/cpres/map.js"></script>
-    $html$::xml
+result (good_id, rerank_distance, sort) as (
+    select good_id, case when qs->>'q' <> '' then
+        rerank_distance(qs->>'q', passage)
+        else -1
+    end,
+    case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
+    from q, good
+    order by 3
+    limit 500
+)
+select sort, good_id, location, xmlelement(name article, xmlattributes('card' as class), d.html::xml)
+from q, result
+join "good_detail" d using (good_id)
+where rerank_distance < 0
+and bird_distance_km < coalesce(nullif(qs->>'distance', '')::int, 50)
+and not exists (
+    select from interest
+    where good_id = d.good_id
+    and state in ('approved', 'late', 'given')
+);
+
+grant select on table finding_list to person;
+
+-- drop table if exists osm_auvergne cascade;
+create unlogged table if not exists osm_auvergne (
+    geog geography,
+    osm_type text,
+    osm_id bigint,
+    tags jsonb
+);
+
+-- drop materialized view if exists auvergne_boundary cascade;
+create materialized view if not exists auvergne_boundary (geom, id) as
+with polygon as (
+    select ST_Multi(geog::geometry) as geom
+    from osm_auvergne
+    where osm_type = 'relation'
+    and tags->>'boundary' = 'administrative'
+    and tags->>'admin_level' in ('4', '8')
+)
+select ST_Union(geom), 'auvergne'
+from polygon;
+
+grant select on table auvergne_boundary to person;
+
+-- drop table if exists auvergne_road_vertex cascade;
+-- create table if not exists auvergne_road_vertex as
+-- select *
+-- from pgr_extractvertices($$
+--     select osm_id id, geog::geometry geom
+--     from osm_auvergne
+--     where osm_type = 'way'
+--     and tags ? 'highway'
+--     and tags->>'highway' not in ('footway', 'pedestrian')
+-- $$);
+
+-- drop materialized view if exists auvergne_network cascade;
+create materialized view if not exists auvergne_network (id, geog, source, target, cost, reverse_cost) as
+with edge (id, geog, startpoint, endpoint, cost) as (
+    select osm_id, geog, st_startpoint(geog::geometry), st_endpoint(geog::geometry), st_length(geog)
+    from osm_auvergne
+    where osm_type = 'way'
+    and tags ? 'highway'
+    and tags->>'highway' in (
+        'primary',
+        'primary_link',
+        'secondary',
+        'secondary_link',
+        'tertiary',
+        'tertiary_link',
+        'motorway',
+        'motorway_link',
+        'road',
+        'living_street',
+        -- 'track',
+        'trunk',
+        'trunk_link',
+        'residential'
+    )
+),
+node (id, geom) as (
+    select row_number() over (order by geom), geom
+    from (
+        select startpoint from edge
+        union all
+        select endpoint from edge
+    ) _ (geom)
+    group by geom
+)
+select edge.id, edge.geog, source.id, target.id, edge.cost, edge.cost r
+from edge
+join node as source on edge.startpoint = source.geom
+join node as target on edge.endpoint = target.geom;
+
+-- with in_edge (id, in_id) as (
+--     select id, unnest(in_edges)
+--     from auvergne_road_vertex
+-- ),
+-- out_edge (id, out_id) as (
+--     select id, unnest(out_edges)
+--     from auvergne_road_vertex
+-- )
+-- select osm_id, geog, out_edge.id, in_edge.id, st_length(geog)
+-- from osm_auvergne e
+-- join in_edge on (e.osm_id = in_id)
+-- join out_edge on (e.osm_id = out_id);
+
+grant select on table auvergne_network to person;
+
+create index if not exists auvergne_network_geog on auvergne_network using gist (geog);
+create index if not exists auvergne_network_source on auvergne_network (source);
+create index if not exists auvergne_network_target on auvergne_network (target);
+
+-- drop view if exists route cascade;
+create or replace view route (geom, cost, "group", style, tooltip)
+with (security_invoker) as
+with q (qs) as (
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
+),
+palette (palette) as materialized (
+    select array_agg(format(
+        '#%s00%s',
+        lpad(to_hex(r), 2, '0'),
+        lpad(to_hex(0xff - r), 2, '0')
+    ))
+    from generate_series(0, 0xff) r
+),
+location (point) as (
+    select coalesce((qs->>'location')::point, location)
+    from person_detail, q
+    where person_id = current_person_id()
+),
+start (vid) as (
+    select source
+    from auvergne_network, location
+    order by geog <-> ST_Point(point[1], point[0], 4326)
+    limit 1
+),
+"end" (vid) as (
+    select target
+    from finding_list,
+    lateral (
+        select target
+        from auvergne_network
+        order by geog <-> ST_Point(location[1], location[0], 4326)
+        limit 1
+    )
+)
+-- start (h3) as (
+--     select h3
+--     from roads_h3_r8 r, location
+--     order by h3_latlng_to_cell(point(point[1], point[0]), 8) <-> r.h3
+--     limit 1
+-- ),
+-- "end" (h3, cost) as (
+--     select h3, road_length_m
+--     from finding_list, lateral (
+--         select h3, road_length_m
+--         from roads_h3_r8 r
+--         order by h3_latlng_to_cell(location, 8) <-> r.h3
+--         limit 1
+--     ) l
+-- )
+-- select h3_cell_to_geometry(h3_grid_path_cells(
+--     -- h3_latlng_to_cell(point(location.point[1], location.point[0]), 8),
+--     start.h3,
+--     "end".h3
+-- )), cost, 'route',
+-- jsonb_build_object(
+--     'color', palette[width_bucket(cost, 0, max(cost) over (), 0xff)]
+-- ),
+-- cost::text
+-- from start, "end", palette
+
+select ST_LineMerge(edge.geog::geometry), path.agg_cost, 'route', jsonb_build_object(
+    'color', palette[width_bucket(path.agg_cost + 1, 0, max(path.agg_cost) over () + 1, 0xff)]
+), jsonb_set(tags, '{length}', path.agg_cost::text::jsonb)::text
+from palette, start, pgr_dijkstra(
+    'select id, source, target, cost, reverse_cost from auvergne_network', 
+    start.vid,
+    array(select vid from "end"),
+    directed => true
+) path
+join auvergne_network edge on (path.edge = edge.id)
+join osm_auvergne a on (a.osm_id = edge.id)
+;
+
+grant select on table route to person;
+
+create or replace view good_marker (geom, id, popup, "group")
+with (security_invoker) as
+select ST_Point(location[1], location[0], 4326), good_id, html, 'good' -- why is lat-lng inverted?
+from finding_list;
+
+grant select on table good_marker to person;
+
+create or replace view "findings" (html)
+with (security_invoker)
+as with q (qs) as (
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
 ),
 control (html) as (
     select xmlelement(name div,
         xmlelement(name div, xmlattributes('flashes onhover' as class),
             xmlelement(name article, xmlattributes('blue card' as class), _('findings.help')::xml)
         ),
-        xmlelement(name div, xmlattributes('grid' as class),
+        xmlelement(name div, xmlattributes('grid searches' as class),
             xmlelement(name nav,
                 xmlelement(name h4, _('Mes alertes en cours: ')),
                 xmlelement(name ul, (
+                    with result as (
+                        select *
+                        from search
+                        where person_id = current_person_id()
+                        order by at desc, query asc
+                        limit 100
+                    )
                     select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
                         url('/query', jsonb_build_object(
                             'q', query,
                             'sql', 'table head union all table "findings"',
                             'use_primary', null
                         )) as href
-                    ), query)) order by query asc), '')
-                    from search
-                    where person_id = current_person_id()
+                    ), query)) order by at desc, query asc), '')
+                    from result
                 )),
                 (select _('Nothing yet.')::xml where not exists (
                     select from search
@@ -762,13 +949,22 @@ control (html) as (
                     limit 1
                 ))
             ),
-            xmlelement(name nav,
+            xmlelement(name div,
                 xmlelement(name h4, _('Ce que d''autres cherchent: ')),
                 xmlelement(name ul, (
-                    select coalesce(xmlagg(xmlelement(name li, format(_('%s asks for %s'), person.name, query)) order by query asc), '')
-                    from search
-                    join person using (person_id)
-                    where person_id <> current_person_id()
+                    with result as (
+                        select person.name, search.*
+                        from search
+                        join person using (person_id)
+                        where person_id <> current_person_id()
+                        order by at desc, query asc
+                        limit 100
+                    )
+                    select coalesce(xmlagg(
+                        xmlelement(name li, format(_('%s asks for %s'), name, query))
+                        order by at desc, query asc
+                    ), '')
+                    from result
                 )),
                 (select _('Nothing yet.')::xml where not exists (
                     select from search
@@ -789,6 +985,18 @@ control (html) as (
                 _('query') as placeholder,
                 qs->>'q' as value
             )),
+            xmlelement(name label, xmlattributes('inline' as class),
+                '<span>rayon (km)</span>'::xml,
+                xmlelement(name input, xmlattributes(
+                    'distance' as name,
+                    'number' as type,
+                    -- '1' as min,
+                    -- '500' as max,
+                    -- '1' as step,
+                    _('distance') as placeholder,
+                    coalesce(nullif(nullif(qs->>'distance', 'null'), '')::int, 50) as value
+                ))
+            ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
@@ -864,33 +1072,55 @@ control (html) as (
     )
     from q
 ),
-result (good_id, rerank_distance, sort) as (
-    select good_id, case when qs->>'q' <> '' then
-        rerank_distance(qs->>'q', passage)
-        else -1
-    end,
-    case when qs->>'q' <> '' then embedding <=> embed_query(qs->>'q') else 1 end
-    from q, good
-    order by 3
-    limit 500
-),
-list (sort, html) as (
-    select sort, xmlelement(name article, xmlattributes('card' as class), d.html::xml)
-    from result
-    join "good_detail" d using (good_id)
-    where rerank_distance < 0
-    and not exists (
-        select from interest
-        where good_id = d.good_id
-        and state in ('approved', 'late', 'given')
-    )
+map (html) as (
+    select xmlelement(name input, xmlattributes(
+        'cpres-map' as is,
+        -- 'readonly' as readonly,
+        'hidden' as type,
+        'map' as id,
+        url('/query', jsonb_build_object('sql', $$
+            select coalesce(jsonb_agg(feature), '[]')::text
+            from (
+                select ST_AsGeoJSON(route)::jsonb from route
+                union all
+                select ST_AsGeoJSON(good_marker)::jsonb from good_marker
+            ) _ (feature)
+        $$)) as href,
+        location as value,
+        (
+            select coalesce(jsonb_agg(feature), '[]')
+            from (
+                select ST_AsGeoJSON(route)::jsonb from route
+                union all
+                select ST_AsGeoJSON(good_marker)::jsonb from good_marker
+                union all
+                select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
+                -- union all
+                -- select ST_AsGeoJSON(n)::jsonb from (
+                --     select edge.geog geom, a.tags::text tooltip
+                --     from auvergne_network edge
+                --     join osm_auvergne a on (edge.id = a.osm_id)
+                -- ) n
+                -- limit 10000
+            ) _ (feature)
+        ) as "data-geojson",
+        (
+            with extent (geom) as (
+                select ST_Extent(b.geom)::geometry from auvergne_boundary b
+            )
+            select ST_AsGeoJSON(e)::jsonb from extent e
+        ) as "data-bounds"
+    ), '')
+    from person_detail
+    where person_id = current_person_id()
 )
 select html::text from control
+union all select xmlelement(name div, format(_('%s results'), count(*)))::text from finding_list
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
-    xmlelement(name div, (select html from map where exists (select from list limit 1))),
-    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from list))
+    xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1))),
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list))
 )::text
-union all select _('Nothing yet.') where not exists (select from list limit 1)
+union all select _('Nothing yet.') where not exists (select from finding_list limit 1)
 ;
 
 grant select on table "findings" to person;
@@ -909,9 +1139,9 @@ select $html$<!DOCTYPE html>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
-    <link rel="stylesheet" href="/cpres/index.css?v=3" />
-    <script type="module" src="/cpres/cpres.js?v=4"></script>
-    <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
+    <link rel="stylesheet" href="/cpres/index.css?v=4" />
+    <script type="module" src="/cpres/webcomponent/map.js?v=2"></script>
+    <script type="module" src="/cpres/cpres.js?v=5"></script>
 </head>
 $html$
 union all (

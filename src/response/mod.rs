@@ -60,7 +60,14 @@ impl IntoResponse for HttpResult {
                         [("content-type", a)],
                         Body::from_stream(
                             rows.map(|row| {
-                                Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
+                                row.and_then(|r| r.try_get::<usize, Option<String>>(0))
+                                .map_or_else(
+                                    |e| snafu::Report::from_error(
+                                        HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
+                                    ).to_string() + "\n",
+                                    |v| v.unwrap_or("\n".to_string())
+                                )
+                                // Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
                             })
                             .map(Ok::<_, HttpgError>)
                         ),

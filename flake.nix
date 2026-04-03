@@ -13,6 +13,10 @@
       url = "github:erikarvstedt/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # pyproject-nix = {
+    #   url = "github:nix-community/pyproject.nix";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
   };
 
   outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
@@ -53,6 +57,115 @@
           # inherit cargoArtifacts;
           doCheck = true;
         });
+
+        packages.pg_jitter = pkgs.stdenv.mkDerivation {
+          pname = "pg_jitter";
+          version = "0.2.0";
+
+          srcs = [
+            (pkgs.fetchFromGitHub {
+              owner = "vladich";
+              repo = "pg_jitter";
+              rev = "v0.2.0";
+              sha256 = "sha256-OYQQOU2/YujBSVUe6AXVbbY8+6ngw8xE5aNzZpZI+28=";
+              name = "pg_jitter";
+            })
+            (pkgs.fetchFromGitHub {
+              owner = "asmjit";
+              repo = "asmjit";
+              rev = "master";
+              sha256 = "sha256-NC0V5KsYNyJ/hrgAkz6oTCwQmZ8eCWNSOUl+dyTKfJk=";
+              name = "asmjit";
+            })
+            (pkgs.fetchFromGitHub {
+              owner = "ashvardanian";
+              repo = "StringZilla";
+              rev = "v4.6.0";
+              sha256 = "sha256-5WAD5ZpzhdIDv1kUVinc5z91N/tQVScO75kOPC1WWlY=";
+              name = "stringzilla";
+            })
+            (pkgs.fetchFromGitHub {
+              owner = "zherczeg";
+              repo = "sljit";
+              rev = "master";
+              sha256 = "sha256-rpgcLzr+BYDhMguie7bvg6CppICkFpziXOq4hwTAvdw=";
+              name = "sljit";
+            })
+          ];
+
+          unpackCmd = ''
+            cp -r $curSrc $(stripHash $curSrc)
+          '';
+
+          sourceRoot = "pg_jitter";
+
+          nativeBuildInputs = with pkgs; [
+            cmake
+            postgresql_18.pg_config
+          ];
+
+          dontConfigure = true;
+
+          buildPhase = ''
+            ${pkgs.bash}/bin/bash build.sh \
+              sljit \
+              -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+
+            # ${pkgs.bash}/bin/bash build.sh \
+            #   asmjit \
+            #   -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+          '';
+
+          installPhase = ''
+            mkdir -p $out/lib
+            cp -rv build/pg18/pg_jitter*.so $out/lib
+          '';
+        };
+
+        # packages.pypsutil = pkgs.python3.pkgs.buildPythonPackage (pyproject-nix.lib.renderers.buildPythonPackage ({
+        #   project = pyproject-nix.lib.project.loadPyproject {
+        #     projectRoot = (pkgs.fetchFromGitHub {
+        #         owner = "cptpcrd";
+        #         repo = "pypsutil";
+        #         rev = "master";
+        #         sha256 = "sha256-8ZjNe7xfpcuKlADJyztkpODRpJkVcoHk18VuIhWwwMA=";
+        #       });
+        #   };
+        #   python = pkgs.python3;
+        #   pythonPackages = pkgs.python3Packages;
+        # }) // {
+        #   pname = "pypsutil";
+        #   version = "master";
+        # });
+
+        # packages.pgtracer = pkgs.python3.pkgs.buildPythonApplication (pyproject-nix.lib.renderers.buildPythonPackage ({
+        #   project = pyproject-nix.lib.project.loadPyproject {
+        #     projectRoot = (pkgs.fetchFromGitHub {
+        #         owner = "Aiven-Open";
+        #         repo = "pgtracer";
+        #         rev = "master";
+        #         sha256 = "sha256-ftENAaretZZ9Ujjx2RW7GPMZwvZgzLa4tDDyGYyGUaU=";
+        #       });
+        #   };
+        #   python = pkgs.python3;
+        #   pythonPackages = pkgs.python3Packages // {
+        #     pypsutil = self'.packages.pypsutil;
+        #   };
+        # }) // {
+        #   pname = "pgtracer";
+        #   version = "master";
+        #   propagatedBuildInputs = [
+        #     pkgs.bcc
+        #     pkgs.libunwind
+        #     pkgs.python3Packages.bcc
+        #   ];
+        #   patches = [
+        #     ./unwind_version.patch
+        #   ];
+        #   postPatch = ''
+        #     substituteInPlace src/pgtracer/ebpf/unwind.py --subst-var-by unwind_path "${lib.getLib pkgs.libunwind}/lib/libunwind-x86_64.so"
+        #   '';
+        # });
 
         packages.default = self'.packages.httpg-release;
 
@@ -192,6 +305,7 @@
 
                 services.postgresql = {
                   enable = true;
+                  # enableJIT = true;
                   package = pkgs.postgresql_18;
                   extensions = with pkgs.postgresql18Packages; [
                     wal2json
@@ -200,11 +314,14 @@
                     plv8
                     pgvector
                     pgsql-http
+                    postgis
+                    pgrouting
+                    h3-pg
+                    self'.packages.pg_jitter
                   ];
+
                   enableTCPIP = true;
-
                   ensureDatabases = [ "postgres" "httpg" ];
-
                   ensureUsers = [
                     {
                       name = "postgres";
@@ -233,8 +350,11 @@
                     # logging_collector = true;
                     # log_destination = nixpkgs.lib.mkForce "syslog";
                     log_statement = "all";
+                    # log_min_messages = "DEBUG1";
                     # "auto_explain.log_nested_statements" = true;
                     # "auto_explain.log_min_duration" = 0;
+                    "auto_explain.log_analyze" = true;
+                    "auto_explain.log_buffers" = true;
                     shared_preload_libraries = "auto_explain,pg_hint_plan,pg_stat_statements";
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
@@ -254,6 +374,9 @@
                     max_parallel_workers = 6;
                     max_parallel_maintenance_workers = 3;
                     client_connection_check_interval = "2s";
+                    jit = "off";
+                    jit_provider = "pg_jitter";
+                    "pg_jitter.backend" = "sljit";
                   };
                 };
 

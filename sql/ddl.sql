@@ -81,8 +81,8 @@ grant person to httpg;
 
 grant usage on schema cpres, url, pg_catalog to httpg;
 grant usage on schema cpres, url, pg_catalog to person;
-alter role httpg set search_path to cpres, url, pg_catalog;
-alter role person set search_path to cpres, url, pg_catalog;
+alter role httpg set search_path to cpres, url, pg_catalog, public;
+alter role person set search_path to cpres, url, pg_catalog, public;
 
 alter role httpg set statement_timeout to "500ms"; -- only at login time, so we set on http user, not person role
 alter role httpg set transaction_timeout to "500ms";
@@ -311,6 +311,7 @@ create table search (
     query text not null,
     embedding vector(384) not null generated always as (embed_query(query)) stored,
     interest interest_level not null default 'interested',
+    at timestamptz not null default now(),
     primary key (person_id, query)
 );
 

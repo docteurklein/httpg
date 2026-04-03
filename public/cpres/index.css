@@ -11,10 +11,16 @@
 
     line-height: 1.5;
     font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+    interpolate-size: allow-keywords;
 }
 
 * {
     box-sizing: border-box;
+}
+
+html {
+    scrollbar-gutter: stable;
 }
 
 @media only screen and (prefers-color-scheme: light) {
@@ -123,21 +129,18 @@ input.price {
     }
 }
 
+.searches ul {
+    max-height: 20vh;
+    overflow-y: scroll;
+}
+
 .search-results .list {
     overflow: auto;
     max-height: 90vh;
-
-    & .leaflet-container {
-        display: none;
-    }
 }
 
-.search-results #map {
+.search-results #map + .leaflet-container {
     height: 80vh;
-}
-
-#map:empty {
-    display: none;
 }
 
 input[is="cpres-map"] {
@@ -151,9 +154,6 @@ input[is="cpres-map"] {
     overflow: scroll;
     & img {
         display: inline;
-    }
-    & .leaflet-container {
-        display: none;
     }
 }
 

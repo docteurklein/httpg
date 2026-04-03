@@ -1,0 +1,25 @@
+{
+  "attributes": {
+    "type": true,
+    "id": true,
+    "version": false,
+    "changeset": false,
+    "timestamp": false,
+    "uid": false,
+    "user": false,
+    "way_nodes": false
+  },
+  "linear_tags": [
+    "highway"
+  ],
+  "area_tags": [
+    "boundary=administrative"
+  ],
+  "include_tags": [
+    "highway",
+    "maxspeed",
+    "boundary",
+    "admin_level"
+  ]
+}
+
