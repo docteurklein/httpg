@@ -197,6 +197,7 @@
               config-connector
               gke-gcloud-auth-plugin
             ]))
+            osmium-tool
           ];
           PGHOST = "10.250.0.2";
           HTTPG_PRIVATE_KEY_FILE = "private-key-file";
@@ -310,7 +311,7 @@
                   extensions = with pkgs.postgresql18Packages; [
                     wal2json
                     pg_ivm
-                    pg_hint_plan
+                    # pg_hint_plan
                     plv8
                     pgvector
                     pgsql-http
@@ -355,7 +356,7 @@
                     # "auto_explain.log_min_duration" = 0;
                     "auto_explain.log_analyze" = true;
                     "auto_explain.log_buffers" = true;
-                    shared_preload_libraries = "auto_explain,pg_hint_plan,pg_stat_statements";
+                    shared_preload_libraries = "auto_explain,pg_stat_statements";
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
@@ -377,6 +378,7 @@
                     jit = "off";
                     jit_provider = "pg_jitter";
                     "pg_jitter.backend" = "sljit";
+                    io_method = "io_uring";
                   };
                 };
 

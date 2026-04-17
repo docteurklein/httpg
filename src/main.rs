@@ -31,7 +31,7 @@ use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{error::HttpgError, extract::query::Query, postgres::PostgresConfig, response::compress_stream};
+use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::compress_stream};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
@@ -219,7 +219,7 @@ async fn login(
         .start().await?
     ;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let params: [&(dyn ToSql + Sync); 0] = [];
     let facts = tx.query(&login_query, &params).await?;
@@ -261,7 +261,11 @@ async fn logout(
     ))
 }
 
-async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<(), HttpgError> {
+async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<QueryGuard, HttpgError> {
+
+    let guard = QueryGuard {
+        cancel_token: tx.cancel_token(),
+    };
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;
 
@@ -300,7 +304,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
         })).await;
     }
 
-    Ok(())
+    Ok(guard)
 }
 
 #[debug_handler]
@@ -316,7 +320,7 @@ async fn email(
         .start().await
     ?;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -366,7 +370,7 @@ async fn http(
         .start().await
     ?;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -406,7 +410,7 @@ async fn web_push(
         .start().await
     ?;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -486,7 +490,7 @@ async fn stream_query(
         .start().await?
     ;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
@@ -509,7 +513,7 @@ async fn post_query(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -533,7 +537,7 @@ async fn post_query(
             let mut conn = write_pool.get().await?;
             let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
 
-            pre(&mut tx, &biscuit, &anon_role, &query).await?;
+            let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
             tx.query_typed_raw(
                 "select set_config('httpg.errors', $1, true)",
@@ -580,7 +584,7 @@ async fn raw_http(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())

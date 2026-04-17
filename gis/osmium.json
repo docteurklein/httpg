@@ -19,7 +19,9 @@
     "highway",
     "maxspeed",
     "boundary",
-    "admin_level"
+    "admin_level",
+    "service",
+    "tracktype"
   ]
 }
 

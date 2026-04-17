@@ -325,3 +325,13 @@ using (true)
 with check (
     person_id = current_person_id()
 );
+
+create table osm_auvergne (
+    geog geography,
+    osm_type text,
+    osm_id bigint,
+    tags jsonb
+);
+
+grant select on table osm_auvergne to person;
+

@@ -4,7 +4,7 @@ use std::{fs, sync::Arc};
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
-use tokio_postgres::{Client, Connection, Socket, tls::TlsStream};
+use tokio_postgres::{CancelToken, Client, Connection, Socket, tls::TlsStream};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::{HttpgError};
@@ -97,6 +97,19 @@ impl PostgresConfig {
         let tls = MakeRustlsConnect::new(tls_config);
 
         cfg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
+    }
+}
+
+pub struct QueryGuard {
+    pub cancel_token: CancelToken,
+}
+
+impl Drop for QueryGuard {
+    fn drop(&mut self) {
+        let cancel_token = self.cancel_token.clone();
+        tokio::spawn(async move {
+            let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+        });
     }
 }
 

@@ -35,7 +35,7 @@ create or replace function random_string(int)
 returns text
 as $$ 
     select array_to_string(array(
-        select substring('0123456789abcdefghijklmnopqrstuvwxyz ' from (random() * 37)::int for 1)
+        select substring('0123456789abcdefghijklmnopqrstuvwxyz          ' from (random() * 47)::int for 1)
         from generate_series(1, $1)
     ), '')
 $$ language sql;

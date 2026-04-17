@@ -9,6 +9,8 @@ import {} from 'https://unpkg.com/Leaflet.markercluster@1.5.3/dist/leaflet.marke
 
 class IsMap extends HTMLInputElement {
   static formAssociated = true;
+  static observedAttributes = ['data-geojson'];
+
   constructor() {
     super();
 
@@ -16,7 +18,7 @@ class IsMap extends HTMLInputElement {
 
     this.div = document.createElement('div');
     this.map = new Map(this.div, {
-      // maxBounds: this.dataset.bounds
+      maxBounds: this.dataset.bounds
     });
   }
 
@@ -52,31 +54,40 @@ class IsMap extends HTMLInputElement {
       });
     }
 
-    this.geojson(JSON.parse(this.dataset.geojson));
-
     this.type = 'hidden'; // progressive enhancement
   }
 
+  attributeChangedCallback(name, oldValue, newValue) {
+    if (name === 'data-geojson' && newValue) {
+        this.geojson(JSON.parse(this.dataset.geojson));
+    }
+  }
+  
   geojson(data) {
     new GeoJSON(data, {
       style(feature) {
-          return feature.properties.style || {};
+          // let colors = ['green', 'yellow', 'red', 'blue', 'purple', 'black', 'orange', 'grey'];
+          // let c = colors[Math.floor(Math.random() * colors.length)];
+          // return {color: c};
+          return feature.properties?.style || {};
       },
       onEachFeature: (feature, layer) => {
-        this.features[feature.properties.id] = layer;
+        if (feature.properties?.id) {
+          this.features[feature.properties.id] = layer;
+        }
 
-        if (feature.properties.popup) {
+        if (feature.properties?.popup) {
           layer.bindPopup(feature.properties.popup, {
             maxHeight: 400,
             maxWidth: 1000,
             minWidth: 300,
           });
         }
-        if (feature.properties.tooltip) {
+        if (feature.properties?.tooltip) {
           layer.bindTooltip(feature.properties.tooltip, {
           });
         }
-        if (feature.properties.group) {
+        if (feature.properties?.group) {
           if (!this[feature.properties.group]) {
             this[feature.properties.group] = L.markerClusterGroup({});
             this.map.addLayer(this[feature.properties.group]);
