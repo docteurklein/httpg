@@ -5,7 +5,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
-use crate::{HttpgError, extract::query::Query};
+use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
 
 pub mod compress_stream;
 
@@ -18,6 +18,7 @@ pub enum Rows {
 pub struct HttpResult {
     pub query: Query,
     pub rows: Rows,
+    pub guard: QueryGuard,
 }
 
 fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
@@ -67,7 +68,6 @@ impl IntoResponse for HttpResult {
                                     ).to_string() + "\n",
                                     |v| v.unwrap_or("\n".to_string())
                                 )
-                                // Bytes::from(row.unwrap().get::<usize, String>(0) + "\n")
                             })
                             .map(Ok::<_, HttpgError>)
                         ),

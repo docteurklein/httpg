@@ -490,7 +490,7 @@ async fn stream_query(
         .start().await?
     ;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param, param.to_owned().into())
@@ -500,7 +500,8 @@ async fn stream_query(
 
     Ok(response::HttpResult {
         query: query.to_owned(),
-        rows: response::Rows::Stream(rows)
+        rows: response::Rows::Stream(rows),
+        guard,
     })
 }
 
@@ -513,7 +514,7 @@ async fn post_query(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -571,7 +572,8 @@ async fn post_query(
 
     Ok(response::HttpResult {
         query,
-        rows: response::Rows::StringVec(rows)
+        rows: response::Rows::StringVec(rows),
+        guard,
     }.into_response())
 }
 
@@ -584,7 +586,7 @@ async fn raw_http(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -596,6 +598,7 @@ async fn raw_http(
 
     Ok(response::HttpResult {
         query,
-        rows: response::Rows::Raw(result)
+        rows: response::Rows::Raw(result),
+        guard,
     }.into_response())
 }
