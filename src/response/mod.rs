@@ -63,13 +63,12 @@ impl IntoResponse for HttpResult {
                             rows.map(|row| {
                                 row.and_then(|r| r.try_get::<usize, Option<String>>(0))
                                 .map_or_else(
-                                    |e| snafu::Report::from_error(
+                                    |e| Err(snafu::Report::from_error(
                                         HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                    ).to_string() + "\n",
-                                    |v| v.unwrap_or("\n".to_string())
+                                    ).to_string() + "\n"),
+                                    |v| Ok(v.unwrap_or("\n".to_string()))
                                 )
-                            })
-                            .map(Ok::<_, HttpgError>)
+                            }).take_while(Result::is_ok)
                         ),
                     ).into_response(),
 
@@ -90,13 +89,14 @@ impl IntoResponse for HttpResult {
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
                                     .map_or_else(
-                                        |e| snafu::Report::from_error(
+                                        |e| Err(snafu::Report::from_error(
                                             HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                        ).to_string() + "\n",
-                                        |v| v + "\n"
+                                        ).to_string() + "\n"),
+                                        |v| Ok(v + "\n")
                                     )
+                                    // .inspect(|e| {self.guard.clone().cancel_token.clone().cancel_query(tokio_postgres::NoTls);})
                             )
-                            .map(Ok::<_, HttpgError>)
+                            .take_while(Result::is_ok)
                         )
                     ).into_response(),
 

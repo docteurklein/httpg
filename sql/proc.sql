@@ -133,7 +133,7 @@ set search_path to cpres, pg_catalog
 begin atomic
     with login_person as (
         insert into person (name, email, login_challenge)
-        values (replace($1, '@', '-at-'), $1, gen_random_uuid())
+        values (replace(email_, '@', '-at-'), email_, gen_random_uuid())
         on conflict (email) do update
             set login_challenge = excluded.login_challenge,
                 challenge_used_at = null
@@ -201,7 +201,7 @@ begin atomic
     from person_detail
     where person_id = person_id_
     and push_endpoint is not null
-    and exists (select from person where person_id = nullif(current_setting('cpres.person_id', true), '')::uuid);
+    and exists (select from person where person_id = current_person_id());
 end;
 
 grant execute on function web_push(uuid, text, text, text) to person;
