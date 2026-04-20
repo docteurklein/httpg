@@ -510,7 +510,8 @@ async fn post_query(
     State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
-) -> Result<impl IntoResponse, HttpgError> {
+) -> Result<impl IntoResponse, HttpgError>
+{
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 

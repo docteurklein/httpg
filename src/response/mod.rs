@@ -1,7 +1,8 @@
-use std::{backtrace::Backtrace, str::FromStr};
+use std::{backtrace::Backtrace, pin::Pin, str::FromStr, task::{Context, Poll}};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{BufMut, BytesMut};
+use futures::Stream;
 use tokio_postgres::{Row, RowStream};
 use tokio_stream::StreamExt;
 
@@ -19,6 +20,19 @@ pub struct HttpResult {
     pub query: Query,
     pub rows: Rows,
     pub guard: QueryGuard,
+}
+
+struct CancelStream {
+    inner: Pin<Box<RowStream>>,
+    guard: QueryGuard,
+}
+
+impl Stream for CancelStream {
+    type Item = <RowStream as Stream>::Item;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        self.inner.as_mut().poll_next(cx)
+    }
 }
 
 fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
@@ -57,10 +71,10 @@ impl IntoResponse for HttpResult {
         match self.query.accept {
             Some(a) if a.starts_with("application/json") => {
                 match self.rows {
-                    Rows::Stream(rows) => (
-                        [("content-type", a)],
-                        Body::from_stream(
-                            rows.map(|row| {
+                    Rows::Stream(rows) => {
+                        (
+                            [("content-type", a)],
+                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }.map(|row| {
                                 row.and_then(|r| r.try_get::<usize, Option<String>>(0))
                                 .map_or_else(
                                     |e| Err(snafu::Report::from_error(
@@ -68,9 +82,9 @@ impl IntoResponse for HttpResult {
                                     ).to_string() + "\n"),
                                     |v| Ok(v.unwrap_or("\n".to_string()))
                                 )
-                            }).take_while(Result::is_ok)
-                        ),
-                    ).into_response(),
+                            }).take_while(Result::is_ok))
+                        ).into_response()
+                    },
 
                     Rows::StringVec(rows) => Body::from(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
@@ -83,9 +97,10 @@ impl IntoResponse for HttpResult {
             },
             Some(a) if a.starts_with("text/html") => {
                 match self.rows {
-                    Rows::Stream(rows) => Html(
-                        Body::from_stream(
-                            rows.map(|row|
+                    Rows::Stream(rows) => {
+                        let cancel_token = self.guard.cancel_token.clone();
+                        Html(
+                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }.map(|row|
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
                                     .map_or_else(
@@ -94,11 +109,9 @@ impl IntoResponse for HttpResult {
                                         ).to_string() + "\n"),
                                         |v| Ok(v + "\n")
                                     )
-                                    // .inspect(|e| {self.guard.clone().cancel_token.clone().cancel_query(tokio_postgres::NoTls);})
-                            )
-                            .take_while(Result::is_ok)
-                        )
-                    ).into_response(),
+                            ).take_while(Result::is_ok))
+                        ).into_response()
+                    },
 
                     Rows::StringVec(rows) => Html(
                         rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
@@ -118,9 +131,10 @@ impl IntoResponse for HttpResult {
                             headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
                         }
 
+                        let cancel_token = self.guard.cancel_token.clone();
                         (
                             headers,
-                            Body::from_stream(rows
+                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }
                                 .map(|row|
                                     row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
                                 )
@@ -170,7 +184,10 @@ mod tests {
         let rows = response::Rows::Stream(rows);
         let res = response::HttpResult {
             query: query.clone(),
-            rows
+            rows,
+            guard: crate::postgres::QueryGuard {
+                cancel_token: conn.cancel_token(),
+            },
         };
 
         let body = res.into_response().into_body();
