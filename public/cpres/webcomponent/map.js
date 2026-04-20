@@ -9,7 +9,7 @@ import {} from 'https://unpkg.com/Leaflet.markercluster@1.5.3/dist/leaflet.marke
 
 class IsMap extends HTMLInputElement {
   static formAssociated = true;
-  static observedAttributes = ['data-geojson'];
+  static observedAttributes = ['data-geojson','data-zoom'];
 
   constructor() {
     super();
@@ -31,7 +31,14 @@ class IsMap extends HTMLInputElement {
       attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
     }).addTo(this.map);
 
-    this.map.setZoom(1);
+    let loc = new URL(window.location.href);
+    this.map.setZoom(loc.searchParams.get('zoom') || 1);
+
+    this.map.on('zoomend', () => {
+      let loc = new URL(window.location.href);
+      loc.searchParams.set('zoom', this.map.getZoom());
+      history.replaceState({}, "", loc);
+    });
 
     if (!this.value) {
       this.map.locate({
@@ -44,7 +51,6 @@ class IsMap extends HTMLInputElement {
       let pos = [matches[1], matches[2]];
       this.marker.setLatLng(pos);
       this.map.setView(pos);
-      this.map.setZoom(9);
     }
 
     if (!this.readOnly) {
@@ -60,6 +66,9 @@ class IsMap extends HTMLInputElement {
   attributeChangedCallback(name, oldValue, newValue) {
     if (name === 'data-geojson' && newValue) {
         this.geojson(JSON.parse(this.dataset.geojson));
+    }
+    if (name === 'data-zoom' && newValue) {
+        this.map.setZoom(this.dataset.zoom);
     }
   }
   

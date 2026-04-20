@@ -115,11 +115,11 @@ document.addEventListener('click', (event) => {
 
 
 document.addEventListener('DOMContentLoaded', () => {
+  let loc = new URL(window.location.href);
   window.map?.on('click', e => {
     window.map.removeGroup('route');
     window.map.removeGroup('good');
     let href = new URL(window.map.getAttribute('href'), window.location.href);
-    let loc = new URL(window.location.href);
 
     href.searchParams.set('location', window.map.value);
     href.searchParams.set('q', loc.searchParams.get('q') || '');
