@@ -1,4 +1,4 @@
-import L, {Map, Marker, TileLayer, ImageOverlay, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
+import L, {Map, Icon, Popup, Marker, TileLayer, ImageOverlay, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
 
 import 'https://cdn.jsdelivr.net/gh/Falke-Design/Leaflet-V1-polyfill/leaflet-v1-polyfill.js';
 
@@ -15,24 +15,39 @@ class IsMap extends HTMLInputElement {
     super();
 
     this.features = {};
+    this.groups = {};
 
     this.div = document.createElement('div');
     this.map = new Map(this.div, {
       maxBounds: this.dataset.bounds
     });
+    this.group = L.markerClusterGroup({});
+    this.map.addLayer(this.group);
   }
 
   connectedCallback() {
     this.insertAdjacentElement('afterend', this.div);
-    this.marker = new Marker([0, 0]).addTo(this.map);
+    this.marker = new Marker([0, 0], {
+      icon: new Icon({
+        iconUrl: this.dataset.markerUrl || 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+        iconSize: [25, 41],
+        iconAnchor: [12, 30],
+      }),
+    }).addTo(this.map);
 
-    const tiles = new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
-      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(this.map);
+
+    new TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+      maxZoom: 19,
+      attribution: 'ArcGis',
+      opacity: .5,
     }).addTo(this.map);
 
     let loc = new URL(window.location.href);
-    this.map.setZoom(loc.searchParams.get('zoom') || 1);
+    this.map.setZoom(loc.searchParams.get('zoom') || 9);
 
     this.map.on('zoomend', () => {
       let loc = new URL(window.location.href);
@@ -57,6 +72,7 @@ class IsMap extends HTMLInputElement {
       this.map.on('click', e => {
         this.marker.setLatLng([e.latlng.lat, e.latlng.lng]);
         this.value = `(${e.latlng.lat},${e.latlng.lng})`;
+        this.dispatchEvent(new InputEvent('input'));
       });
     }
 
@@ -81,30 +97,36 @@ class IsMap extends HTMLInputElement {
           return feature.properties?.style || {};
       },
       onEachFeature: (feature, layer) => {
-        if (feature.properties?.id) {
-          this.features[feature.properties.id] = layer;
+        if (feature.id in this.features) {
+          return;
+        }
+        if (feature.id) {
+          this.features[feature.id] = layer;
         }
 
         if (feature.properties?.popup) {
-          layer.bindPopup(feature.properties.popup, {
-            maxHeight: 400,
-            maxWidth: 1000,
-            minWidth: 300,
-          });
+          layer.bindPopup(new Popup({
+            content: feature.properties.popup,
+            maxHeight: 300,
+            // maxWidth: 1000,
+            minWidth: 200,
+            autoClose: false,
+            closeOnClick: false,
+          }, layer));
         }
         if (feature.properties?.tooltip) {
-          layer.bindTooltip(feature.properties.tooltip, {
-          });
+          layer.bindTooltip(feature.properties.tooltip);
         }
+
         if (feature.properties?.group) {
-          if (!this[feature.properties.group]) {
-            this[feature.properties.group] = L.markerClusterGroup({});
-            this.map.addLayer(this[feature.properties.group]);
+          if (!this.groups[feature.properties.group]) {
+            this.groups[feature.properties.group] = L.markerClusterGroup({});
+            this.map.addLayer(this.groups[feature.properties.group]);
           }
-          this[feature.properties.group].addLayer(layer);
-        }
+          this.groups[feature.properties.group].addLayer(layer);
+        }        
         else {
-          this.map.addLayer(layer);
+          this.group.addLayer(layer);
         }
       }
     });
@@ -114,24 +136,16 @@ class IsMap extends HTMLInputElement {
     this.map.on(event, f);
   }
 
-  onGroup(group, event, f) {
-    this[group].on(event, f);
-  }
-
-  removeGroup(group) {
-    if (group in this) {
-      this.map.removeLayer(this[group]);
-      delete this[group];
-    }
-  }
-  
   openPopup(id) {
     this.features[id].__parent.spiderfy();
     this.features[id].openPopup();
   }
 
-  setView(pos) {
-    this.map.setView(pos, 16);
+  removeGroup(group) {
+    if (group in this.groups) {
+      this.map.removeLayer(this.groups[group]);
+      delete this.groups[group];
+    }
   }
 }
 

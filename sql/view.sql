@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 
-set local search_path to cpres, url, pg_catalog, public;
+set  search_path to cpres, url, pg_catalog, public;
 
 create or replace function cpres._(id_ text, lang_ text = null)
 returns text
@@ -741,7 +741,7 @@ limit 500
 
 grant select on table finding_list to person;
 
-drop materialized view if exists auvergne_boundary cascade;
+-- drop materialized view if exists auvergne_boundary cascade;
 create materialized view if not exists auvergne_boundary (geom, id) as
     select ST_Union(ST_Multi(geog::geometry)), 'auvergne'
     from osm_auvergne
@@ -752,9 +752,9 @@ create materialized view if not exists auvergne_boundary (geom, id) as
 
 grant select on table auvergne_boundary to person;
 
-drop materialized view if exists auvergne_highway cascade;
-create materialized view if not exists auvergne_highway (id, geog) as
-    select osm_id, geog
+-- drop materialized view if exists auvergne_highway cascade;
+create materialized view if not exists auvergne_highway (osm_id, geog, speed) as
+    select osm_id, geog, coalesce(nullif(json_value(tags, '$.maxspeed' returning numeric null on error), 0), 50)
     from osm_auvergne
     where osm_type = 'way'
     and tags->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
@@ -776,34 +776,57 @@ create materialized view if not exists auvergne_highway (id, geog) as
         'residential'
     )
     and case when tags->>'highway' = 'track'
-        then coalesce(tags->>'tracktype', 'grade1') in ('grade1', 'grade2', 'grade3')
+        then coalesce(tags->>'tracktype', 'grade1') in ('grade1', 'grade2') --, 'grade3')
         else true
     end
+    and geometrytype(geog) = 'LINESTRING'
 ;
+
+create unique index if not exists auvergne_highway_pkey on auvergne_highway (osm_id);
+create index if not exists auvergne_highway_geom on auvergne_highway using gist ((geog::geometry));
+create index if not exists auvergne_highway_geog on auvergne_highway using gist (geog);
+
+-- commit;
+-- vacuum analyze auvergne_highway;
+-- begin;
 
 grant select on table auvergne_highway to person;
 
-drop materialized view if exists auvergne_network cascade;
+-- drop materialized view if exists auvergne_network cascade;
+-- \timing on
 create materialized view if not exists auvergne_network (osm_id, id, geom, source, target, cost, reverse_cost) as
-with
-crossing as (
-    select e1.id, e1.geog, st_intersection(e1.geog, e2.geog) point
-    from auvergne_highway e1, auvergne_highway e2
-    where st_intersects(e1.geog, e2.geog)
-    and geometrytype(st_intersection(e1.geog, e2.geog)) = 'POINT'
+with crossing as (
+    select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
+    from auvergne_highway e1
+    join auvergne_highway e2
+        on st_touches(e1.geog::geometry, e2.geog::geometry)
+    -- and geometrytype(st_intersection(e1.geog, e2.geog)) = 'POINT'
+    and e1.osm_id <> e2.osm_id
+    -- limit 10
 ),
 split as (
-    select id, point, split.geom
-    from crossing, st_dump(st_split(geog::geometry, point::geometry)) split
+    select osm_id, split.geom, speed
+    from crossing, st_dump(
+        st_split(
+            st_snap(geog::geometry, point, .1),
+            point
+        )
+    ) split
 ),
-edge (osm_id, id, geog, startpoint, endpoint, cost) as (
-    select id, row_number() over (order by geog), geog, st_startpoint(geog::geometry), st_endpoint(geog::geometry), st_length(geog)
+edge (osm_id, id, geog, startpoint, endpoint, duration) as (
+    select
+        osm_id,
+        row_number() over (order by geog),
+        geog,
+        st_startpoint(geog::geometry),
+        st_endpoint(geog::geometry),
+        st_length(geog) / (speed / 3.6)
     from (
-        select id, point from split
+        select osm_id, geom, speed from split
         union all
-        select id, geog from auvergne_highway
-        where not exists (select from split where split.id = auvergne_highway.id)
-    ) _ (id, geog)
+        select osm_id, geog, speed from auvergne_highway
+        where not exists (select from split where split.osm_id = auvergne_highway.osm_id)
+    ) _ (osm_id, geog)
 ),
 node (id, geom) as (
     select row_number() over (order by geom), geom
@@ -814,7 +837,7 @@ node (id, geom) as (
     ) _ (geom)
     group by geom
 )
-select osm_id, edge.id, edge.geog::geometry, source.id, target.id, edge.cost, edge.cost r
+select osm_id, edge.id, edge.geog::geometry, source.id, target.id, edge.duration, edge.duration r
 from edge
 join node source on edge.startpoint = source.geom
 join node target on edge.endpoint = target.geom;
@@ -827,14 +850,14 @@ create index if not exists auvergne_network_target on auvergne_network (target);
 create unique index if not exists auvergne_network_pkey on auvergne_network (id);
 
 -- drop view if exists route cascade;
-create or replace view route (geom, cost, "group", style, tooltip)
+create or replace view route (geom, cost, id, "group", style, tooltip)
 with (security_invoker) as
 with q (qs) as (
     select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
 ),
 palette (palette) as materialized (
     select array_agg(format(
-        '#%s00%s',
+        '#00%s%s',
         lpad(to_hex(r), 2, '0'),
         lpad(to_hex(0xff - r), 2, '0')
     ))
@@ -853,32 +876,48 @@ start (vid) as (
 ),
 "end" (vid) as (
     select target
-    from finding_list,
+    from q, finding_list,
     lateral (
         select target
         from auvergne_network
+        where case when nullif(qs->>'target', '') is null
+            then true
+            else good_id =  nullif(qs->>'target', '')::uuid
+        end
         order by geom <-> ST_Point(location[1], location[0], 4326)
         limit 1
     )
 )
-select ST_LineMerge(edge.geom::geometry), path.agg_cost, 'route', jsonb_build_object(
-    'color', palette[width_bucket(path.agg_cost + 1, 0, max(path.agg_cost) over () + 1, 0xff)]
-), (a.tags || jsonb_build_object('length', path.agg_cost, 'edge_id', edge.id))::text
-from palette, start, pgr_dijkstra(
+select
+    ST_LineMerge(edge.geom::geometry),
+    path.agg_cost,
+    format('%s-%s', start.vid, "end".vid),
+    'route',
+    jsonb_build_object(
+        'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
+    ),
+    jsonb_build_object(
+        'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
+        'duration', path.cost::int * interval '1 sec',
+        'speed', speed
+    )::text
+from palette, start, "end", pgr_dijkstra(
     'select id, source, target, cost, reverse_cost from auvergne_network', 
     start.vid,
-    array(select vid from "end"),
+    "end".vid,
+    -- array(select vid from "end"),
     directed => true
 ) path
 join auvergne_network edge on (path.edge = edge.id)
-join osm_auvergne a on (a.osm_id = edge.osm_id)
+join auvergne_highway a on (a.osm_id = edge.osm_id)
 ;
 
 grant select on table route to person;
 
-create or replace view good_marker (geom, id, popup, "group")
+-- drop view if exists good_marker cascade;
+create or replace view good_marker (geom, id, popup)
 with (security_invoker) as
-select ST_Point(location[1], location[0], 4326), good_id, html, 'good' -- why is lat-lng inverted?
+select ST_Point(location[1], location[0], 4326), good_id, html -- why is lat-lng inverted?
 from finding_list;
 
 grant select on table good_marker to person;
@@ -1048,24 +1087,30 @@ map (html) as (
         -- 'readonly' as readonly,
         'hidden' as type,
         'map' as id,
-        url('/query', jsonb_build_object('sql', $$
-            select coalesce(jsonb_agg(feature), '[]')::text
-            from (
-                select ST_AsGeoJSON(route)::jsonb from route
-                union all
-                select ST_AsGeoJSON(good_marker)::jsonb from good_marker
-            ) _ (feature)
-        $$)) as href,
+        url('/query', jsonb_build_object(
+            'sql', $$
+                select coalesce(jsonb_agg(feature), '[]')::text
+                from (
+                    select ST_AsGeoJSON(route)::jsonb from route
+                    union all
+                    select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
+                ) _ (feature)
+            $$,
+            'use_primary', null,
+            'q', qs->>'q',
+            'distance', qs->>'distance'
+            
+        )) as href,
+        '/cpres/marker.png' as "data-marker-url",
         location as value,
         (
             select coalesce(jsonb_agg(feature), '[]')
             from (
                 select ST_AsGeoJSON(route)::jsonb from route
                 union all
-                select ST_AsGeoJSON(good_marker)::jsonb from good_marker
+                select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
                 union all
                 select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
-                union all
                 -- (with crossing as (
                 --     select e1.id id1, e2.id id2, e1.geog as g1, e2.geog as g2, st_intersection(e1.geog, e2.geog) point
                 --     from auvergne_highway e1, auvergne_highway e2
@@ -1082,22 +1127,49 @@ map (html) as (
                 -- union all
                 -- select ST_AsGeoJSON(n, geom_column => 'point')::jsonb from crossing n
                 -- )
+                -- union all
+                -- select st_asgeojson(n)::jsonb from (
+                --     with crossing as (
+                --         select e1.osm_id, e1.geog, st_intersection(e1.geog, e2.geog) point
+                --         from auvergne_highway e1, auvergne_highway e2
+                --         where st_intersects(e1.geog::geometry, e2.geog::geometry)
+                --         and e1.osm_id in (175510446, 1203953601)
+                --         and e2.osm_id in (175510446, 1203953601)
+                --         and geometrytype(st_intersection(e1.geog, e2.geog)) = 'POINT'
+                --     ),
+                --     split as (
+                --         select row_number() over (), split.geom, row_number() over ()::text tooltip
+                --         from crossing, st_dump(st_split(st_snap(geog::geometry, point::geometry, .1), point::geometry)) split
+                --     )
+                --     select * from split
+                --     -- select e1.osm_id id, st_intersection(e1.geog, e2.geog) geom
+                --     -- from auvergne_highway e1, auvergne_highway e2
+                --     -- where st_intersects(e1.geog, e2.geog)
+                --     -- and e1.osm_id in (175510446, 1203953601)
+                --     -- and e2.osm_id in (175510446, 1203953601)
+                --     -- and geometrytype(st_intersection(e1.geog, e2.geog)) = 'POINT'
+                --     -- and geometrytype(e1.geog) IN ('LINESTRING', 'MULTILINESTRING')
+                -- ) n
 
-                select st_asgeojson(n)::jsonb from (
-                    select edge.geom, edge.id::text tooltip
-                    from auvergne_network edge
-                    -- join osm_auvergne a on (edge.osm_id = a.osm_id)
-                ) n
+                -- union all
+                -- select st_asgeojson(n)::jsonb from (
+                --     select edge.geom, jsonb_build_object('cost', edge.cost, 'speed', speed)::text tooltip
+                --     from auvergne_network edge
+                --     join auvergne_highway a on (edge.osm_id = a.osm_id)
+                --     -- where osm_id = 175510446
+                --     limit 10000
+                --     -- join osm_auvergne a on (edge.osm_id = a.osm_id)
+                -- ) n
             ) _ (feature)
         ) as "data-geojson"
         -- (
         --     with extent (geom) as (
         --         select ST_Extent(b.geom) from auvergne_boundary b
         --     )
-        --     select ST_AsGeoJSON(e)::jsonb from extent e
+        --     select ST_AsGeoJSON(e, geom_column => 'geom')::jsonb from extent e
         -- ) as "data-bounds"
     ), '')
-    from person_detail
+    from person_detail, q
     where person_id = current_person_id()
 )
 select html::text from control

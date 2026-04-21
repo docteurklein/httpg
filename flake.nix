@@ -344,6 +344,7 @@
                   '';
 
                   settings = {
+                    allow_alter_system = false;
                     wal_level = "logical";
                     log_connections = true;
                     log_disconnections = true;

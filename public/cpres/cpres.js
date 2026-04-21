@@ -110,28 +110,33 @@ document.addEventListener('click', (event) => {
     return;
   }
   event.preventDefault();
-  document.getElementById('map')?.openPopup(event.target.getAttribute('for'));
+  window.map?.openPopup(event.target.getAttribute('for'));
+  window.map?.parentNode.scrollIntoView();
+});
+
+window.map?.on('popupopen', event => {
+  window.map.setAttribute('data-target', event.popup._source.feature.id);
+  window.map.dispatchEvent(new InputEvent('input'));
 });
 
 
 document.addEventListener('DOMContentLoaded', () => {
   let loc = new URL(window.location.href);
-  window.map?.on('click', e => {
-    window.map.removeGroup('route');
-    window.map.removeGroup('good');
+  window.map?.addEventListener('input', e => {
     let href = new URL(window.map.getAttribute('href'), window.location.href);
 
     href.searchParams.set('location', window.map.value);
-    href.searchParams.set('q', loc.searchParams.get('q') || '');
-    href.searchParams.set('distance', loc.searchParams.get('distance') || '');
-    href.searchParams.set('use_primary', loc.searchParams.get('use_primary') || '');
+    href.searchParams.set('target', window.map.getAttribute('data-target') || '');
     fetch(href.toString(), {
       headers: {
         'Accept': 'application/json'
       }
     })
       .then(response => response.json())
-      .then(window.map.geojson.bind(window.map))
+      .then((geojson) => {
+        window.map.removeGroup('route');
+        window.map.geojson(geojson);
+      })
     ;
   });
 });

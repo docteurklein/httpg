@@ -507,7 +507,7 @@ async fn stream_query(
 
 #[debug_handler]
 async fn post_query(
-    State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
+    State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError>
@@ -536,8 +536,8 @@ async fn post_query(
         Err(err) => {
             let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
 
-            let mut conn = write_pool.get().await?;
-            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::Serializable).start().await?;
+            let mut conn = read_pool.get().await?;
+            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
 
             let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
