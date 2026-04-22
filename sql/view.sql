@@ -821,6 +821,10 @@ grant select on table auvergne_highway to person;
 
 -- drop materialized view if exists auvergne_network cascade;
 -- \timing on
+
+select current_setting('neon.project_id', true) is not null as is_neon
+\gset
+
 create materialized view if not exists auvergne_network (osm_id, id, geom, source, target, cost, reverse_cost) as
 with crossing as (
     select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
@@ -869,7 +873,11 @@ select osm_id, edge.id, edge.geog::geometry, source.id, target.id, edge.duration
     -- st_y(target.geom)
 from edge
 join node source on edge.startpoint = source.geom
-join node target on edge.endpoint = target.geom;
+join node target on edge.endpoint = target.geom
+\if :is_neon
+where false
+\endif
+;
 
 grant select on table auvergne_network to person;
 
