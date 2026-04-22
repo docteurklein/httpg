@@ -819,12 +819,12 @@ create index if not exists auvergne_highway_geog on auvergne_highway using gist 
 
 grant select on table auvergne_highway to person;
 
+
+-- select current_setting('neon.project_id', true) is not null as is_neon
+-- \gset
+
 -- drop materialized view if exists auvergne_network cascade;
 -- \timing on
-
-select current_setting('neon.project_id', true) is not null as is_neon
-\gset
-
 create materialized view if not exists auvergne_network (osm_id, id, geom, source, target, cost, reverse_cost) as
 with crossing as (
     select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
@@ -832,6 +832,9 @@ with crossing as (
     join auvergne_highway e2
     on st_touches(e1.geog::geometry, e2.geog::geometry)
     and e1.osm_id <> e2.osm_id
+    -- \if :is_neon
+    -- and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
+    -- \endif
 ),
 split as (
     select osm_id, split.geom, speed
@@ -874,9 +877,6 @@ select osm_id, edge.id, edge.geog::geometry, source.id, target.id, edge.duration
 from edge
 join node source on edge.startpoint = source.geom
 join node target on edge.endpoint = target.geom
-\if :is_neon
-where false
-\endif
 ;
 
 grant select on table auvergne_network to person;
@@ -1169,8 +1169,8 @@ map (html) as (
 select html::text from control
 union all select xmlelement(name div, format(_('%s results'), count(*)))::text from finding_list
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
-    xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1))),
-    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list))
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list)),
+    xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1)))
 )::text
 union all select _('Nothing yet.') where not exists (select from finding_list limit 1)
 ;
