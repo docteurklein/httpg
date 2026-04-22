@@ -43,7 +43,7 @@ class IsMap extends HTMLInputElement {
     new TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
       attribution: 'ArcGis',
-      opacity: .5,
+      opacity: .4,
     }).addTo(this.map);
 
     let loc = new URL(window.location.href);

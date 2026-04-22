@@ -268,7 +268,7 @@
                 networking.useDHCP = false;
 
                 systemd.services.httpg = {
-                  enable = true;
+                  enable = false;
                   wantedBy = [ "default.target" ];
                   serviceConfig = {
                     Type = "simple";
@@ -363,6 +363,7 @@
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
                     # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
                     # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
+                    work_mem = "20MB";
                     maintenance_work_mem = "1GB";
                     checkpoint_completion_target = 0.9;
                     wal_buffers = "16MB";

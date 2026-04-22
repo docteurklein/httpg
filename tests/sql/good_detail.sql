@@ -11,6 +11,10 @@ set local search_path to cpres, pg_catalog, public;
 insert into cpres.person (person_id, name, email, login_challenge) values (default, 'user1', 'user1@example.org', default)
     returning person_id into current_person_id;
 
+-- insert into person_detail (person_id, location) values
+--     (current_person_id,'(56.073448, 2.666524)')
+-- ;
+
 perform set_config('cpres.person_id', current_person_id::text, true);
 
 insert into good (title, description, location, giver)
@@ -22,7 +26,7 @@ select
 from generate_series(1, 10) i, person
 where name <> 'p3';
 
-set local "httpg.query" to '{"accept_language": "en-US,"}';
+set local "httpg.query" to '{"accept_language": "en-US", "qs": {"location": "(1,1)"}}';
 set local role to person;
 
 assert (
@@ -60,7 +64,7 @@ assert (
         xpath_exists('//text()[contains(., "Bienvenue ")]', ((string_agg(html, ' ')) || '</html>')::xml)
     from cpres.head
 )
-, 'has welcome message';
+, 'has welcome message in french';
 
 rollback;
 

@@ -77,12 +77,15 @@ impl IntoResponse for HttpResult {
                             Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }.map(|row| {
                                 row.and_then(|r| r.try_get::<usize, Option<String>>(0))
                                 .map_or_else(
-                                    |e| Err(snafu::Report::from_error(
+                                    |e| snafu::Report::from_error(
                                         HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                    ).to_string() + "\n"),
-                                    |v| Ok(v.unwrap_or("\n".to_string()))
+                                    ).to_string() + "\n",
+                                    |v| v.unwrap_or("\n".to_string())
                                 )
-                            }).take_while(Result::is_ok))
+                            })
+                            .map(Ok::<_, HttpgError>)
+                            )
+                            // .take_while(Result::is_ok))
                         ).into_response()
                     },
 
