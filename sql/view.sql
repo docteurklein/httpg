@@ -819,7 +819,6 @@ create index if not exists auvergne_highway_geog on auvergne_highway using gist 
 
 grant select on table auvergne_highway to person;
 
-
 -- select current_setting('neon.project_id', true) is not null as is_neon
 -- \gset
 
@@ -830,10 +829,10 @@ with crossing as (
     select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
     from auvergne_highway e1
     join auvergne_highway e2
-    on st_touches(e1.geog::geometry, e2.geog::geometry)
+    on st_intersects(e1.geog::geometry, e2.geog::geometry)
     and e1.osm_id <> e2.osm_id
     -- \if :is_neon
-    -- and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
+    and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
     -- \endif
 ),
 split as (
@@ -886,8 +885,8 @@ create index if not exists auvergne_network_source on auvergne_network (source);
 create index if not exists auvergne_network_target on auvergne_network (target);
 create unique index if not exists auvergne_network_pkey on auvergne_network (id);
 
--- drop view if exists route cascade;
-create or replace view route (geom, cost, id, "group", style, tooltip)
+drop view if exists route cascade;
+create or replace view route (geom, cost, id, "group", style, tooltip, popup)
 with (security_invoker) as
 with q (qs) as (
     select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
@@ -934,10 +933,19 @@ select
         'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
     ),
     jsonb_build_object(
-        'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
-        'duration', path.cost::int * interval '1 sec',
-        'speed', speed
-    )::text
+        'content',  jsonb_build_object(
+            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
+            'duration', path.cost::int * interval '1 sec',
+            'speed', speed
+        )::text
+    ),
+    jsonb_build_object(
+        'content',  jsonb_build_object(
+            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
+            'duration', path.cost::int * interval '1 sec',
+            'speed', speed
+        )::text
+    )
 from palette, pgr_dijkstra(
     'select id, source, target, cost, reverse_cost from auvergne_network', 
     array(select vid from start),
@@ -950,10 +958,16 @@ join auvergne_highway a on (a.osm_id = edge.osm_id)
 
 grant select on table route to person;
 
--- drop view if exists good_marker cascade;
+drop view if exists good_marker cascade;
 create or replace view good_marker (geom, id, popup)
 with (security_invoker) as
-select ST_Point(location[1], location[0], 4326), good_id, html -- why is lat-lng inverted?
+select ST_Point(location[1], location[0], 4326), good_id, jsonb_build_object(
+    'content', html,
+    'maxHeight', 300,
+    'minWidth', 200,
+    'autoClose', false,
+    'closeOnClick', false
+) -- why is lat-lng inverted?
 from finding_list;
 
 grant select on table good_marker to person;
@@ -1128,8 +1142,8 @@ map (html) as (
                 select coalesce(jsonb_agg(feature), '[]')::text
                 from (
                     select ST_AsGeoJSON(route)::jsonb from route
-                    -- union all
-                    -- select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
+                    union all
+                    select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
                 ) _ (feature)
             $$,
             'use_primary', null,

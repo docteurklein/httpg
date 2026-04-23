@@ -115,8 +115,10 @@ document.addEventListener('click', (event) => {
 });
 
 window.map?.on('popupopen', event => {
-  window.map.setAttribute('data-target', event.popup._source.feature.id);
-  window.map.dispatchEvent(new InputEvent('input'));
+  if (event.popup._source.feature.id) {
+    window.map.setAttribute('data-target', event.popup._source.feature.id);
+    window.map.dispatchEvent(new InputEvent('input'));
+  }
 });
 
 

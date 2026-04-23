@@ -1,4 +1,4 @@
-import L, {Map, Icon, Popup, Marker, TileLayer, ImageOverlay, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
+import L, {Map, Icon, Popup, Tooltip, Marker, TileLayer, ImageOverlay, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
 
 import 'https://cdn.jsdelivr.net/gh/Falke-Design/Leaflet-V1-polyfill/leaflet-v1-polyfill.js';
 
@@ -52,7 +52,7 @@ class IsMap extends HTMLInputElement {
     this.map.on('zoomend', () => {
       let loc = new URL(window.location.href);
       loc.searchParams.set('zoom', this.map.getZoom());
-      history.replaceState({}, "", loc);
+      history.replaceState({}, '', loc);
     });
 
     if (!this.value) {
@@ -105,17 +105,10 @@ class IsMap extends HTMLInputElement {
         }
 
         if (feature.properties?.popup) {
-          layer.bindPopup(new Popup({
-            content: feature.properties.popup,
-            maxHeight: 300,
-            // maxWidth: 1000,
-            minWidth: 200,
-            autoClose: false,
-            closeOnClick: false,
-          }, layer));
+          layer.bindPopup(new Popup(feature.properties.popup, layer));
         }
         if (feature.properties?.tooltip) {
-          layer.bindTooltip(feature.properties.tooltip);
+          layer.bindTooltip(new Tooltip(feature.properties.tooltip, layer));
         }
 
         if (feature.properties?.group) {
@@ -149,4 +142,4 @@ class IsMap extends HTMLInputElement {
   }
 }
 
-customElements.define("cpres-map", IsMap, { extends: "input" });
+customElements.define('cpres-map', IsMap, { extends: 'input' });
