@@ -42,16 +42,6 @@ navigator.permissions
   })
 ;
 
-navigator.geolocation.getCurrentPosition(async pos => {
-  let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
-
-  Array.from(document.querySelectorAll('input.location')).forEach(i => {
-    if (!i.value) {
-      i.value = location
-    }
-  });
-});
-
 Array.from(document.querySelectorAll('.inline-name')).forEach(e => e.addEventListener('input', (e => {
   e.target.size = Math.max(4, e.target.value.length);
 })));
@@ -123,7 +113,13 @@ window.map?.on('popupopen', event => {
 
 
 document.addEventListener('DOMContentLoaded', () => {
-  let loc = new URL(window.location.href);
+
+  window.map?.on('zoomend', () => {
+    let loc = new URL(window.location.href);
+    loc.searchParams.set('zoom', window.map.map.getZoom());
+    history.replaceState({}, '', loc);
+  });
+
   window.map?.addEventListener('input', e => {
     let href = new URL(window.map.getAttribute('href'), window.location.href);
 

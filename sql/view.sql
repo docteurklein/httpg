@@ -121,6 +121,81 @@ begin atomic;
     );
 end;
 
+drop view if exists route cascade;
+create or replace view route (geom, node, cost, id, "group", style, tooltip, popup)
+with (security_invoker) as
+with q (qs) as (
+    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
+),
+palette (palette) as (
+    select array_agg(format(
+        '#00%s%s',
+        lpad(to_hex(c), 2, '0'),
+        lpad(to_hex(0xff - c), 2, '0')
+    ))
+    from generate_series(0, 0xff) c
+),
+location (point) as (
+    select coalesce((qs->>'location')::point, location)
+    from person_detail, q
+    where person_id = current_person_id()
+),
+start (vid) as (
+    select source
+    from auvergne_network, location
+    order by geog <-> ST_Point(point[1], point[0], 4326)
+    limit 5
+),
+"end" (vid) as (
+    select unnest(array[source, target])
+    from q, good,
+    lateral (
+        select source, target
+        from auvergne_network
+        where case when nullif(qs->>'target', '') is null
+            then true
+            else good_id =  nullif(qs->>'target', '')::uuid
+        end
+        order by geog <-> ST_Point(location[1], location[0], 4326)
+        limit 1
+    )
+)
+select
+    distinct on (node.geom) ST_LineMerge(edge.geog::geometry, true),
+    node.geom,
+    path.agg_cost,
+    null, -- format('%s-%s', start.vid, "end".vid),
+    'route',
+    jsonb_build_object(
+        'color', (select palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)] from palette)
+    ),
+    jsonb_build_object(
+        'content',  jsonb_build_object(
+            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
+            'duration', path.cost::int * interval '1 sec',
+            'speed', speed
+        )::text
+    ),
+    jsonb_build_object(
+        'content',  jsonb_build_object(
+            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
+            'duration', path.cost::int * interval '1 sec',
+            'speed', speed
+        )::text
+    )
+from pgr_dijkstra(
+    'select id, source, target, cost, reverse_cost from auvergne_network', 
+    array(select vid from start),
+    array(select vid from "end"),
+    directed => true
+) path
+join auvergne_network edge on (path.edge = edge.id)
+join auvergne_network_node node on (path.node = node.id)
+join auvergne_highway a on (a.osm_id = edge.osm_id)
+;
+
+grant select on table route to person;
+
 create or replace view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
 as with q (qs) as (
@@ -148,6 +223,7 @@ select xmlelement(name article,
         url('/query', jsonb_build_object(
             'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
             'params[]', (good).good_id,
+            'target', (good).good_id,
             'show_map', true
         )) as href
     ), (good).title)),
@@ -168,7 +244,32 @@ select xmlelement(name article,
         '_blank' as target
     ), _('go with google maps')),
     case when qs->>'show_map' is not null then
-        xmlelement(name input, xmlattributes('hidden' as type, true as readonly, 'cpres-map' as is, (good).location as value))
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
+            -- true as readonly,
+            'map' as id,
+            'cpres-map' as is,
+            'init' as geolocate,
+            url('/query', jsonb_build_object(
+                'sql', $$
+                    select coalesce(jsonb_agg(feature), '[]')::text
+                    from (
+                        select ST_AsGeoJSON(route)::jsonb from route
+                    ) _ (feature)
+                $$
+            )) as href,
+            '/cpres/marker.png' as "data-marker-url",
+            (good).good_id as "data-target",
+            (good).location as value,
+            (
+                select coalesce(jsonb_agg(feature), '[]')::text
+                from (
+                    select ST_AsGeoJSON(route)::jsonb from route
+                    union all
+                    select st_asgeojson(ST_Point((good).location[1], (good).location[0], 4326))::jsonb
+                ) _ (feature)
+            ) as "data-geojson" -- why is lat-lng inverted?
+        ))
     end,
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),
@@ -264,6 +365,7 @@ select xmlelement(name form, xmlattributes(
         xmlelement(name input, xmlattributes(
             'text' as type,
             'cpres-map' as is,
+            'init' as geolocate,
             'params[2]' as name,
             _('location: (lat,lng)') as placeholder,
             'location' as class,
@@ -744,220 +846,6 @@ limit 500
 
 grant select on table finding_list to person;
 
--- drop materialized view if exists auvergne_boundary cascade;
-create materialized view if not exists auvergne_boundary (geom, id) as
-    select st_boundary(ST_Union(ST_Multi(geog::geometry))), 'auvergne'
-    from osm_auvergne
-    where osm_type = 'relation'
-    and tags->>'boundary' = 'administrative'
-    and tags->>'admin_level' in ('6') -- https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative#admin_level=*_Country_specific_values
-;
-
-grant select on table auvergne_boundary to person;
-
--- drop materialized view if exists auvergne_highway cascade;
-create materialized view if not exists auvergne_highway (osm_id, geog, speed) as
-    select osm_id, geog, coalesce(
-        nullif(json_value(tags, '$.maxspeed' returning numeric null on error), 0),
-        case tags->>'highway'
-            when 'motorway'
-                then 130
-            when 'motorway_link'
-                then 70
-            when 'trunk'
-                then 110
-            when 'trunk_link'
-                then 50
-            when 'primary'
-                then 90
-            when 'primary_link'
-                then 50
-            when 'secondary'
-                then 70
-            when 'secondary_link'
-                then 50
-            when 'tertiary'
-                then 50
-            when 'tertiary_link'
-                then 50
-            when 'residential'
-                then 25
-            when 'service'
-                then 15
-            when 'unclassified'
-                then 25
-            when 'living_street'
-                then 10
-            else 30
-        end
-    )
-    from osm_auvergne
-    where osm_type = 'way'
-    and tags->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
-        'motorway',
-        'motorway_link',
-        'trunk',
-        'trunk_link',
-        'primary',
-        'primary_link',
-        'secondary',
-        'secondary_link',
-        'tertiary',
-        'tertiary_link',
-        -- 'track', --keep ?
-        'unclassified',
-        'service',
-        'living_street',
-        'residential'
-    )
-    and geometrytype(geog) = 'LINESTRING'
-;
-
-create unique index if not exists auvergne_highway_pkey on auvergne_highway (osm_id);
-create index if not exists auvergne_highway_geom on auvergne_highway using gist ((geog::geometry));
-create index if not exists auvergne_highway_geog on auvergne_highway using gist (geog);
-
-grant select on table auvergne_highway to person;
-
--- select current_setting('neon.project_id', true) is not null as is_neon
--- \gset
-
--- drop materialized view if exists auvergne_network cascade;
--- \timing on
-create materialized view if not exists auvergne_network (osm_id, id, geom, source, target, cost, reverse_cost) as
-with crossing as (
-    select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
-    from auvergne_highway e1
-    join auvergne_highway e2
-    on st_intersects(e1.geog::geometry, e2.geog::geometry)
-    and e1.osm_id <> e2.osm_id
-    -- \if :is_neon
-    and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
-    -- \endif
-),
-split as (
-    select osm_id, split.geom, speed
-    from crossing, st_dump(
-        st_split(
-            st_snap(geog::geometry, point, .1),
-            point
-        )
-    ) split
-),
-edge (osm_id, id, geog, startpoint, endpoint, duration) as (
-    select
-        osm_id,
-        row_number() over (order by geog),
-        geog,
-        st_startpoint(geog::geometry),
-        st_endpoint(geog::geometry),
-        st_length(geog) / (speed / 3.6)
-    from (
-        select osm_id, geom, speed from split
-        union all
-        select osm_id, geog, speed from auvergne_highway
-        where not exists (select from split where split.osm_id = auvergne_highway.osm_id)
-    ) _ (osm_id, geog)
-),
-node (id, geom) as (
-    select row_number() over (order by geom), geom
-    from (
-        select startpoint from edge
-        union all
-        select endpoint from edge
-    ) _ (geom)
-    group by geom
-)
-select osm_id, edge.id, edge.geog::geometry, source.id, target.id, edge.duration, edge.duration r
-    -- st_x(source.geom),
-    -- st_y(source.geom),
-    -- st_x(target.geom),
-    -- st_y(target.geom)
-from edge
-join node source on edge.startpoint = source.geom
-join node target on edge.endpoint = target.geom
-;
-
-grant select on table auvergne_network to person;
-
-create index if not exists auvergne_network_geom on auvergne_network using gist (geom);
-create index if not exists auvergne_network_source on auvergne_network (source);
-create index if not exists auvergne_network_target on auvergne_network (target);
-create unique index if not exists auvergne_network_pkey on auvergne_network (id);
-
-drop view if exists route cascade;
-create or replace view route (geom, cost, id, "group", style, tooltip, popup)
-with (security_invoker) as
-with q (qs) as (
-    select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
-),
-palette (palette) as (
-    select array_agg(format(
-        '#00%s%s',
-        lpad(to_hex(r), 2, '0'),
-        lpad(to_hex(0xff - r), 2, '0')
-    ))
-    from generate_series(0, 0xff) r
-),
-location (point) as (
-    select coalesce((qs->>'location')::point, location)
-    from person_detail, q
-    where person_id = current_person_id()
-),
-start (vid) as (
-    select unnest(array[source, target])
-    from auvergne_network, location
-    order by geom <-> ST_Point(point[1], point[0], 4326)
-    limit 5
-),
-"end" (vid) as (
-    select unnest(array[source, target])
-    from q, finding_list,
-    lateral (
-        select source, target
-        from auvergne_network
-        where case when nullif(qs->>'target', '') is null
-            then true
-            else good_id =  nullif(qs->>'target', '')::uuid
-        end
-        order by geom <-> ST_Point(location[1], location[0], 4326)
-        limit 1
-    )
-)
-select
-    ST_LineMerge(edge.geom::geometry),
-    path.agg_cost,
-    null, -- format('%s-%s', start.vid, "end".vid),
-    'route',
-    jsonb_build_object(
-        'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
-    ),
-    jsonb_build_object(
-        'content',  jsonb_build_object(
-            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
-            'duration', path.cost::int * interval '1 sec',
-            'speed', speed
-        )::text
-    ),
-    jsonb_build_object(
-        'content',  jsonb_build_object(
-            'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
-            'duration', path.cost::int * interval '1 sec',
-            'speed', speed
-        )::text
-    )
-from palette, pgr_dijkstra(
-    'select id, source, target, cost, reverse_cost from auvergne_network', 
-    array(select vid from start),
-    array(select vid from "end"),
-    directed => true
-) path
-join auvergne_network edge on (path.edge = edge.id)
-join auvergne_highway a on (a.osm_id = edge.osm_id)
-;
-
-grant select on table route to person;
-
 drop view if exists good_marker cascade;
 create or replace view good_marker (geom, id, popup)
 with (security_invoker) as
@@ -1134,6 +1022,7 @@ control (html) as (
 map (html) as (
     select xmlelement(name input, xmlattributes(
         'cpres-map' as is,
+        'watch' as geolocate,
         -- 'readonly' as readonly,
         'hidden' as type,
         'map' as id,
@@ -1144,6 +1033,8 @@ map (html) as (
                     select ST_AsGeoJSON(route)::jsonb from route
                     union all
                     select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
+                    union all
+                    select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
                 ) _ (feature)
             $$,
             'use_primary', null,
@@ -1161,13 +1052,8 @@ map (html) as (
                 select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
                 union all
                 select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
-                -- union all
-                -- select st_asgeojson(n)::jsonb from (
-                --     select edge.geom, jsonb_build_object('cost', edge.cost, 'speed', speed)::text tooltip
-                --     from auvergne_network edge
-                --     join auvergne_highway a on (edge.osm_id = a.osm_id)
-                --     where geom && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
-                -- ) n
+                union all
+                select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
             ) _ (feature)
         ) as "data-geojson"
         -- (

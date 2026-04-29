@@ -5,6 +5,7 @@ set local search_path to cpres, pg_catalog, public;
 \ir url.sql
 \ir ddl.sql
 \ir translation.sql
+\ir gis.sql
 \ir view.sql
 \ir proc.sql
 -- \ir fixtures.sql
