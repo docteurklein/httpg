@@ -31,7 +31,7 @@ use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::compress_stream};
+use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::{CancelStream, compress_stream}};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
@@ -500,8 +500,7 @@ async fn stream_query(
 
     Ok(response::HttpResult {
         query: query.to_owned(),
-        rows: response::Rows::Stream(rows),
-        guard,
+        rows: response::Rows::Stream(CancelStream::new(rows, guard)),
     })
 }
 
@@ -574,7 +573,6 @@ async fn post_query(
     Ok(response::HttpResult {
         query,
         rows: response::Rows::StringVec(rows),
-        guard,
     }.into_response())
 }
 
@@ -600,6 +598,5 @@ async fn raw_http(
     Ok(response::HttpResult {
         query,
         rows: response::Rows::Raw(result),
-        guard,
     }.into_response())
 }

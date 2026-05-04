@@ -11,7 +11,7 @@ use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
 pub mod compress_stream;
 
 pub enum Rows {
-    Stream(RowStream),
+    Stream(CancelStream),
     StringVec(Vec<Row>),
     Raw(Vec<Row>),
 }
@@ -19,19 +19,44 @@ pub enum Rows {
 pub struct HttpResult {
     pub query: Query,
     pub rows: Rows,
-    pub guard: QueryGuard,
 }
 
-struct CancelStream {
+pub struct CancelStream {
     inner: Pin<Box<RowStream>>,
     guard: QueryGuard,
+    finished: bool,
+}
+
+impl CancelStream {
+    pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
+        Self { inner: Box::pin(rows), guard, finished: false }
+    }
 }
 
 impl Stream for CancelStream {
     type Item = <RowStream as Stream>::Item;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
+        let result = self.inner.as_mut().poll_next(cx);
+        match result {
+            Poll::Ready(Some(_)) => self.finished = false,
+            Poll::Pending => self.finished = false,
+            Poll::Ready(None) => self.finished = true,
+        }
+        result
+    }
+}
+
+impl Drop for CancelStream {
+    fn drop(&mut self) {
+        dbg!(&self.finished);
+        if !self.finished {
+            let cancel_token = self.guard.cancel_token.clone();
+            tokio::spawn(async move {
+                dbg!("drop");
+                let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
+            });
+        }
     }
 }
 
@@ -74,7 +99,7 @@ impl IntoResponse for HttpResult {
                     Rows::Stream(rows) => {
                         (
                             [("content-type", a)],
-                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }.map(|row| {
+                            Body::from_stream(rows.map(|row| {
                                 row.and_then(|r| r.try_get::<usize, Option<String>>(0))
                                 .map_or_else(
                                     |e| snafu::Report::from_error(
@@ -101,9 +126,8 @@ impl IntoResponse for HttpResult {
             Some(a) if a.starts_with("text/html") => {
                 match self.rows {
                     Rows::Stream(rows) => {
-                        let cancel_token = self.guard.cancel_token.clone();
                         Html(
-                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }.map(|row|
+                            Body::from_stream(rows.map(|row|
                                 row
                                     .and_then(|r| r.try_get::<usize, String>(0))
                                     .map_or_else(
@@ -137,10 +161,9 @@ impl IntoResponse for HttpResult {
                             headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
                         }
 
-                        let cancel_token = self.guard.cancel_token.clone();
                         (
                             headers,
-                            Body::from_stream(CancelStream { inner: Box::pin(rows), guard: self.guard }
+                            Body::from_stream(rows
                                 .map(|row|
                                     row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
                                 )
@@ -167,7 +190,7 @@ mod tests {
     use axum::response::IntoResponse;
     use conf::Conf;
     use postgres_types::Type;
-    use crate::{extract::query::Query, response};
+    use crate::{extract::query::Query, response::{self, CancelStream}};
     use http_body_util::BodyExt;
 
     #[tokio::test]
@@ -187,13 +210,14 @@ mod tests {
 
         let rows = conn.query_typed_raw(query.sql.as_ref(), sql_params).await.unwrap();
 
-        let rows = response::Rows::Stream(rows);
+        let guard = crate::postgres::QueryGuard {
+            cancel_token: conn.cancel_token(),
+        };
+
+        let rows = response::Rows::Stream(CancelStream::new(rows, guard));
         let res = response::HttpResult {
             query: query.clone(),
             rows,
-            guard: crate::postgres::QueryGuard {
-                cancel_token: conn.cancel_token(),
-            },
         };
 
         let body = res.into_response().into_body();

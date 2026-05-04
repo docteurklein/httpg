@@ -1,4 +1,4 @@
-import L, {Map, Icon, Popup, Tooltip, Marker, LayerGroup, TileLayer, ImageOverlay, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
+import L, {Map, Icon, Popup, Tooltip, Marker, LayerGroup, TileLayer, GeoJSON} from 'https://unpkg.com/leaflet@2.0.0-alpha.1/dist/leaflet.js';
 
 import 'https://cdn.jsdelivr.net/gh/Falke-Design/Leaflet-V1-polyfill/leaflet-v1-polyfill.js';
 
