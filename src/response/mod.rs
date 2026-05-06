@@ -23,12 +23,12 @@ pub struct HttpResult {
 
 pub struct CancelStream {
     inner: Pin<Box<RowStream>>,
-    guard: QueryGuard,
+    _guard: QueryGuard,
 }
 
 impl CancelStream {
     pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
-        Self { inner: Box::pin(rows), guard }
+        Self { inner: Box::pin(rows), _guard: guard }
     }
 }
 
@@ -87,15 +87,19 @@ impl IntoResponse for HttpResult {
                                     ).to_string() + "\n",
                                     |v| v.unwrap_or("\n".to_string())
                                 )
-                            })
-                            .map(Ok::<_, HttpgError>)
-                            )
-                            // .take_while(Result::is_ok))
+                            }).map(Ok::<_, HttpgError>))
                         ).into_response()
                     },
 
                     Rows::StringVec(rows) => Body::from(
-                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                        rows.into_iter().map(|r| r.try_get(0)
+                            .map_or_else(
+                                |e| snafu::Report::from_error(
+                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
+                                ).to_string(),
+                                |v: &str| v.to_string()
+                            )
+                        ).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {
@@ -116,15 +120,19 @@ impl IntoResponse for HttpResult {
                                         ).to_string() + "\n",
                                         |v| v + "\n"
                                     )
-                            // ).take_while(Result::is_ok))
-                            )
-                            .map(Ok::<_, HttpgError>)
-                            )
+                            ).map(Ok::<_, HttpgError>))
                         ).into_response()
                     },
 
                     Rows::StringVec(rows) => Html(
-                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                        rows.into_iter().map(|r| r.try_get(0)
+                            .map_or_else(
+                                |e| snafu::Report::from_error(
+                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
+                                ).to_string(),
+                                |v: &str| v.to_string()
+                            )
+                        ).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {
@@ -136,7 +144,10 @@ impl IntoResponse for HttpResult {
                 match self.rows {
                     Rows::Stream(rows) => {
                         let mut headers = HeaderMap::new();
-                        headers.insert(CONTENT_TYPE, a.unwrap_or("application/octet-stream".to_string()).parse().unwrap());
+                        headers.insert(CONTENT_TYPE, match a.map(|a| a.parse()) {
+                            Some(Ok(a)) =>  a,
+                            _ => HeaderValue::from_static("application/octet-stream")
+                        });
                         if let Some(cache_control) = self.query.cache_control {
                             headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
                         }
@@ -153,7 +164,14 @@ impl IntoResponse for HttpResult {
                     },
 
                     Rows::StringVec(rows) => Body::from(
-                        rows.into_iter().map(|r| r.get(0)).collect::<Vec<String>>().join(" \n")
+                        rows.into_iter().map(|r| r.try_get(0)
+                            .map_or_else(
+                                |e| snafu::Report::from_error(
+                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
+                                ).to_string(),
+                                |v: &str| v.to_string()
+                            )
+                        ).collect::<Vec<String>>().join(" \n")
                     ).into_response(),
 
                     Rows::Raw(rows) => {

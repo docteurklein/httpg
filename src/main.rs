@@ -8,7 +8,7 @@ use http::Uri;
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
         StatusCode, header::SET_COOKIE,
-    }, response::{Html, IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
+    }, response::{IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
@@ -514,7 +514,7 @@ async fn post_query(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -538,26 +538,23 @@ async fn post_query(
             let mut conn = read_pool.get().await?;
             let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
 
-            let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
-
-            tx.query_typed_raw(
-                "select set_config('httpg.errors', $1, true)",
-                vec![(serde_json::to_string(&errors)?, Type::TEXT)]
-            ).await?;
 
             match &query.on_error {
                 Some(on_error) => {
-                    let rows: Vec<String> = tx
-                        .query_typed(on_error.as_str(), &[])
-                        .await
-                        ?
-                        .iter()
-                        .map(|row| row.get(0))
-                        .collect()
-                    ;
+                    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+                    tx.query_typed_raw(
+                        "select set_config('httpg.errors', $1, true)",
+                        vec![(serde_json::to_string(&errors)?, Type::TEXT)]
+                    ).await?;
+
+                    let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;
+
                     return Ok((
                         StatusCode::BAD_REQUEST,
-                        Html(rows.join(" \n"))
+                        response::HttpResult {
+                            query: query.to_owned(),
+                            rows: response::Rows::Stream(CancelStream::new(rows, guard)),
+                        }
                     ).into_response());
                 }
                 _ => {
@@ -585,7 +582,7 @@ async fn raw_http(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
