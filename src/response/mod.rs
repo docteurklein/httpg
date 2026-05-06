@@ -24,12 +24,11 @@ pub struct HttpResult {
 pub struct CancelStream {
     inner: Pin<Box<RowStream>>,
     guard: QueryGuard,
-    finished: bool,
 }
 
 impl CancelStream {
     pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
-        Self { inner: Box::pin(rows), guard, finished: false }
+        Self { inner: Box::pin(rows), guard }
     }
 }
 
@@ -37,26 +36,7 @@ impl Stream for CancelStream {
     type Item = <RowStream as Stream>::Item;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let result = self.inner.as_mut().poll_next(cx);
-        match result {
-            Poll::Ready(Some(_)) => self.finished = false,
-            Poll::Pending => self.finished = false,
-            Poll::Ready(None) => self.finished = true,
-        }
-        result
-    }
-}
-
-impl Drop for CancelStream {
-    fn drop(&mut self) {
-        dbg!(&self.finished);
-        if !self.finished {
-            let cancel_token = self.guard.cancel_token.clone();
-            tokio::spawn(async move {
-                dbg!("drop");
-                let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;
-            });
-        }
+        self.inner.as_mut().poll_next(cx)
     }
 }
 
