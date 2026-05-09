@@ -114,6 +114,11 @@ pub enum HttpgError {
     },
     WebPushPrivateKey,
     InvalidTextParam,
+    MissingCol,
+    #[snafu(display("column should be bytea or text, {type_} given"))]
+    InvalidColType {
+        type_: postgres_types::Type,
+    },
 }
 
 impl IntoResponse for HttpgError {

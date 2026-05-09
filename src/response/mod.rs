@@ -1,8 +1,9 @@
-use std::{backtrace::Backtrace, pin::Pin, str::FromStr, task::{Context, Poll}};
+use std::{pin::Pin, str::FromStr, task::{Context, Poll}};
 
-use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
-use bytes::{BufMut, BytesMut};
-use futures::{Stream, StreamExt, stream};
+use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
+use bytes::{BufMut, Bytes, BytesMut};
+use futures::{Stream, stream};
+use postgres_types::Type;
 use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
@@ -37,7 +38,7 @@ impl CancelStream {
 }
 
 impl Stream for CancelStream {
-    type Item = Result<String, HttpgError>;
+    type Item = Result<bytes::Bytes, HttpgError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.errored {
@@ -47,14 +48,24 @@ impl Stream for CancelStream {
         match item {
             Poll::Ready(Some(Err(e))) => {
                 self.errored = true;
-                Poll::Ready(Some(Ok(e.to_string())))
+                Poll::Ready(Some(Ok(Bytes::from(e.to_string()))))
             },
             Poll::Ready(Some(Ok(row))) => {
-                match row.try_get(0) {
-                    Ok(a) =>  Poll::Ready(Some(Ok(a))),
+                let col = row.columns().first().ok_or(HttpgError::MissingCol)?;
+                let val = match col.type_() {
+                    &Type::BYTEA => {
+                       row.try_get::<usize, Vec<u8>>(0).map(Bytes::from).map_err(HttpgError::from)
+                    }
+                    &Type::TEXT => {
+                       row.try_get::<usize, String>(0).map(Bytes::from).map_err(HttpgError::from)
+                    },
+                    type_ => Err(HttpgError::InvalidColType {type_: type_.clone()})
+                };
+                match val {
+                    Ok(a) => Poll::Ready(Some(Ok::<_, HttpgError>(a.to_owned()))),
                     Err(e) => {
                         self.errored = true;
-                        Poll::Ready(Some(Ok(e.to_string())))
+                        Poll::Ready(Some(Ok(Bytes::from(e.to_string()))))
                     },
                 }
             },
@@ -99,18 +110,21 @@ impl IntoResponse for HttpResult {
         }
         let mut headers = HeaderMap::new();
 
-        headers.insert(CONTENT_TYPE, self.query.accept
-            .and_then(|a| a.parse().ok())
-            .unwrap_or(HeaderValue::from_static("application/octet-stream"))
-        );
+        let accept: Option<HeaderValue> = self.query.accept.and_then(|a| a.parse().ok());
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static(match accept {
+            Some(a) if a.as_bytes().starts_with(b"text/html") => "text/html; charset=utf-8",
+            Some(a) if a.as_bytes().starts_with(b"application/json") => "application/json",
+            _ => "application/octet-stream"
+        }));
 
         if let Some(Ok(cache_control)) = self.query.cache_control.map(|a| a.parse()) {
             headers.insert(CACHE_CONTROL, cache_control);
         }
 
-        let mut builder = Response::builder();
+        // let mut builder = Response::builder();
 
-        builder.body(Body::from_stream(self.rows)).unwrap_or(StatusCode::BAD_REQUEST.into_response())
+        (headers, Body::from_stream(self.rows)).into_response()
+        //.unwrap_or(StatusCode::BAD_REQUEST.into_response())
     }
 }
 
