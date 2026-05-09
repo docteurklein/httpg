@@ -1,8 +1,6 @@
 use sqlparser::{ast::{Expr, Ident, OrderBy, OrderByExpr, Query, SetExpr, TableFactor, TableWithJoins, VisitorMut}, tokenizer::Location};
 use std::{collections::BTreeMap, ops::{ControlFlow, Not}};
 
-// use crate::extract::query::Order;
-
 pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
 
 impl VisitorMut for VisitOrderBy {

@@ -2,7 +2,7 @@ use std::{backtrace::Backtrace, pin::Pin, str::FromStr, task::{Context, Poll}};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, BytesMut};
-use futures::{Stream, stream};
+use futures::{Stream, StreamExt, stream};
 use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
@@ -97,34 +97,20 @@ impl IntoResponse for HttpResult {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
         }
-        match self.query.accept {
-            Some(a) if a.starts_with("application/json") => {
-                (
-                    [("content-type", a)],
-                    Body::from_stream(self.rows)
-                ).into_response()
-            },
-            Some(a) if a.starts_with("text/html") => {
-                Html(
-                    Body::from_stream(self.rows)
-                ).into_response()
-            },
-            a => {
-                let mut headers = HeaderMap::new();
-                headers.insert(CONTENT_TYPE, match a.map(|a| a.parse()) {
-                    Some(Ok(a)) =>  a,
-                    _ => HeaderValue::from_static("application/octet-stream")
-                });
-                if let Some(cache_control) = self.query.cache_control {
-                    headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
-                }
+        let mut headers = HeaderMap::new();
 
-                (
-                    headers,
-                    Body::from_stream(self.rows)
-                ).into_response()
-            },
+        headers.insert(CONTENT_TYPE, self.query.accept
+            .and_then(|a| a.parse().ok())
+            .unwrap_or(HeaderValue::from_static("application/octet-stream"))
+        );
+
+        if let Some(Ok(cache_control)) = self.query.cache_control.map(|a| a.parse()) {
+            headers.insert(CACHE_CONTROL, cache_control);
         }
+
+        let mut builder = Response::builder();
+
+        builder.body(Body::from_stream(self.rows)).unwrap_or(StatusCode::BAD_REQUEST.into_response())
     }
 }
 
@@ -157,7 +143,7 @@ mod tests {
             cancel_token: conn.cancel_token(),
         };
 
-        let rows = response::Rows::Stream(CancelStream::new(rows, guard));
+        let rows = CancelStream::new(rows, guard);
         let res = response::HttpResult {
             query: query.clone(),
             rows,
