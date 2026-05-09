@@ -109,7 +109,7 @@ async fn main() -> Result<(), HttpgError> {
         .route("/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/query", get(stream_query).post(post_query))
-        .route("/raw", get(raw_http).post(raw_http))
+        // .route("/raw", get(raw_http).post(raw_http))
         .route("/email", post(email))
         .route("/http", get(http).post(http))
         .route("/webpush", get(web_push).post(web_push))
@@ -500,7 +500,7 @@ async fn stream_query(
 
     Ok(response::HttpResult {
         query: query.to_owned(),
-        rows: response::Rows::Stream(CancelStream::new(rows, guard)),
+        rows: CancelStream::new(rows, guard),
     })
 }
 
@@ -514,7 +514,7 @@ async fn post_query(
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -553,7 +553,7 @@ async fn post_query(
                         StatusCode::BAD_REQUEST,
                         response::HttpResult {
                             query: query.to_owned(),
-                            rows: response::Rows::Stream(CancelStream::new(rows, guard)),
+                            rows: CancelStream::new(rows, guard),
                         }
                     ).into_response());
                 }
@@ -569,31 +569,31 @@ async fn post_query(
 
     Ok(response::HttpResult {
         query,
-        rows: response::Rows::StringVec(rows),
+        rows: CancelStream::from_vec(rows, guard),
     }.into_response())
 }
 
-#[debug_handler]
-async fn raw_http(
-    State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
-    biscuit: Option<extract::biscuit::Biscuit>,
-    query: extract::query::Query,
-) -> Result<Response, HttpgError> {
-    let mut conn = write_pool.get().await?;
-    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
+// #[debug_handler]
+// async fn raw_http(
+//     State(AppState {write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
+//     biscuit: Option<extract::biscuit::Biscuit>,
+//     query: extract::query::Query,
+// ) -> Result<Response, HttpgError> {
+//     let mut conn = write_pool.get().await?;
+//     let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+//     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
-    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
-    }).collect();
+//     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+//         (param as &(dyn ToSql + Sync), param.to_owned().into())
+//     }).collect();
 
-    let result = tx.query_typed(&query.sql, sql_params.as_slice()).await?;
+//     let result = tx.query_typed(&query.sql, sql_params.as_slice()).await?;
 
-    tx.commit().await?;
+//     tx.commit().await?;
 
-    Ok(response::HttpResult {
-        query,
-        rows: response::Rows::Raw(result),
-    }.into_response())
-}
+//     Ok(response::HttpResult {
+//         query,
+//         rows: result),
+//     }.into_response())
+// }

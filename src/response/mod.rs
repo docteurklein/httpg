@@ -2,41 +2,65 @@ use std::{backtrace::Backtrace, pin::Pin, str::FromStr, task::{Context, Poll}};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{Html, IntoResponse, Redirect, Response}};
 use bytes::{BufMut, BytesMut};
-use futures::Stream;
+use futures::{Stream, stream};
 use tokio_postgres::{Row, RowStream};
-use tokio_stream::StreamExt;
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
 
 pub mod compress_stream;
 
-pub enum Rows {
-    Stream(CancelStream),
-    StringVec(Vec<Row>),
-    Raw(Vec<Row>),
-}
-
 pub struct HttpResult {
     pub query: Query,
-    pub rows: Rows,
+    pub rows: CancelStream,
 }
 
 pub struct CancelStream {
-    inner: Pin<Box<RowStream>>,
-    _guard: QueryGuard,
+    inner: Pin<Box<dyn Stream::<Item = Result<Row, tokio_postgres::Error>> + Send>>,
+    guard: QueryGuard,
+    errored: bool,
 }
 
 impl CancelStream {
     pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
-        Self { inner: Box::pin(rows), _guard: guard }
+        Self { inner: Box::pin(rows), guard, errored: false }
+    }
+
+    pub fn from_vec(vec: Vec<Row>, guard: QueryGuard) -> Self
+    {
+        
+        Self {
+            inner: Box::pin(stream::iter(vec.into_iter().map(Ok).collect::<Vec::<_>>())),
+            guard,
+            errored: false
+        }
     }
 }
 
 impl Stream for CancelStream {
-    type Item = <RowStream as Stream>::Item;
+    type Item = Result<String, HttpgError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.inner.as_mut().poll_next(cx)
+        if self.errored {
+            return Poll::Ready(None);
+        }
+        let item = self.inner.as_mut().poll_next(cx);
+        match item {
+            Poll::Ready(Some(Err(e))) => {
+                self.errored = true;
+                Poll::Ready(Some(Ok(e.to_string())))
+            },
+            Poll::Ready(Some(Ok(row))) => {
+                match row.try_get(0) {
+                    Ok(a) =>  Poll::Ready(Some(Ok(a))),
+                    Err(e) => {
+                        self.errored = true;
+                        Poll::Ready(Some(Ok(e.to_string())))
+                    },
+                }
+            },
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
+        }
     }
 }
 
@@ -75,109 +99,30 @@ impl IntoResponse for HttpResult {
         }
         match self.query.accept {
             Some(a) if a.starts_with("application/json") => {
-                match self.rows {
-                    Rows::Stream(rows) => {
-                        (
-                            [("content-type", a)],
-                            Body::from_stream(rows.map(|row| {
-                                row.and_then(|r| r.try_get::<usize, Option<String>>(0))
-                                .map_or_else(
-                                    |e| snafu::Report::from_error(
-                                        HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                    ).to_string() + "\n",
-                                    |v| v.unwrap_or("\n".to_string())
-                                )
-                            }).map(Ok::<_, HttpgError>))
-                        ).into_response()
-                    },
-
-                    Rows::StringVec(rows) => Body::from(
-                        rows.into_iter().map(|r| r.try_get(0)
-                            .map_or_else(
-                                |e| snafu::Report::from_error(
-                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                ).to_string(),
-                                |v: &str| v.to_string()
-                            )
-                        ).collect::<Vec<String>>().join(" \n")
-                    ).into_response(),
-
-                    Rows::Raw(rows) => {
-                        from_col_name(rows).into_response()
-                    }
-                }
+                (
+                    [("content-type", a)],
+                    Body::from_stream(self.rows)
+                ).into_response()
             },
             Some(a) if a.starts_with("text/html") => {
-                match self.rows {
-                    Rows::Stream(rows) => {
-                        Html(
-                            Body::from_stream(rows.map(|row|
-                                row
-                                    .and_then(|r| r.try_get::<usize, String>(0))
-                                    .map_or_else(
-                                        |e| snafu::Report::from_error(
-                                            HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                        ).to_string() + "\n",
-                                        |v| v + "\n"
-                                    )
-                            ).map(Ok::<_, HttpgError>))
-                        ).into_response()
-                    },
-
-                    Rows::StringVec(rows) => Html(
-                        rows.into_iter().map(|r| r.try_get(0)
-                            .map_or_else(
-                                |e| snafu::Report::from_error(
-                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                ).to_string(),
-                                |v: &str| v.to_string()
-                            )
-                        ).collect::<Vec<String>>().join(" \n")
-                    ).into_response(),
-
-                    Rows::Raw(rows) => {
-                        from_col_name(rows).into_response()
-                    }
-                }
+                Html(
+                    Body::from_stream(self.rows)
+                ).into_response()
             },
             a => {
-                match self.rows {
-                    Rows::Stream(rows) => {
-                        let mut headers = HeaderMap::new();
-                        headers.insert(CONTENT_TYPE, match a.map(|a| a.parse()) {
-                            Some(Ok(a)) =>  a,
-                            _ => HeaderValue::from_static("application/octet-stream")
-                        });
-                        if let Some(cache_control) = self.query.cache_control {
-                            headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
-                        }
-
-                        (
-                            headers,
-                            Body::from_stream(rows
-                                .map(|row|
-                                    row.unwrap().try_get::<usize, Vec<u8>>(0).unwrap_or_else(|e| e.to_string().as_bytes().to_vec())
-                                )
-                                .map(Ok::<_, axum::Error>)
-                            ),
-                        ).into_response()
-                    },
-
-                    Rows::StringVec(rows) => Body::from(
-                        rows.into_iter().map(|r| r.try_get(0)
-                            .map_or_else(
-                                |e| snafu::Report::from_error(
-                                    HttpgError::Postgres {source: e, backtrace: Backtrace::capture()}
-                                ).to_string(),
-                                |v: &str| v.to_string()
-                            )
-                        ).collect::<Vec<String>>().join(" \n")
-                    ).into_response(),
-
-                    Rows::Raw(rows) => {
-                        from_col_name(rows).into_response()
-                    }
+                let mut headers = HeaderMap::new();
+                headers.insert(CONTENT_TYPE, match a.map(|a| a.parse()) {
+                    Some(Ok(a)) =>  a,
+                    _ => HeaderValue::from_static("application/octet-stream")
+                });
+                if let Some(cache_control) = self.query.cache_control {
+                    headers.insert(CACHE_CONTROL, cache_control.parse().unwrap());
                 }
+
+                (
+                    headers,
+                    Body::from_stream(self.rows)
+                ).into_response()
             },
         }
     }

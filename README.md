@@ -12,8 +12,8 @@ To provide a flexible bridge between http and sql.
 ## how ?
 
 Stream arbitrary sql using `GET /query?sql=select something`. The first column will be sent as the body to the client.  
-Modify arbitrary sql using `POST /query?sql=insert into something`.  
-Control response status, headers and body using `/raw?sql=select 400 as status, 'content'::bytea as body`.
+Modify arbitrary sql using `POST /query?sql=insert into something values($1::text)&params[]=1`.  
+Control response status, headers and body using `/query?sql=select 400 as status, 'some content'::bytea as body`.
 Send emails using `/email?sql=select 'sender@example.org' "from", 'receiver@example.org' to, 'test' subjet, 'content' html`.
 Send web push notifications using `/web_push?sql=select 'https://...' endpoint, '...' p256dh,  '...' auth, 'test'::bytea content`.
 Send http requests notifications using `/http?sql=select 'POST' method, 'https://...' url`.

@@ -100,6 +100,7 @@ impl PostgresConfig {
     }
 }
 
+// #[derive(Clone)]
 pub struct QueryGuard {
     pub cancel_token: CancelToken,
 }
