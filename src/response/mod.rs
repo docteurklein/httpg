@@ -111,11 +111,12 @@ impl IntoResponse for HttpResult {
         let mut headers = HeaderMap::new();
 
         let accept: Option<HeaderValue> = self.query.accept.and_then(|a| a.parse().ok());
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static(match accept {
-            Some(a) if a.as_bytes().starts_with(b"text/html") => "text/html; charset=utf-8",
-            Some(a) if a.as_bytes().starts_with(b"application/json") => "application/json",
-            _ => "application/octet-stream"
-        }));
+        headers.insert(CONTENT_TYPE, match accept {
+            Some(a) if a.as_bytes().starts_with(b"text/html") => HeaderValue::from_static("text/html; charset=utf-8"),
+            Some(a) if a.as_bytes().starts_with(b"application/json") => HeaderValue::from_static("application/json"),
+            Some(a) => a,
+            _ => HeaderValue::from_static("application/octet-stream"),
+        });
 
         if let Some(Ok(cache_control)) = self.query.cache_control.map(|a| a.parse()) {
             headers.insert(CACHE_CONTROL, cache_control);
