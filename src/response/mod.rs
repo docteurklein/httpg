@@ -1,9 +1,9 @@
-use std::{pin::Pin, str::FromStr, task::{Context, Poll}};
+use std::{collections::HashMap, pin::Pin, str::FromStr, task::{Context, Poll}};
 
 use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
 use bytes::{BufMut, Bytes, BytesMut};
-use futures::{Stream, stream};
-use postgres_types::Type;
+use futures::{Stream, StreamExt, stream};
+use postgres_types::{FromSql, Type};
 use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
@@ -17,13 +17,13 @@ pub struct HttpResult {
 
 pub struct CancelStream {
     inner: Pin<Box<dyn Stream::<Item = Result<Row, tokio_postgres::Error>> + Send>>,
-    guard: QueryGuard,
+    _guard: QueryGuard,
     errored: bool,
 }
 
 impl CancelStream {
     pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
-        Self { inner: Box::pin(rows), guard, errored: false }
+        Self { inner: Box::pin(rows), _guard: guard, errored: false }
     }
 
     pub fn from_vec(vec: Vec<Row>, guard: QueryGuard) -> Self
@@ -31,14 +31,21 @@ impl CancelStream {
         
         Self {
             inner: Box::pin(stream::iter(vec.into_iter().map(Ok).collect::<Vec::<_>>())),
-            guard,
+            _guard: guard,
             errored: false
         }
     }
 }
 
+#[derive(Default)]
+pub struct RowResult {
+    status: Option<u16>,
+    header: Option<HashMap<String, Option<String>>>,
+    body: Option<bytes::Bytes>,
+}
+
 impl Stream for CancelStream {
-    type Item = Result<bytes::Bytes, HttpgError>;
+    type Item = Result<RowResult, HttpgError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         if self.errored {
@@ -48,26 +55,48 @@ impl Stream for CancelStream {
         match item {
             Poll::Ready(Some(Err(e))) => {
                 self.errored = true;
-                Poll::Ready(Some(Ok(Bytes::from(e.to_string()))))
+                Poll::Ready(Some(Ok(RowResult { body: Some(Bytes::from(e.to_string())), ..Default::default() })))
             },
             Poll::Ready(Some(Ok(row))) => {
-                let col = row.columns().first().ok_or(HttpgError::MissingCol)?;
-                let val = match col.type_() {
-                    &Type::BYTEA => {
-                       row.try_get::<usize, Vec<u8>>(0).map(Bytes::from).map_err(HttpgError::from)
-                    }
-                    &Type::TEXT => {
-                       row.try_get::<usize, String>(0).map(Bytes::from).map_err(HttpgError::from)
-                    },
-                    type_ => Err(HttpgError::InvalidColType {type_: type_.clone()})
+
+                // let col = row.columns().first().ok_or(HttpgError::MissingCol)?;
+                let mut res = RowResult::default();
+                for (i, col) in row.columns().iter().enumerate() {
+                    match col.name() {
+                        "status" => {
+                            if let Ok(Some(status)) = row.try_get::<usize, Option<i32>>(i) {
+                                res.status = Some(status as u16);
+                            }
+                        },
+                        "header" => {
+                            if let Ok(h) = row.try_get::<usize, Option<HashMap<String, Option<String>>>>(i) {
+                                res.header = h;
+                            }
+                        },
+                        _ => {
+                            match col.type_() {
+                                &Type::BYTEA => {
+                                    if let Ok(Some(b)) = row.try_get::<usize, Option<&[u8]>>(i) {
+                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
+                                    }
+                                }
+                                &Type::TEXT => {
+                                    if let Ok(Some(b)) = row.try_get::<usize, Option<&str>>(i) {
+                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
+                                    // row.try_get::<usize, String>(i).map(Bytes::from).map_err(HttpgError::from)
+                                    }
+                                },
+                                type_ => {
+                                    self.errored = true;
+                                    res.body = Some(Bytes::from(
+                                        HttpgError::InvalidColType {type_: type_.clone()}.to_string()
+                                    ));
+                                }
+                            };
+                        }
+                    };
                 };
-                match val {
-                    Ok(a) => Poll::Ready(Some(Ok::<_, HttpgError>(a.to_owned()))),
-                    Err(e) => {
-                        self.errored = true;
-                        Poll::Ready(Some(Ok(Bytes::from(e.to_string()))))
-                    },
-                }
+                Poll::Ready(Some(Ok(res)))
             },
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -75,40 +104,13 @@ impl Stream for CancelStream {
     }
 }
 
-fn from_col_name(rows: Vec<Row>) -> Result<Response, HttpgError> {
-    let mut builder = Response::builder();
-    let mut body = BytesMut::new();
-    for row in rows.iter() {
-        for (i, col) in row.columns().iter().enumerate() {
-            match col.name() {
-                "status" => {
-                    if let Ok(Some(status)) = row.try_get::<usize, Option<i32>>(i) {
-                        builder = builder.status(StatusCode::from_u16(status as u16)?);
-                    }
-                },
-                "header" => {
-                    if let Ok(Some(name)) = row.try_get::<usize, Option<&str>>(i) {
-                        builder = builder.header(HeaderName::from_str(name)?, HeaderValue::from_str(row.try_get(i + 1)?)?);
-                    }
-                },
-                "body" => {
-                    if let Some(chunk) = row.try_get::<usize, Option<&[u8]>>(i)? {
-                        body.put(chunk);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-    builder.body(Body::from(body.freeze())).map_err(Into::into)
-}
-
 impl IntoResponse for HttpResult {
     fn into_response(self) -> Response {
         if let Some(redirect) = self.query.redirect {
             return Redirect::to(&redirect).into_response();
         }
-        let mut headers = HeaderMap::new();
+        let mut builder = Response::builder();
+        let headers = builder.headers_mut().unwrap();
 
         let accept: Option<HeaderValue> = self.query.accept.and_then(|a| a.parse().ok());
         headers.insert(CONTENT_TYPE, match accept {
@@ -118,14 +120,40 @@ impl IntoResponse for HttpResult {
             _ => HeaderValue::from_static("application/octet-stream"),
         });
 
-        if let Some(Ok(cache_control)) = self.query.cache_control.map(|a| a.parse()) {
+        if let Some(Ok(cache_control)) = self.query.cache_control.map(|a| a.parse::<HeaderValue>()) {
             headers.insert(CACHE_CONTROL, cache_control);
         }
 
-        // let mut builder = Response::builder();
+        let mut iter = futures::executor::block_on_stream(self.rows);
 
-        (headers, Body::from_stream(self.rows)).into_response()
-        //.unwrap_or(StatusCode::BAD_REQUEST.into_response())
+        let mut b = vec![];
+        let mut n = iter.next();
+        while let Some(Ok(a)) = n {
+            if let Some(s) = a.status {
+                builder = builder.status(s);
+            }
+            if let Some(h) = a.header {
+                for (k, v) in h.into_iter() {
+                    builder = builder.header(HeaderName::from_str(k.as_str()).unwrap(), HeaderValue::from_str(v.unwrap().as_str()).unwrap());
+                }
+            }
+            if a.body.is_some() {
+                b.push(Ok(RowResult {body: a.body, ..Default::default() }));
+                n = None;
+            }
+            else {
+                n = iter.next();
+            }
+        }
+
+        let stream = futures::stream::iter(b).chain(iter.into_inner());
+
+        builder
+            .body(Body::from_stream(stream.map(|r| match r {
+                Ok(b) => Ok::<bytes::Bytes, HttpgError>(b.body.unwrap_or_default()),
+                _ => Ok(bytes::Bytes::from_static(b"invalid body column"))
+            })))
+            .unwrap_or(StatusCode::BAD_REQUEST.into_response())
     }
 }
 
