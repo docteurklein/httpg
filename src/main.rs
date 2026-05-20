@@ -264,6 +264,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
     let guard = QueryGuard {
         cancel_token: tx.cancel_token(),
+        finished: false,
     };
 
     tx.batch_execute(&format!("set local role to {anon_role}")).await?;

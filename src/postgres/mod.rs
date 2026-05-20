@@ -102,10 +102,14 @@ impl PostgresConfig {
 
 pub struct QueryGuard {
     pub cancel_token: CancelToken,
+    pub finished: bool,
 }
 
 impl Drop for QueryGuard {
     fn drop(&mut self) {
+        if self.finished {
+            return;
+        }
         let cancel_token = self.cancel_token.clone();
         tokio::spawn(async move {
             let _ = cancel_token.cancel_query(tokio_postgres::NoTls).await;

@@ -350,12 +350,12 @@
                     log_disconnections = true;
                     log_temp_files = 0;
                     # logging_collector = true;
-                    # log_destination = nixpkgs.lib.mkForce "stderr,jsonlog";
+                    log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
-                    log_statement = "all";
+                    # log_statement = "all";
                     "auto_explain.log_min_duration" = 0;
-                    "auto_explain.log_nested_statements" = true;
+                    "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;
                     "auto_explain.log_timing" = true;

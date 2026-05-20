@@ -1030,11 +1030,11 @@ map (html) as (
             'sql', $$
                 select coalesce(jsonb_agg(feature), '[]')::text
                 from (
-                    select ST_AsGeoJSON(route)::jsonb from route
-                    union all
+                    -- select ST_AsGeoJSON(route)::jsonb from route
+                    -- union all
                     select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
-                    union all
-                    select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
+                    -- union all
+                    -- select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
                 ) _ (feature)
             $$,
             'use_primary', null,
@@ -1047,13 +1047,13 @@ map (html) as (
         (
             select coalesce(jsonb_agg(feature), '[]')
             from (
-                select ST_AsGeoJSON(route)::jsonb from route
-                union all
+                -- select ST_AsGeoJSON(route)::jsonb from route
+                -- union all
                 select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
                 union all
                 select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
-                union all
-                select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
+                -- union all
+                -- select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
             ) _ (feature)
         ) as "data-geojson"
         -- (

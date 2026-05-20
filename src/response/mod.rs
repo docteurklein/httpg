@@ -17,13 +17,17 @@ pub struct HttpResult {
 
 pub struct CancelStream {
     inner: Pin<Box<dyn Stream::<Item = Result<Row, tokio_postgres::Error>> + Send>>,
-    _guard: QueryGuard,
+    guard: QueryGuard,
     errored: bool,
 }
 
 impl CancelStream {
     pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
-        Self { inner: Box::pin(rows), _guard: guard, errored: false }
+        Self {
+            inner: Box::pin(rows),
+            guard,
+            errored: false,
+        }
     }
 
     pub fn from_vec(vec: Vec<Row>, guard: QueryGuard) -> Self
@@ -31,8 +35,8 @@ impl CancelStream {
         
         Self {
             inner: Box::pin(stream::iter(vec.into_iter().map(Ok).collect::<Vec::<_>>())),
-            _guard: guard,
-            errored: false
+            guard,
+            errored: false,
         }
     }
 }
@@ -59,7 +63,6 @@ impl Stream for CancelStream {
             },
             Poll::Ready(Some(Ok(row))) => {
 
-                // let col = row.columns().first().ok_or(HttpgError::MissingCol)?;
                 let mut res = RowResult::default();
                 for (i, col) in row.columns().iter().enumerate() {
                     match col.name() {
@@ -83,7 +86,6 @@ impl Stream for CancelStream {
                                 &Type::TEXT => {
                                     if let Ok(Some(b)) = row.try_get::<usize, Option<&str>>(i) {
                                         res.body = Some(bytes::Bytes::from(b.to_owned()));
-                                    // row.try_get::<usize, String>(i).map(Bytes::from).map_err(HttpgError::from)
                                     }
                                 },
                                 type_ => {
@@ -98,7 +100,10 @@ impl Stream for CancelStream {
                 };
                 Poll::Ready(Some(Ok(res)))
             },
-            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Ready(None) => {
+                self.guard.finished = true;
+                Poll::Ready(None)
+            },
             Poll::Pending => Poll::Pending,
         }
     }
@@ -184,6 +189,7 @@ mod tests {
 
         let guard = crate::postgres::QueryGuard {
             cancel_token: conn.cancel_token(),
+            finished: false,
         };
 
         let rows = CancelStream::new(rows, guard);
