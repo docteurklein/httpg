@@ -8,7 +8,7 @@ use http::Uri;
 use axum::{
     Router, extract::{DefaultBodyLimit, State}, http::{
         StatusCode, header::SET_COOKIE,
-    }, response::{IntoResponse, NoContent, Redirect, Response}, routing::{get, post}
+    }, response::{IntoResponse, NoContent, Redirect}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;

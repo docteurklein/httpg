@@ -1,9 +1,9 @@
-use std::{collections::HashMap, pin::Pin, str::FromStr, task::{Context, Poll}};
+use std::{collections::HashMap, pin::Pin, task::{Context, Poll}};
 
-use axum::{body::Body, http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
-use bytes::{BufMut, Bytes, BytesMut};
+use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
+use bytes::{Bytes};
 use futures::{Stream, StreamExt, stream};
-use postgres_types::{FromSql, Type};
+use postgres_types::{Type};
 use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
@@ -139,7 +139,9 @@ impl IntoResponse for HttpResult {
             }
             if let Some(h) = a.header {
                 for (k, v) in h.into_iter() {
-                    builder = builder.header(HeaderName::from_str(k.as_str()).unwrap(), HeaderValue::from_str(v.unwrap().as_str()).unwrap());
+                    if let (Ok(k), Some(Ok(v))) = (HeaderName::from_bytes(k.as_bytes()), v.as_ref().map(String::as_bytes).map(HeaderValue::from_bytes)) {
+                        builder = builder.header(k, v);
+                    }
                 }
             }
             if a.body.is_some() {
@@ -154,10 +156,7 @@ impl IntoResponse for HttpResult {
         let stream = futures::stream::iter(b).chain(iter.into_inner());
 
         builder
-            .body(Body::from_stream(stream.map(|r| match r {
-                Ok(b) => Ok::<bytes::Bytes, HttpgError>(b.body.unwrap_or_default()),
-                _ => Ok(bytes::Bytes::from_static(b"invalid body column"))
-            })))
+            .body(Body::from_stream(stream.map(|r| r.map(|r| r.body.unwrap_or_default()))))
             .unwrap_or(StatusCode::BAD_REQUEST.into_response())
     }
 }

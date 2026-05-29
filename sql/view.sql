@@ -298,7 +298,7 @@ select xmlelement(name article,
     ), '')),
     interest_control(good, interest)
 )::text, (good).location, bird_distance_km::int, (good).good_id, (good).receiver
-from base good, q;
+from q, base good;
 
 grant select on table "good_detail" to person;
 
