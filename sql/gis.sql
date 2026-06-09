@@ -77,7 +77,7 @@ create index if not exists auvergne_highway_geog on auvergne_highway using gist 
 
 grant select on table auvergne_highway to person;
 
-vacuum analyze auvergne_highway;
+-- vacuum analyze auvergne_highway;
 
 -- select current_setting('neon.project_id', true) is not null as is_neon
 -- \gset
@@ -124,7 +124,7 @@ where st_startpoint(geog::geometry) <> st_endpoint(geog::geometry)
 create unique index if not exists auvergne_network_edge_pkey on auvergne_network_edge (id);
 create index if not exists auvergne_network_edge_geog on auvergne_network_edge using gist (geog);
 
-vacuum analyze auvergne_network_edge;
+-- vacuum analyze auvergne_network_edge;
 
 drop materialized view if exists auvergne_network_node cascade;
 create materialized view if not exists auvergne_network_node (id, geom) as
@@ -141,7 +141,7 @@ grant select on table auvergne_network_node to person;
 create unique index if not exists auvergne_network_node_pkey on auvergne_network_node (id);
 create index if not exists auvergne_network_node_geom on auvergne_network_node using gist (geom);
 
-vacuum analyze auvergne_network_node;
+-- vacuum analyze auvergne_network_node;
 
 drop materialized view if exists auvergne_network cascade;
 create materialized view if not exists auvergne_network (osm_id, id, geog, source, target, cost, reverse_cost) as
@@ -162,4 +162,4 @@ create index if not exists auvergne_network_source on auvergne_network (source);
 create index if not exists auvergne_network_target on auvergne_network (target);
 create unique index if not exists auvergne_network_pkey on auvergne_network (id);
 
-vacuum analyze auvergne_network;
+-- vacuum analyze auvergne_network;

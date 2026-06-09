@@ -18,9 +18,12 @@ window.map?.addEventListener('input', (event) => {
       ],
     }),
   })
+    .catch(e => {
+      console.log(e);
+      // localStorage.setItem('')
+    })
     .then(response => response.json())
     .then((geojson) => {
-      // window.map.removeGroup('route');
       window.map?.geojson(geojson);
     })
   ;

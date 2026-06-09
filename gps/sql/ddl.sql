@@ -56,7 +56,7 @@ language sql
 security invoker
 set search_path to cpres, pg_catalog
 begin atomic
-    select coalesce(nullif(current_setting('gps.runner_id', true), ''), '5456a81d-356a-48a1-b3ab-17857ee840ca')::uuid;
+    select coalesce(nullif(current_setting('gps.runner_id', true), ''), '5456a81d-356a-48a1-b3ab-17857ee840cb')::uuid;
 end;
 
 grant execute on function current_runner_id to person;
@@ -68,7 +68,7 @@ create table runner (
 
 create table run (
     run_id uuid primary key default uuidv7(),
-    name text default null,
+    name text default to_char(now(), 'TMDay DD/MM/YY, HH24:MI'),
     runner_id uuid not null references runner (runner_id) default current_runner_id() 
 );
 

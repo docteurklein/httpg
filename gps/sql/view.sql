@@ -26,19 +26,26 @@ palette (palette) as (
     ))
     from generate_series(0, 0xff) c
 ),
-line (line) as (
-    select st_makeline(location order by at)
+line (line, run_id) as (
+    select st_makeline(location order by at), run_id
     from ping
     group by run_id
 ),
-geo (geom, style) as (
-    select line, null
-    from line
-    union all
+geo (geom, style, popup) as (
     select hex, jsonb_build_object(
-        'color', palette[width_bucket(weight + 1, 0, max(weight) over (), 0xff)]
-    )
+        'color', palette[width_bucket(weight + 1, 0, max(weight) over (), 0xff)],
+        'stroke', false
+    ), null
     from heatmap, palette
+    union all
+    select line, null, jsonb_build_object(
+        'content', xmlelement(name div,
+            xmlelement(name h3, name),
+            xmlelement(name p, round((st_length(line::geography) / 1000)::numeric, 2) || ' km')
+        )::text
+    )
+    from line
+    join run using (run_id)
 )
 select $html$<!DOCTYPE html>
 <html>
@@ -85,7 +92,7 @@ select xmlelement(name input, xmlattributes(
     null as readonly,
     'map' as id,
     'cpres-map' as is,
-    'watch' as geolocate,
+    -- 'watch' as geolocate,
     url('/gps/query', jsonb_build_object(
         'sql', $sql$
         insert into gps.ping (run_id, location) values ($1::uuid, $2::point::geometry)
