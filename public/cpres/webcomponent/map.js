@@ -50,7 +50,7 @@ class IsMap extends HTMLInputElement {
 
     if (this.getAttribute('geolocate') === 'watch') {
       navigator.geolocation.watchPosition(async pos => {
-        let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
+        let location = `(${pos.coords.longitude},${pos.coords.latitude})`;
 
         this.value = location;
       }, console.log, {
@@ -60,7 +60,7 @@ class IsMap extends HTMLInputElement {
 
     if (this.getAttribute('geolocate') === 'init') {
       navigator.geolocation.getCurrentPosition(async pos => {
-        let location = `(${pos.coords.latitude},${pos.coords.longitude})`;
+        let location = `(${pos.coords.logitude},${pos.coords.latitude})`;
 
         if (!this.value) {
           this.value = location;
@@ -78,7 +78,7 @@ class IsMap extends HTMLInputElement {
 
     if (!this.readOnly) {
       this.map.on('click', e => {
-        this.value = `(${e.latlng.lat},${e.latlng.lng})`;
+        this.value = `(${e.latlng.lng},${e.latlng.lat})`;
       });
     }
 
@@ -109,7 +109,7 @@ class IsMap extends HTMLInputElement {
     if (name === 'value' && newValue && oldValue != newValue) {
       let matches = newValue.match(/\((.*),(.*)\)/);
       if (matches && matches.length > 1) {
-        let pos = [matches[1], matches[2]];
+        let pos = [matches[2], matches[1]];
         this.map.setView(pos);
         this.marker.setLatLng(pos);
       }

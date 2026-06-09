@@ -27,7 +27,7 @@ create schema cpres;
 
 create function cpres.embed_passage(content text)
 returns vector
-immutable parallel safe -- leakproof
+strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
@@ -40,7 +40,7 @@ end;
 
 create function cpres.embed_query(query text)
 returns vector
-immutable parallel safe -- leakproof
+strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
@@ -53,7 +53,7 @@ end;
 
 create function cpres.rerank_distance(query text, content text)
 returns real
-immutable parallel safe -- leakproof
+strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic

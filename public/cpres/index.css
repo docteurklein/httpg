@@ -23,6 +23,14 @@ html {
     scrollbar-gutter: stable;
 }
 
+@view-transition {
+    navigation: auto;
+}
+
+::view-transition-group(root) {
+    animation-duration: 1s;
+}
+
 @media only screen and (prefers-color-scheme: light) {
     :root {
         --color-surface: white;

@@ -91,7 +91,20 @@ begin atomic
 end;
 grant execute on procedure mark_late_interests to person;
 
-create or replace function login() returns setof text
+create or replace function login(name text) returns setof text
+volatile strict parallel safe -- leakproof
+language plpgsql
+security definer
+set search_path to cpres, pg_catalog
+as $$
+begin
+    case name
+        when 'cpres' then return query select * from login_cpres();
+    end case;
+end;
+$$;
+
+create or replace function login_cpres() returns setof text
 volatile strict parallel safe -- leakproof
 language sql
 security definer
@@ -112,7 +125,8 @@ begin atomic
     from "user";
 end;
 
-grant execute on function login to person;
+grant execute on function login(text) to person;
+grant execute on function login_cpres() to person;
 
 create or replace procedure delete_account()
 language sql
@@ -148,10 +162,11 @@ begin atomic
                 push_endpoint = excluded.push_endpoint
     ),
     url as (
-        select login_person.*, url(format('https://%s/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
-            'redirect', '/',
+        select login_person.*, url(format('https://%s/cpres/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
+            'redirect', '/cpres/',
             'login_challenge', login_challenge,
-            'sql', 'select'
+            'sql', 'select',
+            'params[]', 'cpres'
         )) as url
         from login_person
     )
@@ -225,7 +240,7 @@ web_push(
         author.name
     ),
     content,
-    url('/query', jsonb_build_object(
+    url('/cpres/query', jsonb_build_object(
         'sql', format('table head union all table %I', case m.author
             when m.person_id then 'giving activity' -- author is the one interested, so we show message to giver
             else 'receiving activity' end
@@ -256,7 +271,7 @@ web_push(
         good.title
     ),
     null,
-    url('/query', jsonb_build_object(
+    url('/cpres/query', jsonb_build_object(
         'sql', 'table head union all table "receiving activity"'
     )) || '#' || good.title
 ) p
@@ -284,7 +299,7 @@ web_push(
         good.title
     ),
     null,
-    url('/query', jsonb_build_object(
+    url('/cpres/query', jsonb_build_object(
         'sql', 'table head union all table "giving activity"'
     )) || format('#%s-%s', good.good_id, receiver.person_id)
 ) p

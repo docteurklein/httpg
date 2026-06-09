@@ -6,7 +6,7 @@ mod postgres;
 
 use http::Uri;
 use axum::{
-    Router, extract::{DefaultBodyLimit, State}, http::{
+    Router, extract::{DefaultBodyLimit, State, Path}, http::{
         StatusCode, header::SET_COOKIE,
     }, response::{IntoResponse, NoContent, Redirect}, routing::{get, post}
 };
@@ -23,7 +23,7 @@ use lettre::{
 };
 use serde_json::json;
 use tower::builder::ServiceBuilder;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
+use tower_http::{compression::CompressionLayer, cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}};
 use tokio_postgres::{IsolationLevel, types::{ToSql, Type}};
@@ -31,7 +31,7 @@ use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::{CancelStream, compress_stream}};
+use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::CancelStream};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
@@ -107,18 +107,25 @@ async fn main() -> Result<(), HttpgError> {
 
     let app = Router::new()
         .route("/", get(index))
+        .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
+        .route("/{path}/logout", get(logout).post(logout))
         .route("/query", get(stream_query).post(post_query))
+        .route("/{path}/query", get(stream_query).post(post_query))
         .route("/email", post(email))
+        .route("/{path}/email", post(email))
         .route("/http", get(http).post(http))
-        .route("/webpush", get(web_push).post(web_push))
+        .route("/{path}/http", get(http).post(http))
+        .route("/{path}/webpush", get(web_push).post(web_push))
         // .layer(axum::middleware::from_fn_with_state(state.clone(), pre))
         .route("/login", get(login).post(login))
+        .route("/{path}/login", get(login).post(login))
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
             .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
             // .layer(axum::middleware::from_fn(compress_stream::compress_stream))
+            // .layer(CompressionLayer::new())
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::new()
                 .allow_origin(Any)
@@ -195,19 +202,21 @@ async fn main() -> Result<(), HttpgError> {
 #[debug_handler]
 async fn index(
     state: State<AppState>,
+    path: Option<Path<String>>,
     biscuit: Option<extract::biscuit::Biscuit>,
     mut query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
     query.sql = state.config.index_sql.to_owned();
 
-    stream_query(state.to_owned(), biscuit, query).await
+    stream_query(state.to_owned(), biscuit, None, query).await
 }
 
 #[debug_handler]
 async fn login(
-    State(AppState {write_pool, config: HttpgConfig { login_query, anon_role, private_key_file, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { login_query, tls, anon_role, private_key_file, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
+    path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     let root = KeyPair::from(&PrivateKey::from_bytes(&private_key_file)?);
@@ -220,8 +229,11 @@ async fn login(
 
     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
-    let params: [&(dyn ToSql + Sync); 0] = [];
-    let facts = tx.query(&login_query, &params).await?;
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
+    }).collect();
+
+    let facts = tx.query_typed(login_query.as_ref(), sql_params.as_slice()).await?;
 
     let mut builder = Biscuit::builder();
     facts.iter().try_for_each(|row| {
@@ -233,30 +245,34 @@ async fn login(
     Ok((
         [(SET_COOKIE, Cookie::build(("auth", builder.build(&root)?.to_base64()?))
             .http_only(true)
-            .secure(false) // @TODO
+            .path(path.as_ref().map(|p| p.as_str()).unwrap_or("/"))
+            .secure(tls.is_some())
             .same_site(cookie::SameSite::Lax) // Strict breaks setting cookie after cross-origin redirect
             .max_age(cookie::time::Duration::seconds(60 * 60 * 24 * 365))
             .to_string()
         )],
-        Redirect::to(query.redirect.as_deref().unwrap_or("/")).into_response()
+        Redirect::to(query.redirect.as_deref().or(path.as_ref().map(|p| p.as_str())).unwrap_or("/")).into_response()
     ))
 }
 
 #[debug_handler]
 async fn logout(
+    State(AppState {config: HttpgConfig { tls, ..}, ..}): State<AppState>,
+    path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
     Ok((
         [
             (SET_COOKIE, Cookie::build(("auth", ""))
                 .http_only(true)
-                .secure(false) // @TODO
+                .path(path.as_ref().map(|p| p.as_str()).unwrap_or("/"))
+                .secure(tls.is_some())
                 .same_site(cookie::SameSite::Lax)
                 .expires(OffsetDateTime::now_utc() - Duration::days(365))
                 .to_string()
             ),
         ],
-        Redirect::to(query.redirect.as_deref().unwrap_or("/")).into_response()
+        Redirect::to(query.redirect.as_deref().or(path.as_ref().map(|p| p.as_str())).unwrap_or("/")).into_response()
     ))
 }
 
@@ -476,6 +492,7 @@ async fn web_push(
 async fn stream_query(
     State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
+    path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 

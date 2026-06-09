@@ -52,7 +52,7 @@ begin atomic;
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
-                url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
                     'sql', format('call want(%L, $2::interest_level, $1)', good.good_id)
                 )) as action,
                 null as class
@@ -60,7 +60,7 @@ begin atomic;
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'redirect' as name,
-                    url('/webpush', jsonb_build_object(
+                    url('/cpres/webpush', jsonb_build_object(
                         'sql', 'select * from web_push_want($1::uuid, $2::uuid)',
                         'params[0]', interest.good_id,
                         'params[1]', interest.person_id,
@@ -98,7 +98,7 @@ begin atomic;
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
-                url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
                     'sql', format('call unwant(%L)', (good).good_id),
                     'redirect', 'referer'
                 )) as action
@@ -129,7 +129,7 @@ with q (qs) as (
 ),
 palette (palette) as (
     select array_agg(format(
-        '#00%s%s',
+        '#%s00%s',
         lpad(to_hex(c), 2, '0'),
         lpad(to_hex(0xff - c), 2, '0')
     ))
@@ -143,7 +143,7 @@ location (point) as (
 start (vid) as (
     select source
     from auvergne_network, location
-    order by geog <-> ST_Point(point[1], point[0], 4326)
+    order by geog <-> point::geometry
     limit 5
 ),
 "end" (vid) as (
@@ -156,7 +156,7 @@ start (vid) as (
             then true
             else good_id =  nullif(qs->>'target', '')::uuid
         end
-        order by geog <-> ST_Point(location[1], location[0], 4326)
+        order by geog <-> location::geometry
         limit 1
     )
 )
@@ -167,7 +167,7 @@ select
     null, -- format('%s-%s', start.vid, "end".vid),
     'route',
     jsonb_build_object(
-        'color', (select palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)] from palette)
+        'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
     ),
     jsonb_build_object(
         'content',  jsonb_build_object(
@@ -183,7 +183,7 @@ select
             'speed', speed
         )::text
     )
-from pgr_dijkstra(
+from palette, pgr_dijkstra(
     'select id, source, target, cost, reverse_cost from auvergne_network', 
     array(select vid from start),
     array(select vid from "end"),
@@ -194,7 +194,7 @@ join auvergne_network_node node on (path.node = node.id)
 join auvergne_highway a on (a.osm_id = edge.osm_id)
 ;
 
-grant select on table route to person;
+grant select on table route to person, anon;
 
 create or replace view "good_detail" (html, location, bird_distance_km, good_id, receiver)
 with (security_invoker)
@@ -220,7 +220,7 @@ base as (
 )
 select xmlelement(name article,
     xmlelement(name h2, xmlelement(name a, xmlattributes(
-        url('/query', jsonb_build_object(
+        url('/cpres/query', jsonb_build_object(
             'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
             'params[]', (good).good_id,
             'target', (good).good_id,
@@ -240,7 +240,7 @@ select xmlelement(name article,
         xmlelement(name div, format('bird distance: %s km', round(bird_distance_km::numeric, 2)))
     end,
     xmlelement(name a, xmlattributes(
-        format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[0], (good).location[1]) as href,
+        format('https://www.google.com/maps/dir/?api=1&destination=%s,%s', (good).location[1], (good).location[0]) as href,
         '_blank' as target
     ), _('go with google maps')),
     case when qs->>'show_map' is not null then
@@ -250,7 +250,7 @@ select xmlelement(name article,
             'map' as id,
             'cpres-map' as is,
             'init' as geolocate,
-            url('/query', jsonb_build_object(
+            url('/cpres/query', jsonb_build_object(
                 'sql', $$
                     select coalesce(jsonb_agg(feature), '[]')::text
                     from (
@@ -266,16 +266,16 @@ select xmlelement(name article,
                 from (
                     select ST_AsGeoJSON(route)::jsonb from route
                     union all
-                    select st_asgeojson(ST_Point((good).location[1], (good).location[0], 4326))::jsonb
+                    select st_asgeojson((good).location::geometry)::jsonb
                 ) _ (feature)
-            ) as "data-geojson" -- why is lat-lng inverted?
+            ) as "data-geojson"
         ))
     end,
     xmlelement(name div, xmlattributes('grid media' as class), coalesce((
         select xmlagg(xmlelement(name article, xmlattributes('card' as class),
             (
                 with url (url) as (
-                    select url('/query', jsonb_build_object(
+                    select url('/cpres/query', jsonb_build_object(
                         'sql', 'select content from good_media where content_hash = $1::text::bytea',
                         'params[]', content_hash,
                         'accept', content_type,
@@ -300,7 +300,7 @@ select xmlelement(name article,
 )::text, (good).location, bird_distance_km::int, (good).good_id, (good).receiver
 from q, base good;
 
-grant select on table "good_detail" to person;
+grant select on table "good_detail" to person, anon;
 
 create or replace function good_form(id text, params jsonb, sql text) returns xml
 security invoker
@@ -320,8 +320,8 @@ with query (q, good_id, redirect, errors) as (
 )
 select xmlelement(name form, xmlattributes(
         'POST' as method,
-        url('/query', jsonb_build_object(
-            'redirect', url('/query', jsonb_build_object(
+        url('/cpres/query', jsonb_build_object(
+            'redirect', url('/cpres/query', jsonb_build_object(
                 'sql', 'table head union all select html from "good admin"',
                 'flash[green]', 'Saved successfully'
             ))
@@ -367,7 +367,7 @@ select xmlelement(name form, xmlattributes(
             'cpres-map' as is,
             'init' as geolocate,
             'params[2]' as name,
-            _('location: (lat,lng)') as placeholder,
+            _('location: (lng,lat)') as placeholder,
             'location' as class,
             '\(.+,.+\)' as pattern,
             'required' as required,
@@ -404,7 +404,7 @@ result (html, good_id) as (
             select xmlagg(xmlelement(name article, xmlattributes('card' as class),
                 (
                     with url (url) as (
-                        select url('/query', jsonb_build_object(
+                        select url('/cpres/query', jsonb_build_object(
                             'sql', 'select content from good_media where content_hash = $1::text::bytea',
                             'params[]', content_hash,
                             'accept', content_type,
@@ -423,7 +423,7 @@ result (html, good_id) as (
                 ),
                 xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/query' as action
+                    '/cpres/query' as action
                 ),
                     xmlelement(name input, xmlattributes(
                         'hidden' as type,
@@ -457,7 +457,7 @@ result (html, good_id) as (
         xmlelement(name article, xmlattributes('card' as class),
             xmlelement(name form, xmlattributes(
                 'POST' as method,
-                '/query' as action,
+                '/cpres/query' as action,
                 'multipart/form-data' as enctype
             ),
                 xmlelement(name input, xmlattributes(
@@ -498,7 +498,7 @@ result (html, good_id) as (
         ),
         xmlelement(name form, xmlattributes(
             'POST' as method,
-            '/query' as action
+            '/cpres/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -567,7 +567,7 @@ html (html) as (
     select xmlelement(name article, xmlattributes('card' as class),
         xmlelement(name h2, xmlelement(name a, xmlattributes(
             title as id,
-            url('/query', jsonb_build_object(
+            url('/cpres/query', jsonb_build_object(
                 'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
                 'params[]', good_id,
                 'show_map', true
@@ -611,7 +611,7 @@ html (html) as (
                     (with message_id (message_id) as (select gen_random_uuid())
                     select xmlelement(name form, xmlattributes(
                         'POST' as method,
-                        '/query' as action
+                        '/cpres/query' as action
                     ),
                         xmlelement(name input, xmlattributes(
                             'hidden' as type,
@@ -621,11 +621,11 @@ html (html) as (
                         xmlelement(name input, xmlattributes(
                             'hidden' as type,
                             'redirect' as name,
-                            url('/webpush', jsonb_build_object(
+                            url('/cpres/webpush', jsonb_build_object(
                                 'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
                                 'params[0]', message_id,
                                 'params[1]', interest.person_id,
-                                'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
+                                'redirect', url('/cpres/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
                             )) as value
                         )),
                         xmlelement(name textarea, xmlattributes(
@@ -643,7 +643,7 @@ html (html) as (
                         then xmltext(_('Winner'))
                         when not given then xmlelement(name form, xmlattributes(
                             'POST' as method,
-                            '/query' as action
+                            '/cpres/query' as action
                         ),
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
@@ -653,11 +653,11 @@ html (html) as (
                             xmlelement(name input, xmlattributes(
                                 'hidden' as type,
                                 'redirect' as name,
-                                url('/webpush', jsonb_build_object(
+                                url('/cpres/webpush', jsonb_build_object(
                                     'sql', 'select * from web_push_gift($1::uuid, $2::uuid)',
                                     'params[0]', interest.good_id,
                                     'params[1]', interest.person_id,
-                                    'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
+                                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'table head union all table "giving activity"'))
                                 )) as value
                             )),
                             xmlelement(name input, xmlattributes(
@@ -723,7 +723,7 @@ html (good, html) as (
         case when (interest).origin = 'automatic' then
             xmlelement(name div,
                 xmlelement(name a, xmlattributes(
-                    url('/query', jsonb_build_object(
+                    url('/cpres/query', jsonb_build_object(
                         'sql', 'table head union all table "findings"',
                         'q', (interest).query,
                         'use_primary', null
@@ -734,7 +734,7 @@ html (good, html) as (
         xmlelement(name div, xmlattributes('inline' as class),
             xmlelement(name h2, xmlelement(name a, xmlattributes(
                 (good).title as id,
-                url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
                     'sql', 'table head union all select html from "good_detail" where good_id = $1::uuid',
                     'params[]', (good).good_id,
                     'show_map', true
@@ -774,7 +774,7 @@ html (good, html) as (
         (with message_id (message_id) as (select gen_random_uuid())
         select xmlelement(name form, xmlattributes(
             'POST' as method,
-            '/query' as action
+            '/cpres/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -784,11 +784,11 @@ html (good, html) as (
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'redirect' as name,
-                url('/webpush', jsonb_build_object(
+                url('/cpres/webpush', jsonb_build_object(
                     'sql', 'select * from web_push_message($1::uuid, $2::uuid)',
                     'params[0]', message_id,
                     'params[1]', (good).giver,
-                    'redirect', url('/query', jsonb_build_object('sql', 'table head union all table "receiving activity"'))
+                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'table head union all table "receiving activity"'))
                 )) as value
             )),
             xmlelement(name textarea, xmlattributes(
@@ -844,21 +844,21 @@ and not exists (
 limit 500
 ;
 
-grant select on table finding_list to person;
+grant select on table finding_list to person, anon;
 
 drop view if exists good_marker cascade;
 create or replace view good_marker (geom, id, popup)
 with (security_invoker) as
-select ST_Point(location[1], location[0], 4326), good_id, jsonb_build_object(
+select location, good_id, jsonb_build_object(
     'content', html,
     'maxHeight', 300,
     'minWidth', 200,
     'autoClose', false,
     'closeOnClick', false
-) -- why is lat-lng inverted?
+)
 from finding_list;
 
-grant select on table good_marker to person;
+grant select on table good_marker to person, anon;
 
 create or replace view "findings" (html)
 with (security_invoker)
@@ -882,7 +882,7 @@ control (html) as (
                         limit 100
                     )
                     select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
-                        url('/query', jsonb_build_object(
+                        url('/cpres/query', jsonb_build_object(
                             'q', query,
                             'sql', 'table head union all table "findings"',
                             'use_primary', null
@@ -924,7 +924,7 @@ control (html) as (
         xmlelement(name form, xmlattributes(
             'grid' as class,
             'GET' as method,
-            '/query' as action
+            '/cpres/query' as action
         ),
             xmlelement(name input, xmlattributes(
                 'q' as name,
@@ -962,8 +962,8 @@ control (html) as (
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
-                url('/query', jsonb_build_object(
-                    'redirect', url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
+                    'redirect', url('/cpres/query', jsonb_build_object(
                         'sql', 'table head union all table "findings"',
                         'q', qs->>'q',
                         'use_primary', null
@@ -991,8 +991,8 @@ control (html) as (
         (
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
-                url('/query', jsonb_build_object(
-                    'redirect', url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
+                    'redirect', url('/cpres/query', jsonb_build_object(
                         'sql', 'table head union all table "findings"'
                     ))
                 )) as action
@@ -1026,7 +1026,7 @@ map (html) as (
         -- 'readonly' as readonly,
         'hidden' as type,
         'map' as id,
-        url('/query', jsonb_build_object(
+        url('/cpres/query', jsonb_build_object(
             'sql', $$
                 select coalesce(jsonb_agg(feature), '[]')::text
                 from (
@@ -1047,8 +1047,8 @@ map (html) as (
         (
             select coalesce(jsonb_agg(feature), '[]')
             from (
-                -- select ST_AsGeoJSON(route)::jsonb from route
-                -- union all
+                select ST_AsGeoJSON(route)::jsonb from route
+                union all
                 select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
                 union all
                 select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
@@ -1075,7 +1075,7 @@ union all select xmlelement(name div, xmlattributes('grid search-results' as cla
 union all select _('Nothing yet.') where not exists (select from finding_list limit 1)
 ;
 
-grant select on table "findings" to person;
+grant select on table "findings" to person, anon;
 
 create or replace view head (html)
 with (security_invoker)
@@ -1100,8 +1100,9 @@ union all (
     select xmlelement(name form, xmlattributes(
         'grid hashover' as class,
         'POST' as method,
-        url('/email', jsonb_build_object(
-            'redirect', url('/', jsonb_build_object(
+        url('/cpres/email', jsonb_build_object(
+            'redirect', url('/cpres/query', jsonb_build_object(
+                'sql', 'table head union all table findings',
                 'flash[green]', 'Check your emails'
             ))
         )) as action
@@ -1129,9 +1130,10 @@ union all (
 )
 union all (
     select $html$
-        <form method="GET" action="/login">
+        <form method="GET" action="/cpres/login">
             <input type="text" name="login_challenge" placeholder="login_challenge" />
             <input type="hidden" name="redirect" value="referer" />
+            <input type="hidden" name="params[]" value="cpres" />
             <input type="submit" value="Login" />
         </form>
     $html$
@@ -1169,7 +1171,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
         ),
         item (html) as (
             select xmlelement(name a, xmlattributes(
-                url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
                     'sql', sql
                 )) as href
             ), _(name))
@@ -1179,7 +1181,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
         profile (html) as (
             select xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/query?redirect=/' as action,
+                    '/cpres/query?redirect=referer' as action,
                     'inline' as class,
                     'this.submit()' as onchange
             ),
@@ -1222,14 +1224,14 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
             union all
             select html from item
             union all
-            select xmlelement(name a, xmlattributes('/logout' as href), _('Logout'))
+            select xmlelement(name a, xmlattributes('/cpres/logout' as href), _('Logout'))
             where current_person_id() is not null
             union all
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
-                url('/query', jsonb_build_object(
+                url('/cpres/query', jsonb_build_object(
                     'sql', 'call delete_account()',
-                    'redirect', '/logout'
+                    'redirect', '/cpres/logout'
                 )) as action
             ),
                 xmlelement(name input, xmlattributes(
@@ -1251,7 +1253,7 @@ union all (
         select m.key, xmltext(_(m.value)) from q, jsonb_each_text(q->'qs'->'flash') m
         union all (
             select 'yellow', xmlelement(name a, xmlattributes(
-                (url('/query', jsonb_build_object(
+                (url('/cpres/query', jsonb_build_object(
                     'sql', 'table head union all table "receiving activity"'
                 )) || '#' || good.title) as href
             ), format(_('%s is waiting for you on %s'), giver.name, good.title))
@@ -1279,7 +1281,7 @@ union all (
     from m
 )
 ;
-grant select on table head to person;
+grant select on table head to person, anon;
 
 create or replace view about (html)
 with (security_invoker)
@@ -1319,4 +1321,4 @@ Votre position géographique (tel que renseignée par votre navigateur) peut êt
 Vous pouvez à tout moment effacer ces données optionnelles, voire même l'entiereté de votre compte, auquel cas **toutes** vos données sont instantanément éffacées.
 $$)
 ;
-grant select on table about to person;
+grant select on table about to person, anon;

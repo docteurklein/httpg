@@ -59,7 +59,10 @@ impl Stream for CancelStream {
         match item {
             Poll::Ready(Some(Err(e))) => {
                 self.errored = true;
-                Poll::Ready(Some(Ok(RowResult { body: Some(Bytes::from(e.to_string())), ..Default::default() })))
+                Poll::Ready(Some(Ok(RowResult {
+                    body: Some(Bytes::from(e.to_string())),
+                    ..Default::default()
+                })))
             },
             Poll::Ready(Some(Ok(row))) => {
 
@@ -145,7 +148,10 @@ impl IntoResponse for HttpResult {
                 }
             }
             if a.body.is_some() {
-                b.push(Ok(RowResult {body: a.body, ..Default::default() }));
+                b.push(Ok(RowResult {
+                    body: a.body,
+                    ..Default::default()
+                }));
                 n = None;
             }
             else {
