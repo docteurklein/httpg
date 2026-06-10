@@ -68,6 +68,8 @@ jobs:
           echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
 
       - run: |
+          sudo rm /etc/containers/registries.conf
+      - run: |
           nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
