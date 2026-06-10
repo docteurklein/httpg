@@ -4,7 +4,7 @@ set  search_path to gps, url, pg_catalog, public;
 
 
 create or replace view heatmap (hex, weight)
-as select ST_CoverageClean(h3_cell_to_boundary_geometry(location @ 10)) over (), count(*)
+as select h3_cell_to_boundary_geometry(location @ 10), count(*)
 from ping
 group by location @ 10
 order by 2;
@@ -153,7 +153,7 @@ form (html) as (
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'params[0]' as name,
-            coalesce(q.run_id, uuidv7()::text) as value
+            coalesce(q.run_id, gen_random_uuid()::text) as value
         )),
         xmlelement(name input, xmlattributes(
             'text' as type,

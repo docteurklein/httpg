@@ -53,12 +53,12 @@ end;
 grant execute on function current_runner_id to person;
 
 create table runner (
-    runner_id uuid primary key default uuidv7(),
+    runner_id uuid primary key default gen_random_uuid(),
     name text not null unique check (trim(name) <> '' and position('@' in name) = 0)
 );
 
 create table run (
-    run_id uuid primary key default uuidv7(),
+    run_id uuid primary key default gen_random_uuid(),
     name text default to_char(now(), 'TMDay DD/MM/YY, HH24:MI'),
     at timestamptz not null default now(),
     runner_id uuid not null references runner (runner_id) default current_runner_id() 
