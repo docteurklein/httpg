@@ -25,15 +25,6 @@ create extension if not exists pgrouting cascade;
 
 create schema if not exists gps;
 
-do $$ begin
-    create role runner noinherit;
-    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
-end $$;
-do $$ begin
-    create role runner;
-    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
-end $$;
-
 grant anon to httpg;
 grant runner to httpg;
 
@@ -69,6 +60,7 @@ create table runner (
 create table run (
     run_id uuid primary key default uuidv7(),
     name text default to_char(now(), 'TMDay DD/MM/YY, HH24:MI'),
+    at timestamptz not null default now(),
     runner_id uuid not null references runner (runner_id) default current_runner_id() 
 );
 

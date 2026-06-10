@@ -2,6 +2,7 @@
 
 set local search_path to cpres, pg_catalog, public;
 
+\ir roles.sql
 \ir url.sql
 \ir ddl.sql
 \ir translation.sql
