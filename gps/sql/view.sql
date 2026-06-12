@@ -14,6 +14,9 @@ grant select on table heatmap to anon;
 create or replace view head (html)
 with (security_invoker)
 as
+with httpg (error) as (
+    select nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
+)
 select $html$<!DOCTYPE html>
 <html>
 <head>
@@ -36,7 +39,10 @@ select $html$<!DOCTYPE html>
 }
 
 </style>
-$html$;
+$html$
+union all
+select xmlelement(name p, error)::text
+from httpg;
 
 grant select on table head to anon;
 
@@ -100,6 +106,10 @@ select xmlelement(name a, xmlattributes(
 from q
 where q.run_id is not null
 union all
+select xmlelement(name h1, name)::text
+from q, run
+where run.run_id = q.run_id::uuid
+union all
 select xmlelement(name input, xmlattributes(
     'hidden' as type,
     nullif(q.run_id is null, false) as readonly,
@@ -152,6 +162,11 @@ form (html) as (
         )),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
+            'on_error' as name,
+            'table gps.list' as value
+        )),
+        xmlelement(name input, xmlattributes(
+            'hidden' as type,
             'params[0]' as name,
             coalesce(q.run_id, gen_random_uuid()::text) as value
         )),
@@ -197,3 +212,33 @@ grant usage on schema gps to anon;
 grant select, insert on table runner to anon;
 grant select, insert, update on table run to anon;
 grant select, insert on table ping to anon;
+
+drop procedure if exists test;
+create or replace procedure test(status inout int default 200, header inout hstore default null, body inout text default null)
+language plpgsql
+security invoker
+set search_path to cpres, pg_catalog, public
+-- begin atomic
+as $$
+begin
+    insert into gps.runner (name) values ('test');
+    select
+        200,
+        hstore(array[
+            'Location', '/',
+            'x-test', 'yes'
+        ])
+    into status, header;
+exception when others then
+    select
+        400,
+        hstore(array[
+            'Location', '/',
+            'x-test', 'no'
+        ]),
+        sqlstate::text || sqlerrm::text
+    into status, header, body;
+end;
+$$;
+
+grant execute on procedure test to anon;

@@ -26,6 +26,7 @@ use tower::builder::ServiceBuilder;
 use tower_http::{compression::CompressionLayer, cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}};
+use std::collections::HashMap;
 use tokio_postgres::{IsolationLevel, types::{ToSql, Type}};
 use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -110,6 +111,10 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
+        .route("/call", get(call_query))
+        .route("/call/{cursor}", get(call_query))
+        .route("/{path}/call", get(call_query))
+        .route("/{path}/call/{cursor}", get(call_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
         .route("/email", post(email))
@@ -197,6 +202,51 @@ async fn main() -> Result<(), HttpgError> {
         },
     };
     Ok(())
+}
+
+#[debug_handler]
+async fn call_query(
+    State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    paths: Option<Path<HashMap<String, String>>>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+
+    let mut client = write_pool.get().await?;
+
+    let mut tx = client.build_transaction()
+        .isolation_level(IsolationLevel::Serializable)
+        .start().await?
+    ;
+
+    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    // let guard = QueryGuard {
+    //     cancel_token: client.cancel_token(),
+    //     finished: false,
+    // };
+
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param as &(dyn ToSql + Sync), param.to_owned().into())
+    }).collect();
+
+    let call = tx.query_typed(query.sql.as_ref(), sql_params.as_slice()).await?;
+
+    let rows = match paths {
+        Some(paths) => match paths.get("cursor") {
+            Some(cursor) => {
+                let rows = tx.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
+                tx.execute(&format!("close {cursor}"), &[]).await?;
+                rows
+            },
+            None => call,
+        },
+        None => call,
+    };
+
+    Ok(response::HttpResult {
+        query: query.to_owned(),
+        rows: CancelStream::from_vec(rows, guard),
+    })
 }
 
 #[debug_handler]
