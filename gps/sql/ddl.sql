@@ -64,7 +64,7 @@ create policy "owner" on runner for all to anon
 using (runner_id = current_runner_id());
 
 with salt (salt) as (
-    select gen_salt('sha512crypt')
+    select gen_salt('bf')
 )
 insert into gps.runner
 select '5456a81d-356a-48a1-b3ab-17857ee840cb', 'flopi', crypt('flopi', salt), salt
@@ -88,7 +88,7 @@ create table ping (
     run_id uuid not null references run (run_id),
     at timestamptz not null default now(),
     primary key (run_id, location, at)
-);
+) partition by range (at);
 
 alter table ping enable row level security;
 create policy "owner" on ping for all to anon
@@ -97,3 +97,9 @@ using (exists(
     where run.runner_id = current_runner_id()
     and run.run_id = ping.run_id
 ));
+
+alter table ping enable row level security;
+create policy "recent" on ping
+as restrictive
+for select to anon
+using (at >= now() - interval '1 month');

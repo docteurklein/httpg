@@ -236,12 +236,8 @@ select xmlelement(name input, xmlattributes(
     'map' as id,
     'cpres-map' as is,
     case when q.run_id is null then null else 'watch' end as geolocate,
-    url('/gps/query', jsonb_build_object(
-        'sql', $sql$
-        insert into gps.ping (run_id, location) values ($1::uuid, $2::point::geometry)
-        on conflict (run_id, location, at) do nothing
-        returning st_asgeojson(gps.geojson_ping(location, run_id, at))::text
-        $sql$
+    url('/gps/call', jsonb_build_object(
+        'sql', 'call gps.ping($1::uuid, $2::point::geometry)'
     )) as href,
     (
         select coalesce(jsonb_agg(feature), '[]')::text
@@ -389,7 +385,7 @@ as $$
 declare runner_id_ uuid;
 begin
     with salt (salt) as (
-        select gen_salt('sha512crypt')
+        select gen_salt('bf')
     )
     insert into runner (name, password, salt)
     select name_, crypt(password_, salt), salt
@@ -428,3 +424,35 @@ end;
 $$;
 
 grant execute on procedure end_run to anon;
+
+drop procedure if exists ping;
+create or replace procedure ping(run_id_ uuid, location_ geometry(point), inout status int default null, body inout text default null)
+language plpgsql
+security definer
+set search_path to gps, url, pg_catalog, public
+as $$
+declare geo text;
+begin
+    insert into ping (run_id, location) values (run_id_, location_)
+    on conflict (run_id, location, at) do nothing
+    returning 200, st_asgeojson(geojson_ping(location, run_id, at))
+    into status, body;
+exception when check_violation then
+    perform set_config('httpg.errors', jsonb_build_object('error', sqlerrm)::text, true);
+    case sqlerrm
+        when 'no partition of relation "ping" found for row' then
+            execute format(
+                $sql$
+                create table if not exists gps.%I partition of gps.ping
+                for values from (%L) to (%L)
+                $sql$,
+                'ping_' || to_char(now(), 'YYYY_MM'),
+                date_trunc('month', now()),
+                date_trunc('month', now()) + interval '1 month'
+            );
+            call ping(run_id_, location_, status, body);
+    end case;
+end;
+$$;
+
+grant execute on procedure ping to anon;
