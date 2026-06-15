@@ -123,7 +123,7 @@ class IsMap extends HTMLInputElement {
   }
 
   geojson(data) {
-    new GeoJSON(data, {
+    return new GeoJSON(data, {
       style(feature) {
           // let colors = ['green', 'yellow', 'red', 'blue', 'purple', 'black', 'orange', 'grey'];
           // let c = colors[Math.floor(Math.random() * colors.length)];

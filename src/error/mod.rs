@@ -112,9 +112,22 @@ pub enum HttpgError {
         source: serde_qs::Error,
         backtrace: snafu::Backtrace,
     },
+    #[snafu(transparent)]
+    CookieParseError {
+        source: cookie::ParseError,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
+    FromStrError {
+        source: http::header::ToStrError,
+        backtrace: snafu::Backtrace,
+    },
     WebPushPrivateKey,
-    InvalidTextParam,
-    MissingCol,
+    #[snafu(display("invalid param {i}: {param}"))]
+    InvalidParam {
+        i: usize,
+        param: String,
+    },
     #[snafu(display("column should be bytea or text, {type_} given"))]
     InvalidColType {
         type_: postgres_types::Type,

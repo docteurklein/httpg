@@ -1,6 +1,7 @@
 
 use std::collections::BTreeMap;
 
+use cookie::Cookie;
 use axum::{
     Json, extract::{FromRequest, Multipart, Request}, http::{
         StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER, ORIGIN}
@@ -121,6 +122,7 @@ pub struct QueryPart {
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
     pub sql: String,
+    pub cookies: BTreeMap<String, String>,
     #[serde(skip)]
     pub params: Vec<Param>,
     #[serde(skip)]
@@ -273,8 +275,13 @@ where
                 };
                 match t {
                     Type::Jsonb => Ok(Param::Jsonb(param.to_owned())),
-                    Type::Bytea => Ok(Param::Bytea(serde_json::to_vec(param).map_err(|_| HttpgError::InvalidTextParam.into_response())?)),
-                    _ => Ok(Param::Text(param.as_str().ok_or(HttpgError::InvalidTextParam.into_response())?.to_string())),
+                    Type::Bytea => Ok(Param::Bytea(
+                        serde_json::to_vec(param)
+                        .map_err(|_| HttpgError::InvalidParam { i, param: param.to_string() }.into_response())?
+                    )),
+                    _ => Ok(Param::Text(param.as_str().ok_or(
+                        HttpgError::InvalidParam { i, param: param.to_string() }.into_response()
+                    )?.to_string())),
                 }
             })
             .collect()
@@ -296,6 +303,13 @@ where
         Ok(Self {
             sql: sql.unwrap_or_default(),
             order,
+            cookies: BTreeMap::from_iter(
+                headers.get_all("cookie").iter().map(|c| {
+                    let c = Cookie::parse(c.to_str().unwrap()).unwrap();
+                    let (n, v) = c.name_value();
+                    (n.to_string(), v.to_string())
+                })//.map(|(n, v)| )
+            ),
             params,
             files,
             qs: raw_qs,

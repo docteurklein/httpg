@@ -79,7 +79,7 @@ impl Stream for CancelStream {
                                 res.header = h;
                             }
                         },
-                        _ => {
+                        _ => { // body
                             match col.type_() {
                                 &Type::BYTEA => {
                                     if let Ok(Some(b)) = row.try_get::<usize, Option<&[u8]>>(i) {
@@ -91,6 +91,8 @@ impl Stream for CancelStream {
                                         res.body = Some(bytes::Bytes::from(b.to_owned()));
                                     }
                                 },
+                                // &Type::REFCURSOR => {
+                                // },
                                 type_ => {
                                     self.errored = true;
                                     res.body = Some(Bytes::from(

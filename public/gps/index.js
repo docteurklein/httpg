@@ -1,8 +1,17 @@
+let lock = await navigator.wakeLock?.request('screen').catch(console.log);
+lock.onrelease = console.log;
+
+document.addEventListener("visibilitychange", async (e) => {
+  if (lock !== null && document.visibilityState === "visible") {
+    lock = await navigator.wakeLock?.request("screen");
+    lock.onrelease = console.log;
+  }
+});
 
 const qs = new URLSearchParams(window.location.search);
 
 window.map?.addEventListener('input', (event) => {
-  if (event.target.getAttribute('is') !== 'cpres-map') {
+  if (event.target.readOnly) {
     return;
   }
   fetch(event.target.getAttribute('href'), {

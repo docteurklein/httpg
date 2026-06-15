@@ -354,7 +354,7 @@
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
                     # log_statement = "all";
-                    "auto_explain.log_min_duration" = 0;
+                    # "auto_explain.log_min_duration" = 0;
                     "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;

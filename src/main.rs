@@ -36,9 +36,9 @@ use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig,
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
-    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    #[conf(long, env)] //, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     pem_file: String,
-    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    #[conf(long, env)] //, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     pem_key_file: String,
 }
 
@@ -111,10 +111,10 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
-        .route("/call", get(call_query))
-        .route("/call/{cursor}", get(call_query))
-        .route("/{path}/call", get(call_query))
-        .route("/{path}/call/{cursor}", get(call_query))
+        .route("/call", get(call_query).post(call_query))
+        .route("/call/{cursor}", get(call_query).post(call_query))
+        .route("/{path}/call", get(call_query).post(call_query))
+        .route("/{path}/call/{cursor}", get(call_query).post(call_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
         .route("/email", post(email))
@@ -182,6 +182,8 @@ async fn main() -> Result<(), HttpgError> {
     let tcp = TcpListener::bind(addr)?;
     tracing::debug!("listening on {}", tcp.local_addr()?);
 
+    tcp.set_nonblocking(true)?;
+
     match httpg_config.tls {
         Some(tls) =>  {
             let config = RustlsConfig::from_pem_file(
@@ -194,8 +196,6 @@ async fn main() -> Result<(), HttpgError> {
             .await?
         },
         None => {
-            tcp.set_nonblocking(true)?;
-
             axum_server::from_tcp(tcp)?
                 .serve(app.into_make_service())
             .await?
@@ -220,10 +220,6 @@ async fn call_query(
     ;
 
     let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
-    // let guard = QueryGuard {
-    //     cancel_token: client.cancel_token(),
-    //     finished: false,
-    // };
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
@@ -242,6 +238,7 @@ async fn call_query(
         },
         None => call,
     };
+    tx.commit().await?;
 
     Ok(response::HttpResult {
         query: query.to_owned(),

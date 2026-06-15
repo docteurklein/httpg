@@ -40,6 +40,7 @@ grant usage on schema gps to runner;
 
 create extension if not exists cube schema public;
 create extension if not exists earthdistance schema public;
+create extension if not exists pgcrypto schema public;
 
 create or replace function current_runner_id() returns uuid
 volatile strict parallel safe -- leakproof
@@ -47,22 +48,40 @@ language sql
 security invoker
 set search_path to cpres, pg_catalog
 begin atomic
-    select coalesce(nullif(current_setting('gps.runner_id', true), ''), '5456a81d-356a-48a1-b3ab-17857ee840cb')::uuid;
+    select nullif((nullif(current_setting('httpg.query', true), '')::jsonb->'cookies'->>'gps.current_runner_id'), '')::uuid;
 end;
 
 grant execute on function current_runner_id to person;
 
 create table runner (
     runner_id uuid primary key default gen_random_uuid(),
-    name text not null unique check (trim(name) <> '' and position('@' in name) = 0)
+    name text not null unique check (trim(name) <> '' and position('@' in name) = 0),
+    password text not null,
+    salt text not null
 );
+alter table runner enable row level security;
+create policy "owner" on runner for all to anon
+using (runner_id = current_runner_id());
+
+with salt (salt) as (
+    select gen_salt('sha512crypt')
+)
+insert into gps.runner
+select '5456a81d-356a-48a1-b3ab-17857ee840cb', 'flopi', crypt('flopi', salt), salt
+from salt;
 
 create table run (
     run_id uuid primary key default gen_random_uuid(),
     name text default to_char(now(), 'TMDay DD/MM/YY, HH24:MI'),
-    at timestamptz not null default now(),
-    runner_id uuid not null references runner (runner_id) default current_runner_id() 
+    starts_at timestamptz not null default now(),
+    ends_at timestamptz default null,
+    runner_id uuid not null references runner (runner_id) default current_runner_id(),
+    geom geometry(linestring, 4326) default null
 );
+
+alter table run enable row level security;
+create policy "owner" on run for all to anon
+using (runner_id = current_runner_id());
 
 create table ping (
     location geometry(point, 4326) not null,
