@@ -132,29 +132,35 @@ grant select on table gebco_geo to anon;
 create or replace view stat (html, run_id)
 with (security_invoker)
 as
-with point (run_id, location, altitude, size, at) as (
-    select run_id, location, st_value(rast, location), st_value(rast, location) / max(st_value(rast, location)) over ()::decimal, at
-    from ping
-    left join gebco_geo on st_contains(geom, location)
-)
 select xmlelement(name div,
     xmlelement(name h1, name),
-    xmlelement(name p, round((st_length(coalesce(geom, st_makeline(location order by ping.at))::geography) / 1000)::numeric, 2) || ' km'),
+    xmlelement(name p, round((st_length(coalesce(geom, st_makeline(location order by at))::geography) / 1000)::numeric, 2) || ' km'),
     xmlelement(name p, 'started at: ', to_char(starts_at, 'HH24:MI:SS')),
     case when ends_at is not null then xmlelement(name p, 'ended at: ', to_char(ends_at, 'HH24:MI:SS')) end,
     xmlelement(name div, xmlattributes('elevation-chart' as id),
         xmlelement(name table, xmlattributes('charts-css column' as class), (
+            with point (geom) as (
+                select geom from ST_DumpPoints(run.geom)
+                union all
+                (select location
+                from ping
+                where ping.run_id = run.run_id
+                order by at)
+            ),
+            elevation (altitude, size) as (
+                select st_value(rast, p.geom), coalesce(st_value(rast, p.geom) / max(st_value(rast, p.geom)) over ()::decimal, 0)
+                from point p
+                left join gebco_geo on st_contains(gebco_geo.geom, p.geom)
+            )
             select xmlagg(
                 xmlelement(name tr,
                     xmlelement(name td, xmlattributes(
-                        format('--size: %s', coalesce(size, 0)) as style,
+                        format('--size: %s', size) as style,
                          altitude ||'m' as title
                     ), '')
                 )
-                order by at
             )
-            from point
-            where point.run_id = run.run_id
+            from elevation
         ))
     )
 ), run_id
