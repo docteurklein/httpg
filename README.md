@@ -42,4 +42,7 @@ visit http://0:3000
 ```
 osmium export -i  sparse_mmap_array -c gis/osmium.json -f pg auvergne-260306.osm.pbf -v --progress \
   | psql -h $PGHOST -U postgres httpg -1 -c "truncate cpres.osm_auvergne; copy cpres.osm_auvergne from stdin freeze;"
+
+raster2pgsql -s 4326 -F -e -Y -t auto gebco/*.asc gebco
+  | psql httpg -U postgres
 ```

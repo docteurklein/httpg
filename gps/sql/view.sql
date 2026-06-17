@@ -352,9 +352,7 @@ form (html) as (
             'hidden' as type,
             'sql' as name,
             $sql$
-                insert into gps.run (run_id, name) values($1::uuid, nullif($2, ''))
-                on conflict (run_id) do update
-                set name = excluded.name
+                insert into gps.run (name) values (nullif($1, ''))
                 returning hstore('Location', url('/gps/query', jsonb_build_object(
                     'sql', 'table gps.head union all table gps.map',
                     'run_id', run_id
@@ -367,18 +365,9 @@ form (html) as (
             'table gps.list' as value
         )),
         xmlelement(name input, xmlattributes(
-            'hidden' as type,
-            'params[0]' as name,
-            coalesce(q.run_id, uuidv7()::text) as value
-        )),
-        xmlelement(name input, xmlattributes(
             'text' as type,
-            'params[1]' as name,
-            (
-                select coalesce(run.name, new.name)
-                from (select to_char(now(), 'TMDay DD/MM/YY, HH24:MI') name) new
-                left join run on run_id = q.run_id::uuid
-            ) as value
+            'params[0]' as name,
+            to_char(now(), 'TMDay DD/MM/YY, HH24:MI') as value
         )),
         xmlelement(name input, xmlattributes(
             'submit' as type,
