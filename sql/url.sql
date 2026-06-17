@@ -1,24 +1,26 @@
 \set ON_ERROR_STOP on
 
-create extension if not exists plv8 schema pg_catalog;
-
 create schema if not exists url;
 
-create or replace function url.encode (str text)
+create or replace function url.encode(value text)
 returns text
-immutable strict parallel safe -- leakproof
-language plv8
-as $$
-return encodeURIComponent(String(str))
-$$;
-
-create or replace function url.decode (str text)
-returns text
-immutable strict parallel safe -- leakproof
-language plv8
-as $$
-return decodeURIComponent(String(str))
-$$;
+language sql
+immutable strict
+begin atomic
+  select
+    string_agg(
+      case
+        when ol>1 or ch !~ '[0-9a-za-z:/@._?#-]+' 
+          then regexp_replace(upper(substring(ch::bytea::text, 3)), '(..)', E'%\\1', 'g')
+        else ch
+      end,
+      ''
+    )
+  from (
+    select ch, octet_length(ch) as ol
+    from regexp_split_to_table(value, '') as ch
+  ) as s;
+end;
 
 create or replace function url.url(path text, params jsonb = '{}')
 returns text

@@ -69,31 +69,14 @@ end;
 -- drop role if exists person;
 
 
-\if :{?password}
-select format('create user httpg with password %L noinherit', :'password')
-\gexec
-\endif
 
-do $$ begin
-    create role person noinherit;
-    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
-end $$;
-
-grant person to httpg;
-
-grant usage on schema cpres, url, pg_catalog to httpg;
+grant usage on schema cpres, url, pg_catalog to anon;
 grant usage on schema cpres, url, pg_catalog to person;
-alter role httpg set search_path to cpres, url, pg_catalog, public;
+-- alter role httpg set search_path to cpres, url, pg_catalog, public;
 alter role person set search_path to cpres, url, pg_catalog, public;
-
-alter role httpg set statement_timeout to "500ms"; -- only at login time, so we set on http user, not person role
-alter role httpg set transaction_timeout to "500ms";
-alter role httpg set lock_timeout to "500ms";
-alter role httpg set idle_in_transaction_session_timeout to "500ms";
 
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;
-revoke usage on language plv8 from public, httpg, person;
 
 grant usage, create on schema cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
@@ -141,13 +124,17 @@ create table translation (
 create index on translation (id, lang);
 
 create table person (
-    person_id uuid primary key default gen_random_uuid(),
+    person_id uuid primary key default uuidv7(),
     name text not null unique check (trim(name) <> '' and position('@' in name) = 0),
     email text not null unique check (trim(email) <> '' and position('@' in email) <> 0),
     phone text default null unique check (trim(phone) <> ''),
     login_challenge uuid default null,
     challenge_used_at timestamptz default null
 );
+
+
+
+grant select (person_id, name, phone) on table person to anon;
 
 grant select (person_id, name, phone),
     insert (name, email, phone),
@@ -169,6 +156,7 @@ create table person_detail (
     push_endpoint jsonb default null
 );
 
+grant select (person_id, location, push_endpoint) on table person_detail to anon;
 grant select (person_id, location, push_endpoint),
     insert (location, push_endpoint),
     update (location, push_endpoint),
@@ -180,7 +168,7 @@ create policy "owner" on person_detail for all to person using (
 );
 
 create table good (
-    good_id uuid primary key default gen_random_uuid(),
+    good_id uuid primary key default uuidv7(),
     title text not null check (trim(title) <> ''),
     description text not null,
     passage text not null generated always as (title || ': ' || description)
@@ -211,6 +199,8 @@ before update on good
 for each row
 execute procedure moddatetime (updated_at);
 
+grant select on table good to anon;
+
 grant select, --(good_id, title, description, tags, location, giver, created_at, updated_at, given_at),
     insert(good_id, title, description, tags, location, receiver, given_at),
     update(good_id, title, description, tags, location, receiver, given_at),
@@ -232,6 +222,8 @@ create table good_media (
     name text not null,
     primary key (good_id, content_hash)
 );
+
+grant select on table good_media to anon;
 
 grant select, insert, delete, update on table good_media to person;
 
@@ -266,6 +258,7 @@ create table interest (
     primary key (good_id, person_id)
 );
 
+grant select on table interest to anon;
 grant select, insert, delete, update on table interest to person;
 
 alter table interest enable row level security;
@@ -275,7 +268,7 @@ create policy "owner" on interest for all to person using (
 );
 
 create table message (
-    message_id uuid primary key default gen_random_uuid(),
+    message_id uuid primary key default uuidv7(),
     good_id uuid not null
         references good (good_id)
             on delete cascade,
@@ -317,6 +310,7 @@ create table search (
     primary key (person_id, query)
 );
 
+grant select on table search to anon;
 grant select, insert, delete, update on table search to person;
 
 alter table search enable row level security;

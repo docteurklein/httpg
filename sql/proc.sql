@@ -241,7 +241,7 @@ web_push(
     ),
     content,
     url('/cpres/query', jsonb_build_object(
-        'sql', format('table head union all table %I', case m.author
+        'sql', format('table cpres.head union all table cpres.%I', case m.author
             when m.person_id then 'giving activity' -- author is the one interested, so we show message to giver
             else 'receiving activity' end
         )
@@ -272,7 +272,7 @@ web_push(
     ),
     null,
     url('/cpres/query', jsonb_build_object(
-        'sql', 'table head union all table "receiving activity"'
+        'sql', 'table cpres.head union all table cpres."receiving activity"'
     )) || '#' || good.title
 ) p
 where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);
@@ -300,7 +300,7 @@ web_push(
     ),
     null,
     url('/cpres/query', jsonb_build_object(
-        'sql', 'table head union all table "giving activity"'
+        'sql', 'table cpres.head union all table cpres."giving activity"'
     )) || format('#%s-%s', good.good_id, receiver.person_id)
 ) p
 where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);

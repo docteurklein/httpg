@@ -82,16 +82,25 @@ class IsMap extends HTMLInputElement {
       });
     }
 
-    new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    }).addTo(this.map);
-
     new TileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
       maxZoom: 19,
       attribution: 'ArcGis',
-      opacity: .4,
+      opacity: .7,
     }).addTo(this.map);
+
+    new TileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      opacity: .7,
+      attribution: '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }).addTo(this.map);
+
+    L.tileLayer.wms('https://tiles.craig.fr/mnt/service?', {
+      layers: 'ombrage',
+      maxZoom: 19,
+      opacity: .5,
+      attribution: '&copy; <a href="https://ids.craig.fr/datahub/dataset/59d58d7a-d898-4efb-a6e9-8e07b9177ad2">INSTITUT NATIONAL DE L\'INFORMATION GEOGRAPHIQUE ET FORESTIERE (IGN)</a>',
+    }).addTo(this.map);
+
 
     this.type = 'hidden'; // progressive enhancement
 

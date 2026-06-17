@@ -120,7 +120,7 @@ select xmlelement(name div
                     format($$/query?sql=select html from head union all (select html('%1$s', to_jsonb(r), current_setting('httpg.query')::jsonb) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href
                 ), value->>'fkey')
                 -- , xmlelement(name a, xmlattributes(
-                --     format($$/query?sql=table head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href,
+                --     format($$/query?sql=table cpres.head union all (select html('%1$s', to_jsonb(r), $2) from %1$s r where %s limit 100)&%s$$, value->>'target', value->>'crit', value->>'qs') as href,
                 --     format('%s-%s', value ->>'fkey', value->>'qs') as target
                 -- ), 'in iframe')
                 -- , xmlelement(name iframe, xmlattributes(

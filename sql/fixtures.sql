@@ -10,7 +10,7 @@ insert into person (person_id, name, email, login_challenge) values
     ('3f1ba7e6-fd55-4de3-92f7-555d4e1aeffc', 'p3', 'p3@example.org', gen_random_uuid());
 
 insert into person (person_id, name, email, login_challenge)
-select gen_random_uuid(), 'p'||i, format('p%s@example.org', i), gen_random_uuid()
+select uuidv7(), 'p'||i, format('p%s@example.org', i), gen_random_uuid()
 from generate_series(4, 100) i;
 
 -- insert into person_detail (person_id, location) values

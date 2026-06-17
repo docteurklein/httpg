@@ -204,8 +204,8 @@
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
           HTTPG_ANON_ROLE = "anon";
-          HTTPG_INDEX_SQL = "table head union all table findings";
-          HTTPG_LOGIN_QUERY = "select login($1)";
+          HTTPG_INDEX_SQL = "table cpres.head union all table cpres.findings";
+          HTTPG_LOGIN_QUERY = "select cpres.login($1)";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
@@ -278,7 +278,7 @@
                       "HTTPG_WEBPUSH_PRIVATE_KEY_FILE=${builtins.getEnv "PWD"}/webpush.pem"
                       # "HTTPG_SMTP_PASSWORD_FILE='${builtins.getEnv "PWD"}/smtp-password'"
                       "HTTPG_ANON_ROLE=anon"
-                      "HTTPG_INDEX_SQL='table head union all table findings'"
+                      "HTTPG_INDEX_SQL='table cpres.head union all table cpres.findings'"
                       "HTTPG_LOGIN_QUERY='select login($1)'"
                       "HTTPG_SMTP_SENDER=florian.klein@free.fr"
                       "HTTPG_SMTP_USER=florian.klein@free.fr"

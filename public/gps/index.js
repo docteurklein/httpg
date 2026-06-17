@@ -1,12 +1,14 @@
-let lock = await navigator.wakeLock?.request('screen').catch(console.log);
-lock.onrelease = console.log;
+if (window.map?.getAttribute('geolocate') === 'watch') {
+  let lock = await navigator.wakeLock?.request('screen').catch(console.log);
+  lock.onrelease = console.log;
 
-document.addEventListener("visibilitychange", async (e) => {
-  if (lock !== null && document.visibilityState === "visible") {
-    lock = await navigator.wakeLock?.request("screen");
-    lock.onrelease = console.log;
-  }
-});
+  document.addEventListener("visibilitychange", async (e) => {
+    if (lock !== null && document.visibilityState === "visible") {
+      lock = await navigator.wakeLock?.request("screen");
+      lock.onrelease = console.log;
+    }
+  });
+}
 
 const qs = new URLSearchParams(window.location.search);
 

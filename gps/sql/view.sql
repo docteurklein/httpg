@@ -2,6 +2,8 @@
 
 set  search_path to gps, url, pg_catalog, public;
 
+alter role anon set search_path to gps, url, pg_catalog, public;
+alter role httpg set search_path to gps, url, pg_catalog, public;
 
 create or replace view heatmap (hex, weight)
 as select h3_cell_to_boundary_geometry(d.geom @ 10), count(*)
@@ -54,6 +56,7 @@ select $html$<!DOCTYPE html>
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/charts.css/dist/charts.min.css" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
     <script type="module" src="/gps/index.js?v=1"></script>
@@ -72,6 +75,35 @@ select $html$<!DOCTYPE html>
     max-height: 90vh;
 }
 
+#elevation-chart {
+    & tbody {
+        max-height: 20vh;
+    }
+    max-width: 100vw;
+    margin-bottom: 1vh;
+}
+
+@media (pointer: coarse), (hover: none) {
+  [title] {
+    position: relative;
+    display: inline-flex;
+    justify-content: center;
+  }
+  [title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    z-index: 10;
+    top: 50%;
+    left: 0;
+    color: #000;
+    background-color: #fff;
+    border: 1px solid;
+    width: max-content;
+    padding: 3px;
+    font-size: 10px;
+  }
+}
+
 </style>
 $html$
 union all
@@ -88,14 +120,43 @@ where current_runner_id() is null;
 
 grant select on table head to anon;
 
+
+drop materialized view if exists gebco_geo cascade;
+create materialized view if not exists gebco_geo (geom, rast) as
+select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
+from gebco
+group by rast;
+
+grant select on table gebco_geo to anon;
+
 create or replace view stat (html, run_id)
 with (security_invoker)
 as
+with point (run_id, location, altitude, size, at) as (
+    select run_id, location, st_value(rast, location), st_value(rast, location) / max(st_value(rast, location)) over ()::decimal, at
+    from ping
+    left join gebco_geo on st_contains(geom, location)
+)
 select xmlelement(name div,
     xmlelement(name h1, name),
     xmlelement(name p, round((st_length(coalesce(geom, st_makeline(location order by ping.at))::geography) / 1000)::numeric, 2) || ' km'),
     xmlelement(name p, 'started at: ', to_char(starts_at, 'HH24:MI:SS')),
-    case when ends_at is not null then xmlelement(name p, 'ended at: ', to_char(ends_at, 'HH24:MI:SS')) end
+    case when ends_at is not null then xmlelement(name p, 'ended at: ', to_char(ends_at, 'HH24:MI:SS')) end,
+    xmlelement(name div, xmlattributes('elevation-chart' as id),
+        xmlelement(name table, xmlattributes('charts-css column' as class), (
+            select xmlagg(
+                xmlelement(name tr,
+                    xmlelement(name td, xmlattributes(
+                        format('--size: %s', coalesce(size, 0)) as style,
+                         altitude ||'m' as title
+                    ), '')
+                )
+                order by at
+            )
+            from point
+            where point.run_id = run.run_id
+        ))
+    )
 ), run_id
 from run
 left join ping using (run_id)
@@ -235,7 +296,7 @@ select xmlelement(name input, xmlattributes(
     nullif(q.run_id is null, false) or run.ends_at is not null as readonly,
     'map' as id,
     'cpres-map' as is,
-    case when q.run_id is null then null else 'watch' end as geolocate,
+    case when q.run_id is null or ends_at is not null then null else 'watch' end as geolocate,
     url('/gps/call', jsonb_build_object(
         'sql', 'call gps.ping($1::uuid, $2::point::geometry)'
     )) as href,
@@ -244,6 +305,22 @@ select xmlelement(name input, xmlattributes(
         from (
             select st_asgeojson(geo)::jsonb
             from geo
+            -- union all
+            -- select st_asgeojson(t.*)::jsonb
+            -- from (select geog geom, jsonb_build_object('content', z_min || '-' || z_max) popup from ta_rgealti_ppk_5m_wgs84g) t
+            -- union all
+            -- select st_asgeojson(t.*)::jsonb
+            -- from (
+            --     select
+            --     geom
+            --     -- jsonb_build_object(
+            --     --     'color', palette[width_bucket(p.val + 1, 0, max(p.val) over (), 0xff)],
+            --     --     'stroke', true
+            --     -- ) style,
+            --     -- jsonb_build_object('content', xmlelement(name p, p.val)) popup
+            --     from gebco_geo
+            --     limit 10000
+            -- ) t
         ) _ (feature)
     ) as "data-geojson"
 ))::text
@@ -286,7 +363,7 @@ form (html) as (
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'params[0]' as name,
-            coalesce(q.run_id, gen_random_uuid()::text) as value
+            coalesce(q.run_id, uuidv7()::text) as value
         )),
         xmlelement(name input, xmlattributes(
             'text' as type,
@@ -433,7 +510,8 @@ set search_path to gps, url, pg_catalog, public
 as $$
 declare geo text;
 begin
-    insert into ping (run_id, location) values (run_id_, location_)
+    insert into ping (run_id, location)
+    values (run_id_, location_)
     on conflict (run_id, location, at) do nothing
     returning 200, st_asgeojson(geojson_ping(location, run_id, at))
     into status, body;

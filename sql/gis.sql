@@ -11,7 +11,7 @@ create materialized view if not exists auvergne_boundary (geom, id) as
     and tags->>'admin_level' in ('6') -- https://wiki.openstreetmap.org/wiki/Tag:boundary%3Dadministrative#admin_level=*_Country_specific_values
 ;
 
-grant select on table auvergne_boundary to person;
+grant select on table auvergne_boundary to person, anon;
 
 -- drop materialized view if exists auvergne_highway cascade;
 create materialized view if not exists auvergne_highway (osm_id, geog, speed) as
@@ -75,7 +75,7 @@ create unique index if not exists auvergne_highway_pkey on auvergne_highway (osm
 -- create index if not exists auvergne_highway_geom on auvergne_highway using gist ((geog::geometry));
 create index if not exists auvergne_highway_geog on auvergne_highway using gist (geog);
 
-grant select on table auvergne_highway to person;
+grant select on table auvergne_highway to person, anon;
 
 -- vacuum analyze auvergne_highway;
 
@@ -136,7 +136,7 @@ select row_number() over (order by geom), geom
 from node
 group by geom;
 
-grant select on table auvergne_network_node to person;
+grant select on table auvergne_network_node to person, anon;
 
 create unique index if not exists auvergne_network_node_pkey on auvergne_network_node (id);
 create index if not exists auvergne_network_node_geom on auvergne_network_node using gist (geom);
@@ -155,7 +155,7 @@ join auvergne_network_node source on edge.startpoint = source.geom
 join auvergne_network_node target on edge.endpoint = target.geom
 ;
 
-grant select on table auvergne_network to person;
+grant select on table auvergne_network to person, anon;
 
 create index if not exists auvergne_network_geog on auvergne_network using gist (geog);
 create index if not exists auvergne_network_source on auvergne_network (source);
