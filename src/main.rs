@@ -111,12 +111,9 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
-        .route("/call", get(call_query).post(call_query))
-        .route("/call/{cursor}", get(call_query).post(call_query))
-        .route("/{path}/call", get(call_query).post(call_query))
-        .route("/{path}/call/{cursor}", get(call_query).post(call_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
+        .route("/{path}/query/{cursor}", post(post_query))
         .route("/email", post(email))
         .route("/{path}/email", post(email))
         .route("/http", get(http).post(http))
@@ -202,48 +199,6 @@ async fn main() -> Result<(), HttpgError> {
         },
     };
     Ok(())
-}
-
-#[debug_handler]
-async fn call_query(
-    State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
-    biscuit: Option<extract::biscuit::Biscuit>,
-    paths: Option<Path<HashMap<String, String>>>,
-    query: extract::query::Query,
-) -> Result<impl IntoResponse, HttpgError> {
-
-    let mut client = write_pool.get().await?;
-
-    let mut tx = client.build_transaction()
-        .isolation_level(IsolationLevel::Serializable)
-        .start().await?
-    ;
-
-    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
-
-    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
-    }).collect();
-
-    let call = tx.query_typed(query.sql.as_ref(), sql_params.as_slice()).await?;
-
-    let rows = match paths {
-        Some(paths) => match paths.get("cursor") {
-            Some(cursor) => {
-                let rows = tx.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
-                tx.execute(&format!("close {cursor}"), &[]).await?;
-                rows
-            },
-            None => call,
-        },
-        None => call,
-    };
-    tx.commit().await?;
-
-    Ok(response::HttpResult {
-        query: query.to_owned(),
-        rows: CancelStream::from_vec(rows, guard),
-    })
 }
 
 #[debug_handler]
@@ -572,6 +527,7 @@ async fn stream_query(
 async fn post_query(
     State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
+    paths: Option<Path<HashMap<String, String>>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError>
 {
@@ -588,6 +544,17 @@ async fn post_query(
 
     let rows = match result {
         Ok(rows) => {
+            let rows = match paths {
+                Some(paths) => match paths.get("cursor") {
+                    Some(cursor) => {
+                        let rows = tx.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
+                        tx.execute(&format!("close {cursor}"), &[]).await?;
+                        rows
+                    },
+                    None => rows,
+                },
+                None => rows,
+            };
             tx.commit().await?;
 
             if let Some(redirect) = query.redirect {

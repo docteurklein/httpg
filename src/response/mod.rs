@@ -83,12 +83,12 @@ impl Stream for CancelStream {
                             match col.type_() {
                                 &Type::BYTEA => {
                                     if let Ok(Some(b)) = row.try_get::<usize, Option<&[u8]>>(i) {
-                                        res.body = Some(bytes::Bytes::from([b, b"\n"].concat()));
+                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
                                     }
                                 }
                                 &Type::TEXT => {
                                     if let Ok(Some(b)) = row.try_get::<usize, Option<&str>>(i) {
-                                        res.body = Some(bytes::Bytes::from([b, "\n"].concat()));
+                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
                                     }
                                 },
                                 // &Type::REFCURSOR => {
@@ -96,7 +96,7 @@ impl Stream for CancelStream {
                                 type_ => {
                                     self.errored = true;
                                     res.body = Some(Bytes::from(
-                                        [HttpgError::InvalidColType {type_: type_.clone()}.to_string(), "\n".to_string()].concat()
+                                        HttpgError::InvalidColType {type_: type_.clone()}.to_string()
                                     ));
                                 }
                             };

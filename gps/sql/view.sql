@@ -19,7 +19,7 @@ with (security_invoker)
 as
 select xmlelement(name form, xmlattributes(
         'POST' as method,
-        '/gps/call/res' as action
+        '/gps/query/res' as action
     ),
     xmlelement(name input, xmlattributes(
         'hidden' as type,
@@ -272,7 +272,7 @@ select xmlconcat(
     case when ends_at is null then
         xmlelement(name form, xmlattributes(
                 'POST' as method,
-                '/gps/call/res' as action
+                '/gps/query/res' as action
             ),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -303,7 +303,7 @@ select xmlelement(name input, xmlattributes(
     'map' as id,
     'cpres-map' as is,
     case when q.run_id is null or ends_at is not null then null else 'watch' end as geolocate,
-    url('/gps/call', jsonb_build_object(
+    url('/gps/query', jsonb_build_object(
         'sql', 'call gps.ping($1::uuid, $2::point::geometry)'
     )) as href,
     (

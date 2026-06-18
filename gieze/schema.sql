@@ -201,12 +201,12 @@ select $html$<!DOCTYPE html>
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
     <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
     <script type="module" src="/gps/index.js?v=1"></script>
+    <style>
+    iframe {
+      width: 90vw;
+    }
+    </style>
 </head>
-<style>
-iframe {
-  width: 90vw;
-}
-</style>
 $html$
 union all
 select xmlelement(name article, xmlattributes('card error' as class), error)::text
@@ -407,6 +407,16 @@ select xmlelement(name div, xmlattributes('grid' as class),
     xmlelement(name h3, format('%s #%s', client, month)),
     xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as action),
       xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'sql' as name,
+        $$call gieze.invoice($1, $2::date)$$ as value
+      )),
+      xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'on_error' as name,
+        'table gieze.head union all table gieze.invoice_admin' as value
+      )),
+      xmlelement(name input, xmlattributes(
           'hidden' as type,
           'params[0]' as name,
           client as value
@@ -418,18 +428,8 @@ select xmlelement(name div, xmlattributes('grid' as class),
       )),
       xmlelement(name input, xmlattributes(
         'hidden' as type,
-        'on_error' as name,
-        'table gieze.head union all table gieze.invoice_admin' as value
-      )),
-      xmlelement(name input, xmlattributes(
-        'hidden' as type,
         'redirect' as name,
         'referer' as value
-      )),
-      xmlelement(name input, xmlattributes(
-        'hidden' as type,
-        'sql' as name,
-        $$call gieze.invoice($1, $2::date)$$ as value
       )),
       xmlelement(name input, xmlattributes(
           'submit' as type,
@@ -463,7 +463,7 @@ with httpg (error) as (
 )
 select xmlelement(name h1, 'Clients')::text
 union all
-select xmlelement(name div, xmlattributes('grid' as class),
+select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class),
   coalesce(xmlagg(xmlelement(name article, xmlattributes('card' as class),
     xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as action),
       xmlelement(name input, xmlattributes(
@@ -517,7 +517,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
           button as value
       ))
     ))
-), ''))::text
+), '')) as text indent)
 from (
   values (null, null, null, null, 'Add')
   union all
