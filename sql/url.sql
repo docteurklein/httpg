@@ -2,6 +2,7 @@
 
 create schema if not exists url;
 
+drop function if exists url.encode cascade;
 create or replace function url.encode(value text)
 returns text
 language sql
@@ -22,6 +23,7 @@ begin atomic
   ) as s;
 end;
 
+drop function if exists url.url cascade;
 create or replace function url.url(path text, params jsonb = '{}')
 returns text
 language sql
