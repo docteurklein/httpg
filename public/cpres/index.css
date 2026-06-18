@@ -165,7 +165,7 @@ input[is="cpres-map"] {
     }
 }
 
-article.card {
+.card {
     box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
     border-radius: 0.5rem;
     padding: 1rem;
