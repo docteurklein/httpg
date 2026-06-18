@@ -110,18 +110,17 @@ select
 from bl_line
 join bl using (bl)
 join product using (product)
-where shipped_at is not null;
+where shipped_at is not null
+and not bl.invoiced;
 
 grant select on future_invoice_line to gieze_admin;
 
-create view future_invoice(client, month, total_ht, total_tva, total_ttc) as
-select client, date_trunc('month', bl.shipped_at)::date, sum(total_price_ht), sum(total_tva), sum(total_price_ttc)
+create or replace view future_invoice(client, month, total_ht, total_tva, total_ttc) as
+select client.client, date_trunc('month', bl.shipped_at)::date, sum(total_price_ht), sum(total_tva), sum(total_price_ttc)
 from client
-join bl using (client)
 join future_invoice_line using (client)
-where bl.shipped_at is not null
-and not bl.invoiced
-and future_invoice_line.month = date_trunc('month', bl.shipped_at)::date
+join bl using (bl)
+where future_invoice_line.month = date_trunc('month', bl.shipped_at)::date
 group by 1, 2
 order by 2 asc, 1 asc;
 
@@ -197,12 +196,7 @@ select $html$<!DOCTYPE html>
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
-    <style>
-    iframe {
-      width: 100%;
-      height: 50vh;
-    }
-    </style>
+    <link rel="stylesheet" href="/gieze/index.css?v=1" />
 </head>
 $html$
 union all
@@ -400,13 +394,54 @@ with httpg (error) as (
 select xmlelement(name h1, 'A facturer')::text
 union all
 select xmlelement(name div, xmlattributes('grid' as class),
-  coalesce(xmlagg(xmlelement(name article, xmlattributes('card' as class),
+  coalesce(xmlagg(xmlelement(name article, xmlattributes('card future-invoice' as class),
     xmlelement(name h3, format('%s #%s', client, month)),
-    xmlelement(name iframe, xmlattributes(url('/gieze/query', jsonb_build_object(
-      'sql', $$select html from gieze.invoice_detail where invoice in ('head', $1)$$,
-      'params[0]', format('%s-%s', client, month),
-      'future', true
-    )) as src), ''),
+    xmlelement(name table,
+      xmlelement(name thead,
+        xmlelement(name tr,
+          xmlelement(name th, 'Libellé'),
+          xmlelement(name th, 'Qté'),
+          xmlelement(name th, 'PU HT'),
+          xmlelement(name th, 'Prix HT'),
+          xmlelement(name th, '% TVA'),
+          xmlelement(name th, 'TVA'),
+          xmlelement(name th, 'TTC')
+        )
+      ),
+      xmlelement(name tbody, (
+        with grouped (bl, shipped_at, lines) as (
+          select bl, shipped_at, xmlagg(
+            xmlelement(name tr,
+              xmlelement(name td, product),
+              xmlelement(name td, quantity),
+              xmlelement(name td, unit_price_ht),
+              xmlelement(name td, total_price_ht),
+              xmlelement(name td, round(tva_rate * 100, 2)),
+              xmlelement(name td, round(total_tva, 2)),
+              xmlelement(name td, round(total_price_ttc, 2))
+            )
+          )
+          from future_invoice_line l
+          where l.client = future_invoice.client
+          and l.month = future_invoice.month
+          group by 1, 2
+        )
+        select xmlagg(xmlelement(name tr,
+          xmlelement(name th, format('BL #%s du %s', bl, shipped_at::date)),
+          lines
+        ))
+        from grouped
+      )),
+      xmlelement(name tfoot,
+        xmlelement(name tr,
+          xmlelement(name th, xmlattributes(3 as colspan), 'Total €'),
+          xmlelement(name td, total_ht),
+          xmlelement(name td, ''),
+          xmlelement(name td, round(total_tva, 2)),
+          xmlelement(name td, xmlelement(name b, round(total_ttc, 2)))
+        )
+      )
+    ),
     xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as action),
       xmlelement(name input, xmlattributes(
         'hidden' as type,
@@ -437,8 +472,9 @@ select xmlelement(name div, xmlattributes('grid' as class),
           'submit' as type,
           'Facturer' as value
       ))
-    ))
-), ''))::text
+    )
+  )), '')
+)::text
 from future_invoice
 union all
 select xmlelement(name h1, 'Factures passées')::text
@@ -602,10 +638,9 @@ grant select on table product_admin to gieze_admin;
 create or replace view invoice_detail (html, invoice)
 with (security_invoker)
 as
-with httpg (error, future) as (
+with httpg (error) as (
   select
-    nullif(current_setting('httpg.errors', true), '')::jsonb->>'error',
-    nullif(current_setting('httpg.query', true), '')::jsonb->'qs' ? 'future'
+    nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
 )
 select $html$<!DOCTYPE html>
 <html>
@@ -615,22 +650,7 @@ select $html$<!DOCTYPE html>
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
-    <style>
-      td {
-      	font-variant-numeric: tabular-nums;
-      	font-feature-settings: 'tnum';
-        text-align: right;
-      }
-      td, th {
-        padding: .5em .8em;
-        text-align: right;
-        white-space: nowrap;
-        font-size: 95%;
-      }
-      header.grid, footer .grid {
-        --min: 20ch;
-      }
-    </style>
+    <link rel="stylesheet" href="/gieze/index.css?v=1" />
 </head>
 $html$, 'head'
 union all
@@ -675,15 +695,8 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
             xmlelement(name td, total_price_ttc)
           )
         )
-        from (
-          select * from invoice_line l
-          where l.invoice = invoice.invoice
-          union all
-          select r.* from future_invoice_line l, jsonb_populate_record(null::invoice_line, row_to_json(l)::jsonb) r
-          where l.client = invoice.client
-          and l.month = invoice.month
-          and future
-        ) l
+        from invoice_line l
+        where l.invoice = invoice.invoice
         group by 1, 2
       )
       select xmlagg(xmlelement(name tr,
@@ -697,8 +710,8 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
         xmlelement(name th, xmlattributes(3 as colspan), 'Total €'),
         xmlelement(name td, total_ht),
         xmlelement(name td, ''),
-        xmlelement(name td, total_tva),
-        xmlelement(name td, xmlelement(name b, total_ttc))
+        xmlelement(name td, round(total_tva, 2)),
+        xmlelement(name td, xmlelement(name b, round(total_ttc, 2)))
       )
     )
   ),
@@ -710,17 +723,7 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
     )
   )
 )::text, invoice
-from (
-  select * from invoice l
-  union all
-  select r.*
-  from httpg, future_invoice l,
-    jsonb_populate_record(null::invoice, row_to_json(l)::jsonb || jsonb_build_object(
-      'invoice', format('%s-%s', l.client, month)
-    )) r
-  where future
-) invoice,
-httpg
+from invoice
 ;
 
 grant select on table invoice_detail to gieze_admin;
