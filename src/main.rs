@@ -139,41 +139,41 @@ async fn main() -> Result<(), HttpgError> {
         )
     ;
 
-    tokio::spawn(async move {
-        let (client, mut conn) = cfg.connect().await?;
+    // tokio::spawn(async move {
+    //     let (client, mut conn) = cfg.connect().await?;
 
-        let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+    //     let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
 
-        let state = axum::extract::State(state);
+    //     let state = axum::extract::State(state);
 
-        client.simple_query("listen web_push").await?;
-        // client.simple_query("listen job").await?;
+    //     client.simple_query("listen web_push").await?;
+    //     // client.simple_query("listen job").await?;
 
-        while let Some(Ok(m)) = stream.next().await {
-            match m {
-                tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
-                tokio_postgres::AsyncMessage::Notification(n) => {
-                    match n.channel() {
-                        "web_push" => {
-                            let res = web_push(
-                                    state.to_owned(),
-                                    None,
-                                    Query::default()
-                                )
-                                .await?
-                                .into_response()
-                            ;
-                            dbg!(&res);
-                        }
-                        _ => todo!("{n:#?}")
-                    }
-                },
-                _ => todo!(),
-            }
-        }
+    //     while let Some(Ok(m)) = stream.next().await {
+    //         match m {
+    //             tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
+    //             tokio_postgres::AsyncMessage::Notification(n) => {
+    //                 match n.channel() {
+    //                     "web_push" => {
+    //                         let res = web_push(
+    //                                 state.to_owned(),
+    //                                 None,
+    //                                 Query::default()
+    //                             )
+    //                             .await?
+    //                             .into_response()
+    //                         ;
+    //                         dbg!(&res);
+    //                     }
+    //                     _ => todo!("{n:#?}")
+    //                 }
+    //             },
+    //             _ => todo!(),
+    //         }
+    //     }
 
-        Ok::<(), HttpgError>(())
-    });
+    //     Ok::<(), HttpgError>(())
+    // });
 
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
