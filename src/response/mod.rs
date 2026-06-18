@@ -134,7 +134,7 @@ impl IntoResponse for HttpResult {
             headers.insert(CACHE_CONTROL, cache_control);
         }
 
-        headers.insert("X-Accel-Buffering".parse::<HeaderName>().unwrap(), "no".parse::<HeaderValue>().unwrap());
+        // headers.insert("X-Accel-Buffering".parse::<HeaderName>().unwrap(), "no".parse::<HeaderValue>().unwrap());
 
         let mut iter = futures::executor::block_on_stream(self.rows);
 
