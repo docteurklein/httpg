@@ -3,30 +3,15 @@
 set local search_path to gps, pg_catalog, public;
 
 set neon.allow_unstable_extensions='true';
--- drop extension if exists vector cascade;
--- drop extension if exists rag cascade;
--- drop extension if not exists rag_bge_small_en_v15 cascade; 
--- drop extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
 select current_setting('neon.project_id', true) is not null as is_neon
 \gset
 
--- create extension if not exists vector cascade;
--- create extension if not exists fuzzystrmatch cascade;
 create extension if not exists postgis with schema public cascade;
 create extension if not exists h3 with schema public cascade;
 create extension if not exists h3_postgis with schema public cascade;
--- create extension if not exists cube schema public;
--- create extension if not exists earthdistance schema public;
 create extension if not exists pgcrypto schema public;
 create extension if not exists hstore schema public;
-\if :is_neon
--- create extension if not exists rag cascade;
--- create extension if not exists rag_bge_small_en_v15 cascade;
--- create extension if not exists rag_jina_reranker_v1_tiny_en cascade;
-\else
--- create extension if not exists http schema public;
-\endif
 
 create schema if not exists gps;
 
@@ -58,7 +43,7 @@ create table runner (
 );
 alter table runner enable row level security;
 create policy "owner" on runner for all to anon
-using (true or runner_id = current_runner_id());
+using (runner_id = current_runner_id());
 
 with salt (salt) as (
     select gen_salt('sha512crypt')
