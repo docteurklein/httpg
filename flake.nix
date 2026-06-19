@@ -205,7 +205,7 @@
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
           HTTPG_ANON_ROLE = "anon";
           HTTPG_INDEX_SQL = "table cpres.head union all table cpres.findings";
-          HTTPG_LOGIN_QUERY = "select cpres.login($1)";
+          HTTPG_LOGIN_QUERY = "select public.login($1)";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
@@ -353,7 +353,7 @@
                     log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
-                    # log_statement = "all";
+                    log_statement = "all";
                     # "auto_explain.log_min_duration" = 0;
                     "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";

@@ -7,8 +7,10 @@ end $$;
 
 drop schema if exists gieze cascade;
 create schema gieze;
-grant usage on schema gieze to gieze_admin;
+grant usage on schema gieze to anon, gieze_admin;
 
+-- grant gieze_admin to anon;
+-- grant anon to gieze_admin;
 grant gieze_admin to anon;
 
 set local search_path to gieze, url, pg_catalog, public;
@@ -200,25 +202,55 @@ select $html$<!DOCTYPE html>
 </head>
 $html$
 union all
+select xmlelement(name form, xmlattributes(
+    'grid' as class,
+    'POST' as method,
+    url('/gieze/login', jsonb_build_object(
+        'redirect', url('/gieze/query', jsonb_build_object(
+            'sql', 'table gieze.head union all table gieze.todo'
+        )),
+        'params[0]', 'gieze'
+    )) as action
+),
+    xmlelement(name input, xmlattributes(
+        'text' as type,
+        'name' as name,
+        'name' as placeholder,
+        'required' as required
+    )),
+    xmlelement(name input, xmlattributes(
+        'password' as type,
+        'password' as name,
+        'password' as placeholder,
+        'required' as required
+    )),
+    xmlelement(name input, xmlattributes('submit' as type, 'login' as value))
+)::text
+where current_role <> 'gieze_admin'
+union all
 select xmlelement(name article, xmlattributes('card error' as class), error)::text
 from httpg
 where error is not null
 union all
 select xmlelement(name nav, xmlelement(name ul,
-  coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(url('/gieze/query', jsonb_build_object(
-    'sql', format('table gieze.head union all table gieze.%I', rel)
-  )) as href), name))), '')
+  coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
+    coalesce(href, url('/gieze/query', jsonb_build_object(
+      'sql', format('table gieze.head union all table gieze.%I', rel)
+    ))) as href
+  ), name))), '')
 ))::text
 from (values
-    ('TODO', 'todo'),
-    ('BLs', 'bl_admin'),
-    ('Factures', 'invoice_admin'),
-    ('Clients', 'client_admin'),
-    ('Produits', 'product_admin')
-) menu (name, rel)
+    ('TODO', 'todo', null, current_role = 'gieze_admin'),
+    ('BLs', 'bl_admin', null, current_role = 'gieze_admin'),
+    ('Factures', 'invoice_admin', null, current_role = 'gieze_admin'),
+    ('Clients', 'client_admin', null, current_role = 'gieze_admin'),
+    ('Produits', 'product_admin', null, current_role = 'gieze_admin'),
+    ('Logout', null, '/gieze/logout?redirect=/gieze/query?sql=table gieze.head', current_role = 'gieze_admin')
+) menu (name, rel, href, visible)
+where visible
 ;
 
-grant select on table head to gieze_admin;
+grant select on table head to anon, gieze_admin;
 
 create or replace view bl_admin (html)
 with (security_invoker)
@@ -727,3 +759,26 @@ from invoice
 ;
 
 grant select on table invoice_detail to gieze_admin;
+
+create table admin (
+  name text primary key,
+  password text not null,
+  salt text not null
+);
+
+create or replace function login() returns setof text
+volatile strict parallel safe -- leakproof
+language sql
+security definer
+set search_path to gieze, pg_catalog
+begin atomic
+with httpg (body) as (
+  select current_setting('httpg.query', true)::jsonb->'body'
+)
+select 'set local role to gieze_admin'
+from admin, httpg
+where name = body->>'name'
+and password = crypt(body->>'password', salt);
+end;
+
+grant execute on function login() to anon, gieze_admin;

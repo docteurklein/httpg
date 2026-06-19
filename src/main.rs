@@ -221,7 +221,7 @@ async fn login(
     path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key_file)?);
+    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key_file, Algorithm::Ed25519)?);
 
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction()
@@ -238,9 +238,9 @@ async fn login(
     let facts = tx.query_typed(login_query.as_ref(), sql_params.as_slice()).await?;
 
     let mut builder = Biscuit::builder();
-    facts.iter().try_for_each(|row| {
-        builder.add_fact(fact("sql", &[string(row.get(0))]))
-    })?;
+    for row in facts.iter() {
+        builder = builder.fact(fact("sql", &[string(row.get(0))]))?;
+    }
 
     tx.commit().await?;
 

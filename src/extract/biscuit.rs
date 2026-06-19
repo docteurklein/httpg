@@ -3,7 +3,7 @@ use axum::{
     extract::{FromRef, OptionalFromRequestParts}, http::request::Parts,
 };
 use axum_extra::extract::CookieJar;
-use biscuit_auth::{KeyPair, PrivateKey};
+use biscuit_auth::{Algorithm, KeyPair, PrivateKey};
 
 use crate::{AppState, HttpgError};
 
@@ -18,7 +18,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Option<Self>, Self::Rejection> {
         let state = AppState::from_ref(state);
-        let root = KeyPair::from(&PrivateKey::from_bytes(&state.config.private_key_file)?);
+        let root = KeyPair::from(&PrivateKey::from_bytes(&state.config.private_key_file, Algorithm::Ed25519)?);
         let cookies = CookieJar::from_headers(&parts.headers);
         match cookies.get("auth") {
             Some(token) => {

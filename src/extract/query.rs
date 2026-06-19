@@ -279,9 +279,7 @@ where
                         serde_json::to_vec(param)
                         .map_err(|_| HttpgError::InvalidParam { i, param: param.to_string() }.into_response())?
                     )),
-                    _ => Ok(Param::Text(param.as_str().ok_or(
-                        HttpgError::InvalidParam { i, param: param.to_string() }.into_response()
-                    )?.to_string())),
+                    _ => Ok(Param::Text(param.as_str().unwrap().to_string())),
                 }
             })
             .collect()
