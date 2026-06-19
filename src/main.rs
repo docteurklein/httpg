@@ -403,7 +403,6 @@ async fn http(
             _ =>  client.get(row.get::<&str, &str>("url")),
         };
         let res = builder.send().await?;
-        dbg!(&res);
         Ok(())
     }).await?;
 

@@ -1,0 +1,25 @@
+td {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+    text-align: right;
+}
+
+td, th {
+    padding: .5em .8em;
+    text-align: right;
+    white-space: nowrap;
+    font-size: 95%;
+}
+
+header.grid, footer .grid {
+    --min: 20ch;
+}
+
+iframe {
+    width: 100%;
+    height: 50vh;
+}
+
+.card.future-invoice {
+    overflow-y: auto;
+}

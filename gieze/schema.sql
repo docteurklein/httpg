@@ -9,8 +9,6 @@ drop schema if exists gieze cascade;
 create schema gieze;
 grant usage on schema gieze to anon, gieze_admin;
 
--- grant gieze_admin to anon;
--- grant anon to gieze_admin;
 grant gieze_admin to anon;
 
 set local search_path to gieze, url, pg_catalog, public;
