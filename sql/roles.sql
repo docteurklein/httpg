@@ -5,7 +5,7 @@ do $$ begin
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
 do $$ begin
-    create role person;
+    create role person noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
 
@@ -14,8 +14,8 @@ select format('create user httpg with password %L noinherit', :'password')
 \gexec
 \endif
 
-grant person to httpg;
 grant anon to httpg;
+grant person to anon;
 
 alter role httpg set statement_timeout to "500ms"; -- only at login time, so we set on http user, not person role
 alter role httpg set transaction_timeout to "500ms";

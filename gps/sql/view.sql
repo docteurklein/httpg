@@ -2,8 +2,12 @@
 
 set  search_path to gps, url, pg_catalog, public;
 
-alter role anon set search_path to gps, url, pg_catalog, public;
-alter role httpg set search_path to gps, url, pg_catalog, public;
+-- alter role anon set search_path to gps, url, pg_catalog, public;
+-- alter role httpg set search_path to gps, url, pg_catalog, public;
+
+grant select, insert, update on table runner to anon;
+grant select, insert, update on table run to anon;
+grant select, insert, delete on table ping to anon;
 
 create or replace view heatmap (hex, weight)
 as select h3_cell_to_boundary_geometry(d.geom @ 10), count(*)
@@ -103,7 +107,6 @@ select $html$<!DOCTYPE html>
     font-size: 10px;
   }
 }
-
 </style>
 $html$
 union all
@@ -397,10 +400,6 @@ select xmlelement(name div, xmlattributes('grid' as class),
 grant select on table list to anon;
 
 grant usage on schema gps to anon;
-
-grant select, insert, update on table runner to anon;
-grant select, insert, update on table run to anon;
-grant select, insert, delete on table ping to anon;
 
 drop procedure if exists end_run;
 create or replace procedure end_run(run_id_ uuid, res inout refcursor default 'res')

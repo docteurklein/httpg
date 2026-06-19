@@ -58,13 +58,13 @@ create table runner (
 );
 alter table runner enable row level security;
 create policy "owner" on runner for all to anon
-using (runner_id = current_runner_id());
+using (true or runner_id = current_runner_id());
 
 with salt (salt) as (
     select gen_salt('sha512crypt')
 )
-insert into gps.runner
-select '5456a81d-356a-48a1-b3ab-17857ee840cb', 'flopi', crypt('flopi', salt), salt
+insert into gps.runner (name, password, salt)
+select 'flopi', crypt('flopi', salt), salt
 from salt;
 
 create table run (

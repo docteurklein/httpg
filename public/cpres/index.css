@@ -115,7 +115,7 @@ input[type="radio"] {
 }
 
 input[type="submit"], button {
-    display: block;
+    /* display: block; */
     background-color: var(--color-bg-button);
     color: var(--color-button);
 }
