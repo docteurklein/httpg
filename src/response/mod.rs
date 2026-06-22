@@ -1,7 +1,7 @@
 use std::{collections::HashMap, pin::Pin, task::{Context, Poll}};
 
 use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
-use bytes::{Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use futures::{Stream, StreamExt, stream};
 use postgres_types::{Type};
 use tokio_postgres::{Row, RowStream};
@@ -45,7 +45,7 @@ impl CancelStream {
 pub struct RowResult {
     status: Option<u16>,
     header: Option<HashMap<String, Option<String>>>,
-    body: Option<bytes::Bytes>,
+    body: Option<bytes::BytesMut>,
 }
 
 impl Stream for CancelStream {
@@ -60,7 +60,7 @@ impl Stream for CancelStream {
             Poll::Ready(Some(Err(e))) => {
                 self.errored = true;
                 Poll::Ready(Some(Ok(RowResult {
-                    body: Some(Bytes::from(e.to_string())),
+                    body: Some(BytesMut::from(e.to_string().as_bytes())),
                     ..Default::default()
                 })))
             },
@@ -70,36 +70,35 @@ impl Stream for CancelStream {
                 for (i, col) in row.columns().iter().enumerate() {
                     match col.name() {
                         "status" => {
-                            if let Ok(Some(status)) = row.try_get::<usize, Option<i32>>(i) {
+                            if let Ok(status) = row.try_get::<usize, i32>(i) {
                                 res.status = Some(status as u16);
                             }
                         },
                         "header" => {
-                            if let Ok(h) = row.try_get::<usize, Option<HashMap<String, Option<String>>>>(i) {
-                                res.header = h;
+                            if let Ok(h) = row.try_get::<usize, HashMap<String, Option<String>>>(i) {
+                                res.header = res.header.map_or(Some(h.clone()), |mut hs| {hs.extend(h); Some(hs)});
                             }
                         },
                         _ => { // body
-                            match col.type_() {
+                            let body = match col.type_() {
                                 &Type::BYTEA => {
-                                    if let Ok(Some(b)) = row.try_get::<usize, Option<&[u8]>>(i) {
-                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
-                                    }
+                                    row.try_get::<usize, &[u8]>(i).map(bytes::BytesMut::from)
                                 }
                                 &Type::TEXT => {
-                                    if let Ok(Some(b)) = row.try_get::<usize, Option<&str>>(i) {
-                                        res.body = Some(bytes::Bytes::from(b.to_owned()));
-                                    }
+                                    row.try_get::<usize, &str>(i).map(bytes::BytesMut::from)
                                 },
                                 // &Type::REFCURSOR => {
                                 // },
                                 type_ => {
                                     self.errored = true;
-                                    res.body = Some(Bytes::from(
-                                        HttpgError::InvalidColType {type_: type_.clone()}.to_string()
-                                    ));
+                                    Ok(BytesMut::from(
+                                        HttpgError::InvalidColType {type_: type_.clone()}.to_string().as_bytes()
+                                    ))
                                 }
                             };
+                            if let Ok(body) = body {
+                                res.body = Some(res.body.map_or(body.clone(), |mut b| { b.put(body); b}));
+                            }
                         }
                     };
                 };

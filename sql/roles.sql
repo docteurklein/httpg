@@ -8,6 +8,10 @@ do $$ begin
     create role person noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
+do $$ begin
+    create role gieze_admin noinherit;
+    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
 
 \if :{?password}
 select format('create user httpg with password %L noinherit', :'password')
@@ -16,6 +20,7 @@ select format('create user httpg with password %L noinherit', :'password')
 
 grant anon to httpg;
 grant person to anon;
+grant gieze_admin to anon;
 
 alter default privileges revoke all on tables from public, anon;
 alter default privileges revoke all on sequences from public, anon;
