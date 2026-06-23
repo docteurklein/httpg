@@ -74,7 +74,7 @@
               owner = "asmjit";
               repo = "asmjit";
               rev = "master";
-              sha256 = "sha256-NC0V5KsYNyJ/hrgAkz6oTCwQmZ8eCWNSOUl+dyTKfJk=";
+              sha256 = "sha256-mBnpoTG2c6RrTjOYSIeIANQKE6Uvd3/dnBGDnw3AfSA=";
               name = "asmjit";
             })
             (pkgs.fetchFromGitHub {
@@ -248,7 +248,7 @@
               bindMounts = {
                 "${builtins.getEnv "PWD"}/private-key-file".isReadOnly = true;
                 # "${builtins.getEnv "PWD"}/smtp-password".isReadOnly = true;
-                "${builtins.getEnv "PWD"}/webpush.pem".isReadOnly = true;
+                # "${builtins.getEnv "PWD"}/webpush.pem".isReadOnly = true;
                 "${builtins.getEnv "PWD"}/pg-password".isReadOnly = true;
                 "${builtins.getEnv "PWD"}/public".isReadOnly = true;
               };
@@ -318,7 +318,7 @@
                     postgis
                     pgrouting
                     h3-pg
-                    self'.packages.pg_jitter
+                    # self'.packages.pg_jitter
                   ];
 
                   enableTCPIP = true;

@@ -95,6 +95,8 @@ impl PostgresConfig {
         ;
         let tls = MakeRustlsConnect::new(tls_config);
 
+        cfg.connect_timeout = Some(core::time::Duration::from_secs(1));
+
         cfg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
     }
 }

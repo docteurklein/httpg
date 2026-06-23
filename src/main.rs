@@ -564,7 +564,8 @@ async fn post_query(
             rows
         },
         Err(err) => {
-            let errors = json!({"error": &err.as_db_error().map(|e| e.message()).or(Some(&err.to_string()))});
+            let error = &err.as_db_error().map(|e| e.message().to_string()).unwrap_or(err.to_string());
+            let errors = json!({"error": &error});
 
             let mut conn = read_pool.get().await?;
             let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
@@ -591,7 +592,7 @@ async fn post_query(
                 _ => {
                     return Ok((
                         StatusCode::INTERNAL_SERVER_ERROR,
-                        err.to_string(),
+                        error.to_string(),
                     ).into_response());
                 }
             }

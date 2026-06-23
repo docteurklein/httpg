@@ -7,12 +7,13 @@ use axum::{
         StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER, ORIGIN}
     }, response::{IntoResponse, Response}
 };
+use axum::extract::FromRef;
 use bytes::Bytes;
 use postgres_types::{to_sql_checked, ToSql};
 use serde::{Deserialize, Serialize};
-use sqlparser::{ast::VisitMut, dialect::PostgreSqlDialect, parser::Parser};
+use sqlparser::{ast::{VisitMut}, dialect::PostgreSqlDialect, parser::Parser};
 
-use crate::{HttpgError, sql::VisitOrderBy};
+use crate::{HttpgError, sql::{Whitelist, VisitOrderBy}};
 
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -129,6 +130,7 @@ pub struct Query {
     pub files: Vec<File>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
+    pub scheme: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub host: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -154,12 +156,19 @@ pub struct Query {
 impl<S> FromRequest<S> for Query
 where
     S: Send + Sync,
+    crate::AppState: FromRef<S>,
 {
     type Rejection = Response;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let headers = req.headers().to_owned();
         let uri = req.uri().to_owned();
+
+        let app_state = crate::AppState::from_ref(state);
+        let scheme = match app_state.config.tls {
+            Some(_) => "https",
+            None => "http"
+        }.to_string();
 
         let serde_qs = serde_qs::Config::new()
             .max_depth(5)
@@ -245,19 +254,27 @@ where
 
         let order = qs.order.to_owned().or(body.order.to_owned());
 
-        let sql = qs.sql.as_ref().or(body.sql.as_ref())
-        .map(|sql| {
-            if let Some(order) = order.to_owned() {
-                match Parser::parse_sql(&PostgreSqlDialect{}, sql) {
-                    Ok(mut statements) => {
-                        let _ = statements.visit(&mut VisitOrderBy(order));
-                        statements[0].to_string()
-                    }
-                    _ => sql.to_string(),
+        let d = "".to_string();
+        let sql = qs.sql.as_ref().or(body.sql.as_ref()).unwrap_or(&d);
+        let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql) {
+            Ok(mut statements) => {
+                let mut whitelist = Whitelist(None);
+                let _ = statements.visit(&mut whitelist);
+
+                if let Some(query) = whitelist.0 {
+                    return Err(HttpgError::RefusedSql {query}.into_response());
                 }
-            }
-            else {sql.to_string()}
-        });
+
+                if let Some(order) = order.to_owned() {
+                    let _ = statements.visit(&mut VisitOrderBy(order));
+                    Ok(statements[0].to_string())
+                }
+                else {Ok(sql.to_string())}
+            },
+            Err(_) =>
+                // Ok(sql.to_string())
+                Err(HttpgError::RefusedSql {query: sql.to_string()}.into_response()),
+        }?;
 
         let redirect = match qs.redirect.as_ref().or(body.redirect.as_ref()) {
             Some(a) if a == "referer" => referer,
@@ -299,19 +316,20 @@ where
         let use_primary = qs.use_primary.or(body.use_primary);
 
         Ok(Self {
-            sql: sql.unwrap_or_default(),
+            sql,
             order,
             cookies: BTreeMap::from_iter(
                 headers.get_all("cookie").iter().map(|c| {
                     let c = Cookie::parse(c.to_str().unwrap()).unwrap();
                     let (n, v) = c.name_value();
                     (n.to_string(), v.to_string())
-                })//.map(|(n, v)| )
+                })
             ),
             params,
             files,
             qs: raw_qs,
             body: raw_body,
+            scheme,
             host: host.map(str::to_string),
             origin,
             redirect: redirect.map(str::to_string),

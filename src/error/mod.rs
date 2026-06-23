@@ -23,6 +23,11 @@ pub enum HttpgError {
         backtrace: std::backtrace::Backtrace,
     },
     #[snafu(transparent)]
+    SqlParserError {
+        source: sqlparser::parser::ParserError,
+        backtrace: std::backtrace::Backtrace,
+    },
+    #[snafu(transparent)]
     Deadpool {
         source: PoolError,
         backtrace: snafu::Backtrace,
@@ -118,11 +123,15 @@ pub enum HttpgError {
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    FromStrError {
+    ToStrError {
         source: http::header::ToStrError,
         backtrace: snafu::Backtrace,
     },
     WebPushPrivateKey,
+    #[snafu(display("refused query: {query}"))]
+    RefusedSql {
+        query: String
+    },
     #[snafu(display("invalid param {i}: {param}"))]
     InvalidParam {
         i: usize,
