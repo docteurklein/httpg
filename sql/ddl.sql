@@ -11,10 +11,10 @@ set neon.allow_unstable_extensions='true';
 select current_setting('neon.project_id', true) is not null as is_neon
 \gset
 
-create extension if not exists vector cascade;
-create extension if not exists fuzzystrmatch cascade;
-create extension if not exists postgis cascade;
-create extension if not exists pgrouting cascade;
+create extension if not exists vector with schema public cascade;
+create extension if not exists fuzzystrmatch with schema public cascade;
+create extension if not exists postgis with schema public cascade;
+create extension if not exists pgrouting with schema public cascade;
 \if :is_neon
 create extension if not exists rag cascade;
 create extension if not exists rag_bge_small_en_v15 cascade;

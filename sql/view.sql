@@ -121,6 +121,8 @@ begin atomic;
     );
 end;
 
+grant execute on function interest_control to anon;
+
 drop view if exists route cascade;
 create or replace view route (geom, node, cost, id, "group", style, tooltip, popup)
 with (security_invoker) as
@@ -221,7 +223,7 @@ base as (
 select xmlelement(name article,
     xmlelement(name h2, xmlelement(name a, xmlattributes(
         url('/cpres/query', jsonb_build_object(
-            'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+            'sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
             'params[]', (good).good_id,
             'target', (good).good_id,
             'show_map', true
@@ -322,7 +324,7 @@ select xmlelement(name form, xmlattributes(
         'POST' as method,
         url('/cpres/query', jsonb_build_object(
             'redirect', url('/cpres/query', jsonb_build_object(
-                'sql', 'table cpres.head union all select html from cpres."good admin"',
+                'sql', 'select * from cpres.head union all select html from cpres."good admin"',
                 'flash[green]', 'Saved successfully'
             ))
         )) as action
@@ -345,7 +347,7 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name input, xmlattributes(
         'hidden' as type,
         'on_error' as name,
-        coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'table head union all select html from "good admin"') as value
+        coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'select * from head union all select html from "good admin"') as value
     )),
     xmlelement(name div, xmlattributes('grid' as class),
         xmlelement(name div,
@@ -482,7 +484,7 @@ result (html, good_id) as (
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'on_error' as name,
-                    coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'table cpres.head union all select html from cpres."good admin"') as value
+                    coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'select * from cpres.head union all select html from cpres."good admin"') as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'file' as type,
@@ -568,7 +570,7 @@ html (html) as (
         xmlelement(name h2, xmlelement(name a, xmlattributes(
             title as id,
             url('/cpres/query', jsonb_build_object(
-                'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+                'sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
                 'params[]', good_id,
                 'show_map', true
             )) as href
@@ -625,7 +627,7 @@ html (html) as (
                                 'sql', 'select * from cpres.web_push_message($1::uuid, $2::uuid)',
                                 'params[0]', message_id,
                                 'params[1]', interest.person_id,
-                                'redirect', url('/cpres/query', jsonb_build_object('sql', 'table cpres.head union all table cpres."giving activity"'))
+                                'redirect', url('/cpres/query', jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"'))
                             )) as value
                         )),
                         xmlelement(name textarea, xmlattributes(
@@ -657,7 +659,7 @@ html (html) as (
                                     'sql', 'select * from web_push_gift($1::uuid, $2::uuid)',
                                     'params[0]', interest.good_id,
                                     'params[1]', interest.person_id,
-                                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'table cpres.head union all table cpres."giving activity"'))
+                                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"'))
                                 )) as value
                             )),
                             xmlelement(name input, xmlattributes(
@@ -724,7 +726,7 @@ html (good, html) as (
             xmlelement(name div,
                 xmlelement(name a, xmlattributes(
                     url('/cpres/query', jsonb_build_object(
-                        'sql', 'table cpres.head union all table cpres."findings"',
+                        'sql', 'select * from cpres.head union all select * from cpres."findings"',
                         'q', (interest).query,
                         'use_primary', null
                     )) as href
@@ -735,7 +737,7 @@ html (good, html) as (
             xmlelement(name h2, xmlelement(name a, xmlattributes(
                 (good).title as id,
                 url('/cpres/query', jsonb_build_object(
-                    'sql', 'table cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
+                    'sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid',
                     'params[]', (good).good_id,
                     'show_map', true
                 )) as href
@@ -788,7 +790,7 @@ html (good, html) as (
                     'sql', 'select * from cpres.web_push_message($1::uuid, $2::uuid)',
                     'params[0]', message_id,
                     'params[1]', (good).giver,
-                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'table cpres.head union all table cpres."receiving activity"'))
+                    'redirect', url('/cpres/query', jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."receiving activity"'))
                 )) as value
             )),
             xmlelement(name textarea, xmlattributes(
@@ -884,7 +886,7 @@ control (html) as (
                     select coalesce(xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
                         url('/cpres/query', jsonb_build_object(
                             'q', query,
-                            'sql', 'table cpres.head union all table cpres."findings"',
+                            'sql', 'select * from cpres.head union all select * from cpres."findings"',
                             'use_primary', null
                         )) as href
                     ), query)) order by at desc, query asc), '')
@@ -947,7 +949,7 @@ control (html) as (
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                'table cpres.head union all table cpres."findings"' as value
+                'select * from cpres.head union all select * from cpres."findings"' as value
             )),
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
@@ -964,7 +966,7 @@ control (html) as (
                 'POST' as method,
                 url('/cpres/query', jsonb_build_object(
                     'redirect', url('/cpres/query', jsonb_build_object(
-                        'sql', 'table cpres.head union all table cpres."findings"',
+                        'sql', 'select * from cpres.head union all select * from cpres."findings"',
                         'q', qs->>'q',
                         'use_primary', null
                     ))
@@ -993,7 +995,7 @@ control (html) as (
                 'POST' as method,
                 url('/cpres/query', jsonb_build_object(
                     'redirect', url('/cpres/query', jsonb_build_object(
-                        'sql', 'table cpres.head union all table cpres."findings"'
+                        'sql', 'select * from cpres.head union all select * from cpres."findings"'
                     ))
                 )) as action
             ),
@@ -1102,7 +1104,7 @@ union all (
         'POST' as method,
         url('/cpres/email', jsonb_build_object(
             'redirect', url('/cpres/query', jsonb_build_object(
-                'sql', 'table cpres.head union all table cpres.findings',
+                'sql', 'select * from cpres.head union all select * from cpres.findings',
                 'flash[green]', 'Check your emails'
             ))
         )) as action
@@ -1145,27 +1147,27 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
         with menu (name, sql, visible) as ( values
             (
                 'Search',
-                'table cpres.head union all table cpres."findings"',
+                'select * from cpres.head union all select * from cpres."findings"',
                 true
             ),
             (
                 'Giving activity',
-                'table cpres.head union all table cpres."giving activity"',
+                'select * from cpres.head union all select * from cpres."giving activity"',
                 current_person_id() is not null
             ),
             (
                 'Receiving activity',
-                'table cpres.head union all table cpres."receiving activity"',
+                'select * from cpres.head union all select * from cpres."receiving activity"',
                 current_person_id() is not null
             ),
             (
                 'my goods',
-                'table cpres.head union all select html from cpres."good admin"',
+                'select * from cpres.head union all select html from cpres."good admin"',
                 current_person_id() is not null
             ),
             (
                 'About',
-                'table cpres.head union all select html::text from cpres.about',
+                'select * from cpres.head union all select html::text from cpres.about',
                 true
             )
         ),
@@ -1213,7 +1215,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'on_error' as name,
-                    'table head union all table "findings"' as value
+                    'select * from cpres.head union all table cpres."findings"' as value
                 ))
             )
             from person
@@ -1254,7 +1256,7 @@ union all (
         union all (
             select 'yellow', xmlelement(name a, xmlattributes(
                 (url('/cpres/query', jsonb_build_object(
-                    'sql', 'table head union all table "receiving activity"'
+                    'sql', 'select * from cpres.head union all table cpres."receiving activity"'
                 )) || '#' || good.title) as href
             ), format(_('%s is waiting for you on %s'), giver.name, good.title))
             from interest

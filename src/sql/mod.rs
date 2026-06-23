@@ -1,4 +1,4 @@
-use sqlparser::{ast::{Expr, Ident, OrderBy, OrderByExpr, Query, SetExpr, Spanned, Statement, TableFactor, TableWithJoins, VisitorMut}};
+use sqlparser::{ast::{Expr, Function, Ident, OrderBy, OrderByExpr, Query, SetExpr, Spanned, Statement, TableFactor, TableWithJoins, VisitorMut}};
 use std::{collections::BTreeMap, ops::{ControlFlow, Not}};
 
 pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
@@ -11,7 +11,7 @@ impl VisitorMut for Whitelist {
 
     fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         self.0 = match expr {
-            Expr::Function(sqlparser::ast::Function { name, ..}) if name.to_string() == "set_config" => Some(expr.to_string()),
+            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Some(expr.to_string()),
             _ => None,
         };
         if self.0.is_some() {
@@ -39,7 +39,6 @@ impl VisitorMut for Whitelist {
     }
 
     fn pre_visit_query(&mut self, query: &mut Query) -> ControlFlow<Self::Break> {
-        dbg!(&query.to_string());
         self.0 = if matches!(*query.body,
               SetExpr::Select(_)
             | SetExpr::Values(_)
@@ -48,6 +47,7 @@ impl VisitorMut for Whitelist {
             | SetExpr::Delete(_)
             | SetExpr::Merge(_)
             | SetExpr::Table(_)
+            | SetExpr::SetOperation {..}
         ) {
             None
         } else {

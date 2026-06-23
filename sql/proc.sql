@@ -122,11 +122,12 @@ begin atomic
         returning person_id
     )
     select 'set local role to person'
+    from "user"
     union all select format('set local "cpres.person_id" to %L', person_id)
     from "user";
 end;
 
-grant execute on function login(text) to person;
+grant execute on function login(text) to person, httpg, anon;
 grant execute on function login_cpres() to person;
 
 create or replace procedure delete_account()

@@ -204,7 +204,7 @@
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
           HTTPG_ANON_ROLE = "anon";
-          HTTPG_INDEX_SQL = "table cpres.head union all table cpres.findings";
+          HTTPG_INDEX_SQL = "select * from (table cpres.head union all table cpres.findings)";
           HTTPG_LOGIN_QUERY = "select public.login($1)";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
