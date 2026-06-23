@@ -10,23 +10,22 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use crate::{HttpgError};
 
 #[derive(Clone, Debug, Conf)]
-#[conf(env_prefix="PG_")]
 pub struct PostgresConfig {
-    #[conf(env)]
+    #[conf(long, env)]
     read_host: String,
-    #[conf(env)]
+    #[conf(long, env)]
     write_host: String,
-    #[conf(env)]
+    #[conf(long, env)]
     user: String,
-    #[conf(env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    #[conf(long="password-file", env="PASSWORD_FILE", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
     password: String,
-    #[conf(env)]
+    #[conf(long, env)]
     dbname: String,
-    #[conf(env)]
+    #[conf(long, env)]
     channel_binding: Option<String>,
-    #[conf(env)]
+    #[conf(long, env)]
     ssl_mode: Option<String>,
-    #[conf(env, default_value="httpg")]
+    #[conf(long, env, default_value="httpg")]
     application_name: String,
 }
 

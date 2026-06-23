@@ -210,11 +210,11 @@
           HTTPG_SMTP_USER = "florian.klein@free.fr";
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
-          PG_USER = "httpg";
-          PG_PASSWORD = "pg-password";
-          PG_DBNAME = "httpg";
-          PG_READ_HOST = "10.250.0.2";
-          PG_WRITE_HOST = "10.250.0.2";
+          HTTPG_PG_USER = "httpg";
+          HTTPG_PG_PASSWORD = "pg-password";
+          HTTPG_PG_DBNAME = "httpg";
+          HTTPG_PG_READ_HOST = "10.250.0.2";
+          HTTPG_PG_WRITE_HOST = "10.250.0.2";
           PORT = "3000";
           RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
           RUST_BACKTRACE = "1";

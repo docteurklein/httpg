@@ -16,7 +16,7 @@ use axum_macros::debug_handler;
 use conf::Conf;
 
 use cookie::time::{Duration, OffsetDateTime};
-use futures::{StreamExt, TryStreamExt};
+use futures::{TryStreamExt};
 use lettre::{
     message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
     AsyncTransport, Message, Tokio1Executor,
@@ -36,25 +36,25 @@ use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig,
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
-    #[conf(long, env)] //, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    #[conf(long, env)]
     pem_file: String,
-    #[conf(long, env)] //, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    #[conf(long, env)]
     pem_key_file: String,
 }
 
 #[derive(Clone, Conf)]
 #[conf(env_prefix="HTTPG_")]
 struct HttpgConfig {
-    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
-    private_key_file: Vec<u8>,
+    #[conf(long="private-key-file", env="PRIVATE_KEY_FILE", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(hex::decode(fs::read_to_string(file)?)?) })]
+    private_key: Vec<u8>,
     #[conf(long, env)]
     webpush_private_key_file: Option<String>,
     #[conf(long, env)]
     smtp_sender: String,
     #[conf(long, env)]
     smtp_user: String,
-    #[conf(long, env, value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
-    smtp_password_file: Option<String>,
+    #[conf(long="smtp-password-file", env="SMTP_PASSWORD_FILE", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
+    smtp_password: Option<String>,
     #[conf(long, env)]
     smtp_relay: String,
     #[conf(long, env)]
@@ -69,12 +69,8 @@ struct HttpgConfig {
     tls: Option<TlsConfig>,
     #[conf(long, env, default_value="public")]
     public_dir: String,
-}
-
-impl HttpgConfig {
-    pub fn from_env() -> Result<Self, conf::Error> {
-        Self::try_parse()
-    }
+    #[conf(flatten, prefix="pg")]
+    pg: PostgresConfig,
 }
 
 #[derive(Clone)]
@@ -94,11 +90,10 @@ async fn main() -> Result<(), HttpgError> {
         .init();
 
 
-    let httpg_config = HttpgConfig::from_env()?;
+    let httpg_config = HttpgConfig::parse();
 
-    let cfg = PostgresConfig::parse();
-    let read_pool = cfg.read_pool()?;
-    let write_pool = cfg.write_pool()?;
+    let read_pool = httpg_config.pg.read_pool()?;
+    let write_pool = httpg_config.pg.write_pool()?;
     
     let state = AppState {
         read_pool,
@@ -216,12 +211,12 @@ async fn index(
 
 #[debug_handler]
 async fn login(
-    State(AppState {write_pool, config: HttpgConfig { login_query, tls, anon_role, private_key_file, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { login_query, tls, anon_role, private_key, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
-    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key_file, Algorithm::Ed25519)?);
+    let root = KeyPair::from(&PrivateKey::from_bytes(&private_key, Algorithm::Ed25519)?);
 
     let mut conn = write_pool.get().await?;
     let mut tx = conn.build_transaction()
@@ -327,7 +322,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
 
 #[debug_handler]
 async fn email(
-    State(AppState {write_pool, config: HttpgConfig { smtp_sender, smtp_user, smtp_password_file, smtp_relay, anon_role, ..}, ..}): State<AppState>,
+    State(AppState {write_pool, config: HttpgConfig { smtp_sender, smtp_user, smtp_password, smtp_relay, anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
@@ -348,7 +343,7 @@ async fn email(
 
     let mut mailer = AsyncSmtpTransport::<Tokio1Executor>::from_url(&smtp_relay)?;
 
-    if let Some(smtp_password) = smtp_password_file {
+    if let Some(smtp_password) = smtp_password {
         let creds = Credentials::new(smtp_user, smtp_password);
         mailer = mailer.credentials(creds);
     }
@@ -402,7 +397,7 @@ async fn http(
             "POST" =>  client.post(row.get::<&str, &str>("url")),
             _ =>  client.get(row.get::<&str, &str>("url")),
         };
-        let res = builder.send().await?;
+        let _res = builder.send().await?;
         Ok(())
     }).await?;
 
