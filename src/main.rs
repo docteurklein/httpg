@@ -523,84 +523,91 @@ async fn stream_query(
     })
 }
 
-#[debug_handler]
 async fn post_query(
-    State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
+    State(AppState {ref read_pool, ref write_pool, config: HttpgConfig {ref anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
     paths: Option<Path<HashMap<String, String>>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError>
 {
-    let mut conn = write_pool.get().await?;
-    let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
-
-    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
-
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let result = tx.query_typed(&query.sql, &sql_params).await;
+    let mut retry = 0;
+    loop {
+        let mut conn = write_pool.get().await?;
+        let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-    let rows = match result {
-        Ok(rows) => {
-            let rows = match paths {
-                Some(paths) => match paths.get("cursor") {
-                    Some(cursor) => {
-                        let rows = tx.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
-                        tx.execute(&format!("close {cursor}"), &[]).await?;
-                        rows
+        let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
+
+        let result = tx.query_typed(&query.sql, &sql_params).await;
+
+        match result {
+            Ok(rows) => {
+                let rows = match paths {
+                    Some(paths) => match paths.get("cursor") {
+                        Some(cursor) => {
+                            let rows = tx.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
+                            tx.execute(&format!("close {cursor}"), &[]).await?;
+                            rows
+                        },
+                        None => rows,
                     },
                     None => rows,
-                },
-                None => rows,
-            };
-            tx.commit().await?;
+                };
+                tx.commit().await?;
 
-            if let Some(redirect) = query.redirect {
-                return Ok(Redirect::to(&redirect).into_response());
-            }
-
-            rows
-        },
-        Err(err) => {
-            let error = &err.as_db_error().map(|e| e.message().to_string()).unwrap_or(err.to_string());
-            let errors = json!({"error": &error});
-
-            let mut conn = read_pool.get().await?;
-            let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
-
-
-            match &query.on_error {
-                Some(on_error) => {
-                    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
-                    tx.query_typed_raw(
-                        "select set_config('httpg.errors', $1, true)",
-                        vec![(serde_json::to_string(&errors)?, Type::TEXT)]
-                    ).await?;
-
-                    let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;
-
-                    return Ok((
-                        StatusCode::BAD_REQUEST,
-                        response::HttpResult {
-                            query: query.to_owned(),
-                            rows: CancelStream::new(rows, guard),
-                        }
-                    ).into_response());
+                return Ok(response::HttpResult {
+                    query,
+                    rows: CancelStream::from_vec(rows, guard),
+                }.into_response());
+            },
+            Err(e) => {
+                retry += 1;
+                if retry > 5 {
+                    break Err(e);
                 }
-                _ => {
-                    return Ok((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        error.to_string(),
-                    ).into_response());
+                if matches!(e.code(),
+                    Some(&tokio_postgres::error::SqlState::T_R_SERIALIZATION_FAILURE)
+                    | Some(&tokio_postgres::error::SqlState::T_R_DEADLOCK_DETECTED))
+                {
+                    continue;
+                }
+
+                let error = &e.as_db_error().map(|e| e.message().to_string()).unwrap_or(e.to_string());
+            
+                match &query.on_error {
+                    Some(on_error) => {
+                        let errors = json!({"error": &error});
+
+                        let mut conn = read_pool.get().await?;
+                        let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
+
+                        let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
+                        tx.query_typed_raw(
+                            "select set_config('httpg.errors', $1, true)",
+                            vec![(serde_json::to_string(&errors)?, Type::TEXT)]
+                        ).await?;
+
+                        let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;
+
+                        return Ok((
+                            StatusCode::BAD_REQUEST,
+                            response::HttpResult {
+                                query: query.to_owned(),
+                                rows: CancelStream::new(rows, guard),
+                            }
+                        ).into_response());
+                    }
+                    _ => {
+                        return Ok((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            error.to_string(),
+                        ).into_response());
+                    }
                 }
             }
         }
-    };
-
-    Ok(response::HttpResult {
-        query,
-        rows: CancelStream::from_vec(rows, guard),
-    }.into_response())
+    }?
 }

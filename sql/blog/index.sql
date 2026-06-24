@@ -15,6 +15,8 @@ create table if not exists post (
     updated_at timestamptz default now()
 );
 
+create index if not exists published on post (published_at) where published_at is not null;
+
 grant select on table post to anon;
 
 alter table post enable row level security;
@@ -44,6 +46,34 @@ from entry
 
 grant select on table html to anon;
 
+-- drop view if exists blog cascade;
+create or replace view head (html)
+with (security_invoker)
+as
+select $html$<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>docteurklein's blog</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+</head>
+$html$;
+
+grant select on table head to anon;
+
+-- drop view if exists blog cascade;
+create or replace view blog (html)
+with (security_invoker)
+as
+table head
+union all
+select body::text
+from html
+;
+
+grant select on table blog to anon;
+
 -- drop view if exists atom;
 create or replace view atom (header, body)
 with (security_invoker)
@@ -55,30 +85,35 @@ as with httpg (scheme, host) as (
     from q
 ),
 entry (xml) as (
-    select xmlelement(name feed, xmlattributes('http://www.w3.org/2005/Atom' as xmlns),
-        xmlelement(name title, 'docteurklein'),
-        xmlelement(name link, '/'),
-        xmlelement(name id, 'urn:uuid:' || uuidv7()),
-        xmlagg(xmlelement(name entry,
-            xmlelement(name title, title),
-            xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
-                'sql', 'select content from blog.post where id = $1::uuid',
-                'params[]', id
-            )) as href)),
-            xmlelement(name id, 'urn:uuid:' || id),
-            xmlelement(name content, xmlattributes('html' as type), content::xml)
-        )
-        order by published_at desc)
-    )
+    select xmlagg(xmlelement(name entry,
+        xmlelement(name title, title),
+        xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
+            'sql', 'select * from blog.head union all select body::text from blog.html where id = $1::uuid',
+            'params[]', id
+        )) as href)),
+        xmlelement(name id, 'urn:uuid:' || id),
+        xmlelement(name content, xmlattributes('html' as type), content::xml)
+    ) order by published_at desc)
     from httpg, post
     limit 50
+),
+feed (xml) as (
+    select xmlelement(name feed, xmlattributes('http://www.w3.org/2005/Atom' as xmlns),
+        xmlelement(name title, 'docteurklein''s blog'),
+        xmlelement(name link, url(format('%s://%s/query', scheme, host), jsonb_build_object(
+            'sql', 'select * from blog.blog'
+        ))),
+        xmlelement(name id, 'urn:uuid:019ef8ba-51f7-7b44-a223-e85ddb5bedea'),
+        xml
+    )
+    from entry, httpg
 )
 select hstore('content-type', 'application/xml'), null
 union all
 select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all
 select null, xmlserialize(document xml as text indent)
-from entry
+from feed
 ;
 
 

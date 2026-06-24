@@ -7,6 +7,7 @@ use biscuit_auth::{Algorithm, KeyPair, PrivateKey};
 
 use crate::{AppState, HttpgError};
 
+#[derive(Clone)]
 pub struct Biscuit(pub Vec<String>);
 
 impl<S> OptionalFromRequestParts<S> for Biscuit

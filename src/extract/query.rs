@@ -254,9 +254,8 @@ where
 
         let order = qs.order.to_owned().or(body.order.to_owned());
 
-        let d = "".to_string();
-        let sql = qs.sql.as_ref().or(body.sql.as_ref()).unwrap_or(&d);
-        let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql) {
+        let sql = qs.sql.or(body.sql).unwrap_or("".into());
+        let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
             Ok(mut statements) => {
                 let mut whitelist = Whitelist(None);
                 let _ = statements.visit(&mut whitelist);
@@ -347,6 +346,7 @@ mod tests {
     use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
 
     use axum::extract::FromRequest;
+    use conf::Conf;
     use crate::extract::query::{Param, Query};
 
     #[tokio::test]
@@ -356,7 +356,17 @@ mod tests {
             .body(Body::from(r#"{"sql": "", "params": ["b", "c"]}"#))
             .unwrap();
 
-        let q = Query::from_request(req, &()).await.unwrap();
+        let httpg_config = crate::HttpgConfig::parse();
+
+        let read_pool = httpg_config.pg.read_pool().unwrap();
+        let write_pool = httpg_config.pg.write_pool().unwrap();
+    
+        let state = crate::AppState {
+            read_pool,
+            write_pool,
+            config: httpg_config.to_owned(),
+        };
+        let q = Query::from_request(req, &state).await.unwrap();
 
         assert_eq!(q.sql, "".to_string());
         assert_eq!(q.params[0], Param::Text("b".into()));
@@ -370,7 +380,17 @@ mod tests {
             .body(Body::from("sql=select%201&params[]=b&params[]=c"))
             .unwrap();
 
-        let q = Query::from_request(req, &()).await.unwrap();
+        let httpg_config = crate::HttpgConfig::parse();
+
+        let read_pool = httpg_config.pg.read_pool().unwrap();
+        let write_pool = httpg_config.pg.write_pool().unwrap();
+    
+        let state = crate::AppState {
+            read_pool,
+            write_pool,
+            config: httpg_config.to_owned(),
+        };
+        let q = Query::from_request(req, &state).await.unwrap();
 
         assert_eq!(q.sql, "select 1".to_string());
         assert_eq!(q.params[0], Param::Text("b".into()));

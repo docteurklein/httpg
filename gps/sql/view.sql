@@ -126,9 +126,10 @@ grant select on table head to anon;
 
 drop materialized view if exists gebco_geo cascade;
 create materialized view if not exists gebco_geo (geom, rast) as
-select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
-from gebco
-group by rast;
+select null::geometry, null::raster;
+-- select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
+-- from gebco
+-- group by rast;
 
 grant select on table gebco_geo to anon;
 
