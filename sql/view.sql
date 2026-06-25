@@ -2,7 +2,7 @@
 
 set  search_path to cpres, url, pg_catalog, public;
 
-create or replace function cpres._(id_ text, lang_ text = null)
+create or replace function _(id_ text, lang_ text = null)
 returns text
 immutable parallel safe -- leakproof
 security definer
@@ -24,6 +24,8 @@ begin atomic
     );
 end;
 
+grant execute on function _ to anon, httpg;
+
 create or replace function max_interest_price(good good) returns xml
 language sql
 immutable strict parallel safe -- leakproof
@@ -42,6 +44,8 @@ begin atomic;
     from max
     where price > 0;
 end;
+
+grant execute on function max_interest_price to anon, httpg;
 
 create or replace function interest_control(good good, interest interest) returns xml
 language sql

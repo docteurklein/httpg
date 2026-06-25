@@ -132,8 +132,6 @@ create table person (
     challenge_used_at timestamptz default null
 );
 
-
-
 grant select (person_id, name, phone) on table person to anon;
 
 grant select (person_id, name, phone),
