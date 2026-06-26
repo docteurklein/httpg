@@ -169,6 +169,7 @@ input[is="cpres-map"] {
     box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
     border-radius: 0.5rem;
     padding: 1rem;
+    margin: 1rem;
 
     & img, & object {
       width: 100%;

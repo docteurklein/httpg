@@ -585,6 +585,7 @@ async fn post_query(
                         let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
 
                         let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
+
                         tx.query_typed_raw(
                             "select set_config('httpg.errors', $1, true)",
                             vec![(serde_json::to_string(&errors)?, Type::TEXT)]
@@ -592,10 +593,13 @@ async fn post_query(
 
                         let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;
 
+                        let mut query = query.clone();
+                        query.redirect = None;
+
                         return Ok((
                             StatusCode::BAD_REQUEST,
                             response::HttpResult {
-                                query: query.to_owned(),
+                                query: query,
                                 rows: CancelStream::new(rows, guard),
                             }
                         ).into_response());

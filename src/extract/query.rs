@@ -240,9 +240,6 @@ where
         let qs = serde_json::from_value::<QueryPart>(serde_json::json!(raw_qs)).unwrap_or_default();
         let body = serde_json::from_value::<QueryPart>(serde_json::json!(raw_body)).unwrap_or_default();
 
-        let referer_header = headers.get(REFERER);
-        let referer = referer_header.and_then(|value| value.to_str().ok());
-
         let host = match uri.authority() {
             Some(authority) => Some(authority.as_str()),
             None => headers
@@ -274,6 +271,9 @@ where
                 // Ok(sql.to_string())
                 Err(HttpgError::RefusedSql {query: sql.to_string()}.into_response()),
         }?;
+
+        let referer_header = headers.get(REFERER);
+        let referer = referer_header.and_then(|value| value.to_str().ok());
 
         let redirect = match qs.redirect.as_ref().or(body.redirect.as_ref()) {
             Some(a) if a == "referer" => referer,
