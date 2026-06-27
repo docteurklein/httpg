@@ -2,6 +2,9 @@
 
 set  search_path to cpres, url, pg_catalog, public;
 
+grant execute on function url.url to anon, person, httpg;
+grant execute on function url.encode to anon, person, httpg;
+
 create or replace function _(id_ text, lang_ text = null)
 returns text
 immutable parallel safe -- leakproof
@@ -24,7 +27,7 @@ begin atomic
     );
 end;
 
-grant execute on function _ to anon, httpg;
+grant execute on function _ to anon, person, httpg;
 
 create or replace function max_interest_price(good good) returns xml
 language sql
@@ -45,7 +48,7 @@ begin atomic;
     where price > 0;
 end;
 
-grant execute on function max_interest_price to anon, httpg;
+grant execute on function max_interest_price to anon, person, httpg;
 
 create or replace function interest_control(good good, interest interest) returns xml
 language sql
@@ -125,7 +128,7 @@ begin atomic;
     );
 end;
 
-grant execute on function interest_control to anon;
+grant execute on function interest_control to anon, person;
 
 drop view if exists route cascade;
 create or replace view route (geom, node, cost, id, "group", style, tooltip, popup)

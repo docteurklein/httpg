@@ -254,11 +254,11 @@ where
         let sql = qs.sql.or(body.sql).unwrap_or("".into());
         let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
             Ok(mut statements) => {
-                let mut whitelist = Whitelist(None);
+                let mut whitelist = Whitelist(Err(HttpgError::RefusedSql { query: sql.clone() }));
                 let _ = statements.visit(&mut whitelist);
 
-                if let Some(query) = whitelist.0 {
-                    return Err(HttpgError::RefusedSql {query}.into_response());
+                if whitelist.0.is_err() {
+                    return Err(whitelist.0.into_response());
                 }
 
                 if let Some(order) = order.to_owned() {

@@ -1,20 +1,22 @@
 use sqlparser::{ast::{Expr, Function, Ident, OrderBy, OrderByExpr, Query, SetExpr, Spanned, Statement, TableFactor, TableWithJoins, VisitorMut}};
 use std::{collections::BTreeMap, ops::{ControlFlow, Not}};
 
+use crate::error::HttpgError;
+
 pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
 
 #[derive(Debug)]
-pub struct Whitelist(pub Option<String>);
+pub struct Whitelist(pub Result<(), HttpgError>);
 
 impl VisitorMut for Whitelist {
     type Break = ();
 
     fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
         self.0 = match expr {
-            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Some(expr.to_string()),
-            _ => None,
+            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Err(HttpgError::RefusedSql {query: expr.to_string()}),
+            _ => Ok(()),
         };
-        if self.0.is_some() {
+        if self.0.is_err() {
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
@@ -28,11 +30,11 @@ impl VisitorMut for Whitelist {
             | Statement::Update(_)
             | Statement::Delete(_)
         ) {
-            None
+            Ok(())
         } else {
-            Some(statement.to_string())
+            Err(HttpgError::RefusedSql { query: statement.to_string() })
         };
-        if self.0.is_some() {
+        if self.0.is_err() {
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
@@ -49,11 +51,11 @@ impl VisitorMut for Whitelist {
             | SetExpr::Table(_)
             | SetExpr::SetOperation {..}
         ) {
-            None
+            Ok(())
         } else {
-            Some(query.to_string())
+            Err(HttpgError::RefusedSql { query: query.to_string() })
         };
-        if self.0.is_some() {
+        if self.0.is_err() {
             return ControlFlow::Break(());
         }
         ControlFlow::Continue(())
