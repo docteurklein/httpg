@@ -599,7 +599,7 @@ async fn post_query(
                         return Ok((
                             StatusCode::BAD_REQUEST,
                             response::HttpResult {
-                                query: query,
+                                query,
                                 rows: CancelStream::new(rows, guard),
                             }
                         ).into_response());

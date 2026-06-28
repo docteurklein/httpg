@@ -1,4 +1,4 @@
-use sqlparser::{ast::{Expr, Function, Ident, OrderBy, OrderByExpr, Query, SetExpr, Spanned, Statement, TableFactor, TableWithJoins, VisitorMut}};
+use sqlparser::{ast::{Expr, Function, Ident, OrderBy, OrderByExpr, Query, SetExpr, Spanned, Statement, TableFactor, TableWithJoins, Visitor, VisitorMut}};
 use std::{collections::BTreeMap, ops::{ControlFlow, Not}};
 
 use crate::error::HttpgError;
@@ -8,12 +8,15 @@ pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
 #[derive(Debug)]
 pub struct Whitelist(pub Result<(), HttpgError>);
 
-impl VisitorMut for Whitelist {
+impl Visitor for Whitelist {
     type Break = ();
 
-    fn pre_visit_expr(&mut self, expr: &mut Expr) -> ControlFlow<Self::Break> {
+    fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
         self.0 = match expr {
-            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Err(HttpgError::RefusedSql {query: expr.to_string()}),
+            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Err(HttpgError::RefusedSql {
+                query: expr.to_string(),
+                reason: Some("illegal set_config".to_string()),
+            }),
             _ => Ok(()),
         };
         if self.0.is_err() {
@@ -22,7 +25,7 @@ impl VisitorMut for Whitelist {
         ControlFlow::Continue(())
     }
 
-    fn pre_visit_statement(&mut self, statement: &mut Statement) -> ControlFlow<Self::Break> {
+    fn pre_visit_statement(&mut self, statement: &Statement) -> ControlFlow<Self::Break> {
         self.0 = if matches!(*statement,
               Statement::Query(_)
             | Statement::Call(_)
@@ -32,7 +35,7 @@ impl VisitorMut for Whitelist {
         ) {
             Ok(())
         } else {
-            Err(HttpgError::RefusedSql { query: statement.to_string() })
+            Err(HttpgError::RefusedSql { query: statement.to_string(), reason: Some("only DML".to_string()) })
         };
         if self.0.is_err() {
             return ControlFlow::Break(());
@@ -40,7 +43,7 @@ impl VisitorMut for Whitelist {
         ControlFlow::Continue(())
     }
 
-    fn pre_visit_query(&mut self, query: &mut Query) -> ControlFlow<Self::Break> {
+    fn pre_visit_query(&mut self, query: &Query) -> ControlFlow<Self::Break> {
         self.0 = if matches!(*query.body,
               SetExpr::Select(_)
             | SetExpr::Values(_)
@@ -53,7 +56,7 @@ impl VisitorMut for Whitelist {
         ) {
             Ok(())
         } else {
-            Err(HttpgError::RefusedSql { query: query.to_string() })
+            Err(HttpgError::RefusedSql { query: query.to_string(), reason: Some("only DML".to_string()) })
         };
         if self.0.is_err() {
             return ControlFlow::Break(());
@@ -108,6 +111,10 @@ impl VisitOrderBy {
                             span: select.span(),
                         }),
                         options: sqlparser::ast::OrderByOptions {
+                            // sort: Some(match asc.as_str() {
+                            //     Some("desc") => sqlparser::ast::OrderBySort::Asc,
+                            //     _ => sqlparser::ast::OrderBySort::Desc,
+                            // }),
                             asc: Some(matches!(asc.as_str(), Some("desc")).not()),
                             nulls_first: None,
                         },

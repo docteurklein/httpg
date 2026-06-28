@@ -10,7 +10,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     extra-container = {
-      url = "github:erikarvstedt/extra-container";
+      url = "path:/home/florian/work/docteurklein/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     # pyproject-nix = {
@@ -33,7 +33,7 @@
           doCheck = false;
 
           nativeBuildInputs = with pkgs; [
-            mold-wrapped clang pkg-config openssl.dev
+            mold clang pkg-config openssl.dev
           ];
           buildInputs = with pkgs; [
             pkg-config openssl.dev
@@ -101,7 +101,7 @@
 
           nativeBuildInputs = with pkgs; [
             cmake
-            postgresql_18.pg_config
+            postgresql_19.pg_config
           ];
 
           dontConfigure = true;
@@ -109,16 +109,16 @@
           buildPhase = ''
             ${pkgs.bash}/bin/bash build.sh \
               sljit \
-              -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+              -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
 
             # ${pkgs.bash}/bin/bash build.sh \
             #   asmjit \
-            #   -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
           '';
 
           installPhase = ''
             mkdir -p $out/lib
-            cp -rv build/pg18/pg_jitter*.so $out/lib
+            cp -rv build/pg19/pg_jitter*.so $out/lib
           '';
         };
 
@@ -187,10 +187,10 @@
         
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
-            postgresql_18
-            postgresql_18.pg_config
+            postgresql_19
+            postgresql_19.pg_config
             cargo cargo-watch cargo-shear clippy rustc rust-analyzer openssl.dev pkg-config
-            mold-wrapped clang
+            mold clang
             biscuit-cli
             pkgs.extra-container
             (pkgs.google-cloud-sdk.withExtraComponents (with pkgs.google-cloud-sdk.components; [
@@ -200,6 +200,7 @@
             ]))
             osmium-tool
           ];
+          PSQLRC = "./.psqlrc";
           PGHOST = "10.250.0.2";
           HTTPG_PRIVATE_KEY_FILE = "private-key-file";
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
@@ -244,7 +245,10 @@
                 "--private-users-ownership=chown"
               ];
 
-              extra.addressPrefix = "10.250.0";
+              extra = {
+                addressPrefix = "10.250.0";
+                enableSSH = false;
+              };
 
               bindMounts = {
                 "${builtins.getEnv "PWD"}/private-key-file".isReadOnly = true;
@@ -308,12 +312,12 @@
                 services.postgresql = {
                   enable = true;
                   # enableJIT = true;
-                  package = pkgs.postgresql_18;
-                  extensions = with pkgs.postgresql18Packages; [
-                    wal2json
-                    pg_ivm
+                  package = pkgs.postgresql_19;
+                  extensions = with pkgs.postgresql19Packages; [
+                    # wal2json
+                    # pg_ivm
                     # pg_hint_plan
-                    plv8
+                    # plv8
                     pgvector
                     pgsql-http
                     postgis

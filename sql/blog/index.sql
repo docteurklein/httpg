@@ -2,6 +2,7 @@ create schema if not exists blog;
 
 set search_path to blog, url, public;
 
+create extension if not exists hstore schema public cascade;
 grant usage on schema blog, url, public to anon;
 grant execute on function public.hstore(text, text) to anon;
 grant execute on function url.url, url.encode to anon;
@@ -11,10 +12,16 @@ create table if not exists post (
     post_id uuid primary key default uuidv7(),
     title text not null,
     content text not null,
+    language regconfig not null default 'english',
+    fts tsvector not null generated always as (
+        setweight(to_tsvector(language::regconfig, title), 'A') ||
+        setweight(to_tsvector(language::regconfig, content), 'B')
+    ) stored,
     published_at timestamptz default now(),
     updated_at timestamptz default now()
 );
 
+create index if not exists fts on post using gin (fts);
 create index if not exists published on post (published_at) where published_at is not null;
 
 grant select on table post to anon;
@@ -30,11 +37,17 @@ create table if not exists comment (
     comment_id uuid primary key default uuidv7(),
     author text not null check (trim(author) <> '' and length(author) <= 100),
     content text not null check (trim(content) <> '' and length(content) <= 10000),
+    language regconfig not null default 'english',
+    fts tsvector not null generated always as (
+        setweight(to_tsvector('english', author), 'A') ||
+        setweight(to_tsvector(language::regconfig, content), 'B')
+    ) stored,
     post_id uuid not null references post (post_id) on delete cascade,
     published_at timestamptz default now(),
     approved_at timestamptz default null
 );
 
+create index if not exists fts on comment using gin (fts);
 create index if not exists post_id on comment (post_id);
 
 grant select, insert on table comment to anon;
@@ -55,14 +68,27 @@ using ((
 ))
 with check (true);
 
+create or replace function random_string(int)
+returns text
+as $$
+    with corpus (corpus) as (
+        select 'you are some cool person and I really like you abcdefghijklmnopqrstuvwxyz          '
+    )
+    select array_to_string(array(
+        select substring(corpus from (random() * length(corpus))::int for 5)
+        from corpus, generate_series(1, $1)
+    ), '')
+$$ language sql;
+
 truncate post cascade;
 insert into post (title, content, published_at)
-select i::text, xmlelement(name h3, 'hello '||i)::text, case when i > 6 then null else now() end
+select i::text, xmlelement(name p, random_string(random(200, 1000)))::text, case when i > 6 then null else now() end
 from generate_series(1, 100) i;
 
 insert into comment (author, content, post_id)
-select 'example@example.org', xmlconcat(
+select format('example%s@example.org', i), xmlconcat(
     xmlelement(name h3, 'comment '||i),
+    random_string(random(20, 100))::xml,
     xmlelement(name script, 'alert(1)'),
     xmlelement(name iframe, xmlattributes('https://wikipedia.fr' as src), ''),
     xmlelement(name base, xmlattributes('https://wikipedia.fr' as href)),
@@ -76,14 +102,55 @@ select 'example@example.org', xmlconcat(
 )::text, post_id
 from generate_series(1, 5) i, post;
 
--- drop view if exists post_html cascade;
-create or replace view post_html (post_id, body)
+-- drop view if exists comment_html cascade;
+create or replace view comment_html (post_id, comment_id, body)
 with (security_invoker)
-as with httpg (params, comment_id, include_unmoderated) as (
+as with httpg (qs) as (
     with query (query) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb
     )
-    select query->'body'->'params', (query->'qs'->>'comment_id')::uuid, query->'qs' ? 'include_unmoderated'
+    select
+        query->'qs'
+    from query
+)
+select post_id, comment_id, xmlelement(name article, xmlattributes('card' as class),
+    xmlelement(name address, comment.author),
+    case when qs ? 'search'
+        then ts_headline(comment.language, comment.content, websearch_to_tsquery(comment.language, qs->'params'->>0))::xml
+        else comment.content::xml
+    end
+    -- (
+    --     with recursive n (comment_id, n, i, ordinality) as (
+    --         select comment_id, r.n, 0, ordinality
+    --         from unnest(xpath('/root/*[name() != ''script'']', xmlelement(name root, comment.content::xml))) with ordinality r(n)
+    --         union all
+    --         select comment_id, c.n, i + 1, c.ordinality
+    --         from n, unnest(xpath('/root/*/child::*[name() != ''script'']', xmlelement(name root, n.n))) with ordinality c(n)
+    --         -- where i < 20
+    --     )
+    --     select xmlagg(n.n order by i, ordinality)
+    --     from n
+    --     group by comment_id
+    --     -- order by i, ordinality
+    -- )),
+)
+-- order by comment.published_at desc
+from comment, httpg
+;
+
+grant select on table comment_html to anon;
+
+-- drop view if exists post_html cascade;
+create or replace view post_html (post_id, body)
+with (security_invoker)
+as with httpg (qs, params, comment_id) as (
+    with query (query) as (
+        select nullif(current_setting('httpg.query', true), '')::jsonb
+    )
+    select
+        query->'qs',
+        query->'body'->'params',
+        (query->'qs'->>'comment_id')::uuid
     from query
 ),
 entry (post_id, xml) as (
@@ -97,7 +164,10 @@ entry (post_id, xml) as (
             ),
                 xmlelement(name h2, post.title)
             ),
-            post.content::xml,
+            case when qs ? 'search'
+                then ts_headline(post.language, post.content, websearch_to_tsquery(post.language, qs->'params'->>0))::xml
+                else post.content::xml
+            end,
             xmlelement(name hr),
             xmlelement(name h4, 'Comments'),
             xmlelement(name form, xmlattributes(
@@ -155,32 +225,13 @@ entry (post_id, xml) as (
                     'include_unmoderated', null
                 )) as href
             ), 'Include unmoderated'),
-            xmlelement(name div, xmlattributes('messages' as class), xmlagg(
-                xmlelement(name article, xmlattributes('card' as class),
-                    xmlelement(name address, comment.author),
-                    comment.content
-                    -- (
-                    --     with recursive n (comment_id, n, i, ordinality) as (
-                    --         select comment_id, r.n, 0, ordinality
-                    --         from unnest(xpath('/root/*[name() != ''script'']', xmlelement(name root, comment.content::xml))) with ordinality r(n)
-                    --         union all
-                    --         select comment_id, c.n, i + 1, c.ordinality
-                    --         from n, unnest(xpath('/root/*/child::*[name() != ''script'']', xmlelement(name root, n.n))) with ordinality c(n)
-                    --         -- where i < 20
-                    --     )
-                    --     select xmlagg(n.n order by i, ordinality)
-                    --     from n
-                    --     group by comment_id
-                    --     -- order by i, ordinality
-                    -- )),
-                )
-                order by comment.published_at desc
-            ))
+            xmlelement(name div, xmlattributes('messages' as class),
+                (select xmlagg(body order by published_at desc) from comment join comment_html c using (comment_id) where c.post_id = post.post_id)
+            )
         )
     )
     from httpg, post
-    left join comment using (post_id)
-    group by post_id, params
+    -- group by post_id
 )
 select post_id, xml
 from entry
@@ -212,8 +263,10 @@ select xmlelement(name a, xmlattributes(
     xmlelement(name h1, 'docteurklein''s blog')
 )::text
 union all
-(with httpg (error) as (
-    select nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
+(with httpg (error, qs) as (
+    select
+        nullif(current_setting('httpg.errors', true), '')::jsonb->>'error',
+        nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
 )
 select xmlelement(name article, xmlattributes(
     'card error' as class
@@ -232,7 +285,43 @@ select xmlelement(name article, xmlattributes(
     error
 ))::text
 from httpg
-where error is not null)
+where error is not null
+union all
+select xmlelement(name form, xmlattributes(
+    'GET' as method,
+    '/blog/query' as action
+),
+    xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'sql' as name,
+        $$
+        select * from blog.head
+        union all
+        select body::text
+        from blog.post
+        join blog.post_html using (post_id)
+        left join blog.comment using (post_id)
+        where post.fts @@ websearch_to_tsquery(post.language, $1)
+        or comment.fts @@ websearch_to_tsquery(comment.language, $1)
+        $$ as value
+    )),
+    xmlelement(name input, xmlattributes(
+        'search' as type,
+        'params[0]' as name,
+        'query' as placeholder,
+        case when qs ? 'search' then qs->'params'->>0 end as value
+        
+    )),
+    xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'search' as name
+    )),
+    xmlelement(name input, xmlattributes(
+        'submit' as type,
+        'Search' as value
+    ))
+)::text
+from httpg)
 ;
 
 grant select on table head to anon;

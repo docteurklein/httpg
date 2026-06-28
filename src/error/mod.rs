@@ -128,9 +128,10 @@ pub enum HttpgError {
         backtrace: snafu::Backtrace,
     },
     WebPushPrivateKey,
-    #[snafu(display("refused query: {query}"))]
+    #[snafu(display("refused query: {query}\nReason: {reason:?}"))]
     RefusedSql {
-        query: String
+        query: String,
+        reason: Option<String>,
     },
     #[snafu(display("invalid param {i}: {param}"))]
     InvalidParam {

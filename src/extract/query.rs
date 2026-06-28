@@ -11,7 +11,7 @@ use axum::extract::FromRef;
 use bytes::Bytes;
 use postgres_types::{to_sql_checked, ToSql};
 use serde::{Deserialize, Serialize};
-use sqlparser::{ast::{VisitMut}, dialect::PostgreSqlDialect, parser::Parser};
+use sqlparser::{ast::{Visit, VisitMut}, dialect::PostgreSqlDialect, parser::Parser};
 
 use crate::{HttpgError, sql::{Whitelist, VisitOrderBy}};
 
@@ -254,22 +254,22 @@ where
         let sql = qs.sql.or(body.sql).unwrap_or("".into());
         let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
             Ok(mut statements) => {
-                let mut whitelist = Whitelist(Err(HttpgError::RefusedSql { query: sql.clone() }));
-                let _ = statements.visit(&mut whitelist);
+                let mut whitelist = Whitelist(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
+                let _ = Visit::visit(&statements, &mut whitelist);
 
                 if whitelist.0.is_err() {
                     return Err(whitelist.0.into_response());
                 }
 
                 if let Some(order) = order.to_owned() {
-                    let _ = statements.visit(&mut VisitOrderBy(order));
+                    let _ = VisitMut::visit(&mut statements, &mut VisitOrderBy(order));
                     Ok(statements[0].to_string())
                 }
                 else {Ok(sql.to_string())}
             },
-            Err(_) =>
+            Err(e) =>
                 // Ok(sql.to_string())
-                Err(HttpgError::RefusedSql {query: sql.to_string()}.into_response()),
+                Err(HttpgError::RefusedSql {query: sql.to_string(), reason: Some(e.to_string())}.into_response()),
         }?;
 
         let referer_header = headers.get(REFERER);

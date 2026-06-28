@@ -1,9 +1,10 @@
 \set ON_ERROR_STOP on
 
-set local search_path to gieze;
+set local search_path to gieze, public;
 
 truncate client cascade;
 truncate product cascade;
+truncate admin cascade;
 
 insert into client values
 ('maison du sichon', '1 rue du sichon', '1 rue du sichon'),
@@ -27,3 +28,15 @@ insert into bl_line values
 (2, 'crotte de fée', 1),
 (3, 'crotte de fée', 11);
 
+with salt (salt) as (
+    select gen_salt('sha512crypt')
+)
+insert into admin (name, password, salt)
+select 'flopi', crypt('flopi', salt), salt
+from salt;
+with salt (salt) as (
+    select gen_salt('sha512crypt')
+)
+insert into admin (name, password, salt)
+select 'admin', crypt('admin', salt), salt
+from salt;
