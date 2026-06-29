@@ -209,7 +209,7 @@ select xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as a
 union all
 select xmlelement(name div, xmlattributes('grid' as class),
   coalesce(xmlagg(xmlelement( name article, xmlattributes('card' as class),
-    xmlelement(name h3, format('BL #%s for %s', bl.bl, bl.client)),
+    xmlelement(name h3, format('BL #%s pour %s', bl.bl, bl.client)),
     case when shipped_at is null then xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as action),
       xmlelement(name input, xmlattributes(
           'hidden' as type,

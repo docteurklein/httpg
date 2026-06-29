@@ -39,7 +39,7 @@ create table if not exists comment (
     content text not null check (trim(content) <> '' and length(content) <= 10000),
     language regconfig not null default 'english',
     fts tsvector not null generated always as (
-        setweight(to_tsvector('english', author), 'A') ||
+        setweight(to_tsvector('simple', author), 'A') ||
         setweight(to_tsvector(language::regconfig, content), 'B')
     ) stored,
     post_id uuid not null references post (post_id) on delete cascade,
@@ -80,27 +80,27 @@ as $$
     ), '')
 $$ language sql;
 
-truncate post cascade;
-insert into post (title, content, published_at)
-select i::text, xmlelement(name p, random_string(random(200, 1000)))::text, case when i > 6 then null else now() end
-from generate_series(1, 100) i;
+-- truncate post cascade;
+-- insert into post (title, content, published_at)
+-- select i::text, xmlelement(name p, random_string(random(200, 1000)))::text, case when i > 6 then null else now() end
+-- from generate_series(1, 100) i;
 
-insert into comment (author, content, post_id)
-select format('example%s@example.org', i), xmlconcat(
-    xmlelement(name h3, 'comment '||i),
-    random_string(random(20, 100))::xml,
-    xmlelement(name script, 'alert(1)'),
-    xmlelement(name iframe, xmlattributes('https://wikipedia.fr' as src), ''),
-    xmlelement(name base, xmlattributes('https://wikipedia.fr' as href)),
-    xmlelement(name form, xmlattributes('https://wikipedia.fr' as action), xmlelement(name input, xmlattributes('submit' as type))),
-    xmlelement(name div,
-        xmlelement(name script, 'alert(2)'),
-        xmlelement(name style, 'body {color: red !important;}'),
-        xmlelement(name h4, 'sub h4 '||i)
-    ),
-    xmlelement(name p, 'test')
-)::text, post_id
-from generate_series(1, 5) i, post;
+-- insert into comment (author, content, post_id)
+-- select format('example%s@example.org', i), xmlconcat(
+--     xmlelement(name h3, 'comment '||i),
+--     random_string(random(20, 100))::xml,
+--     xmlelement(name script, 'alert(1)'),
+--     xmlelement(name iframe, xmlattributes('https://wikipedia.fr' as src), ''),
+--     xmlelement(name base, xmlattributes('https://wikipedia.fr' as href)),
+--     xmlelement(name form, xmlattributes('https://wikipedia.fr' as action), xmlelement(name input, xmlattributes('submit' as type))),
+--     xmlelement(name div,
+--         xmlelement(name script, 'alert(2)'),
+--         xmlelement(name style, 'body {color: red !important;}'),
+--         xmlelement(name h4, 'sub h4 '||i)
+--     ),
+--     xmlelement(name p, 'test')
+-- )::text, post_id
+-- from generate_series(1, 5) i, post;
 
 -- drop view if exists comment_html cascade;
 create or replace view comment_html (post_id, comment_id, body)
@@ -115,10 +115,10 @@ as with httpg (qs) as (
 )
 select post_id, comment_id, xmlelement(name article, xmlattributes('card' as class),
     xmlelement(name address, comment.author),
-    case when qs ? 'search'
-        then ts_headline(comment.language, comment.content, websearch_to_tsquery(comment.language, qs->'params'->>0))::xml
-        else comment.content::xml
-    end
+    xmlelement(name pre, case when qs ? 'search'
+        then ts_headline(comment.language, xmltext(comment.content)::text, websearch_to_tsquery(comment.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml
+        else xmltext(comment.content)
+    end)
     -- (
     --     with recursive n (comment_id, n, i, ordinality) as (
     --         select comment_id, r.n, 0, ordinality
@@ -164,10 +164,10 @@ entry (post_id, xml) as (
             ),
                 xmlelement(name h2, post.title)
             ),
-            case when qs ? 'search'
-                then ts_headline(post.language, post.content, websearch_to_tsquery(post.language, qs->'params'->>0))::xml
+            xmlelement(name pre, case when qs ? 'search'
+                then ts_headline(post.language, post.content, websearch_to_tsquery(post.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml
                 else post.content::xml
-            end,
+            end),
             xmlelement(name hr),
             xmlelement(name h4, 'Comments'),
             xmlelement(name form, xmlattributes(
@@ -226,7 +226,12 @@ entry (post_id, xml) as (
                 )) as href
             ), 'Include unmoderated'),
             xmlelement(name div, xmlattributes('messages' as class),
-                (select xmlagg(body order by published_at desc) from comment join comment_html c using (comment_id) where c.post_id = post.post_id)
+                (
+                    select xmlagg(body order by published_at desc)
+                    from comment
+                    join comment_html c using (comment_id)
+                    where c.post_id = post.post_id
+                )
             )
         )
     )
@@ -239,6 +244,25 @@ from entry
 
 grant select on table post_html to anon;
 
+create or replace function search(query text)
+returns setof text
+security invoker
+stable strict parallel safe
+language sql
+begin atomic
+    select body::text
+    from blog.post
+    join blog.post_html using (post_id)
+    where post.fts @@ websearch_to_tsquery(post.language, $1)
+    or exists(
+        select from blog.comment
+        where comment.fts @@ websearch_to_tsquery(comment.language, $1)
+        and comment.post_id = post.post_id
+    );
+end;
+
+grant execute on function search to anon;
+
 -- drop view if exists blog cascade;
 create or replace view head (html)
 with (security_invoker)
@@ -250,7 +274,15 @@ select $html$<!DOCTYPE html>
     <title>docteurklein's blog</title>
     <meta name="color-scheme" content="dark light" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; base-uri 'self'; form-action 'self'; " />
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        base-uri 'self';
+        form-action 'self';
+        style-src
+            'self'
+            'unsafe-inline'
+        ;
+    " />
     <link rel="stylesheet" href="/cpres/index.css?v=4" />
 </head>
 $html$
@@ -285,44 +317,83 @@ select xmlelement(name article, xmlattributes(
     error
 ))::text
 from httpg
-where error is not null
-union all
-select xmlelement(name form, xmlattributes(
-    'GET' as method,
-    '/blog/query' as action
-),
-    xmlelement(name input, xmlattributes(
-        'hidden' as type,
-        'sql' as name,
-        $$
-        select * from blog.head
-        union all
-        select body::text
-        from blog.post
-        join blog.post_html using (post_id)
-        left join blog.comment using (post_id)
-        where post.fts @@ websearch_to_tsquery(post.language, $1)
-        or comment.fts @@ websearch_to_tsquery(comment.language, $1)
-        $$ as value
-    )),
-    xmlelement(name input, xmlattributes(
-        'search' as type,
-        'params[0]' as name,
-        'query' as placeholder,
-        case when qs ? 'search' then qs->'params'->>0 end as value
+where error is not null)
+union all (
+    with httpg (qs) as (
+        select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
+    ),
+    form (html) as (
+        select xmlelement(name form, xmlattributes(
+            'GET' as method,
+            '/blog/query' as action
+        ),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'sql' as name,
+                $$
+                select * from blog.head
+                union all
+                select * from blog.search($1)
+                $$ as value
+            )),
+            xmlelement(name input, xmlattributes(
+                'search' as type,
+                'params[0]' as name,
+                'query' as placeholder,
+                case when qs ? 'search' then qs->'params'->>0 end as value
         
-    )),
-    xmlelement(name input, xmlattributes(
-        'hidden' as type,
-        'search' as name
-    )),
-    xmlelement(name input, xmlattributes(
-        'submit' as type,
-        'Search' as value
-    ))
-)::text
-from httpg)
-;
+            )),
+            xmlelement(name input, xmlattributes(
+                'hidden' as type,
+                'search' as name
+            )),
+            xmlelement(name input, xmlattributes(
+                'submit' as type,
+                'Search' as value
+            ))
+        )
+        from httpg
+    ),
+    cloud (html) as (
+        select xmlelement(name ul, xmlattributes('cloud' as class),
+            xmlagg(xmlelement(name li, xmlelement(name a, xmlattributes(
+                url('/blog/query', jsonb_build_object(
+                    'sql', 'select * from blog.head union all select * from blog.search($1)',
+                    'params[]', word,
+                    'search', null
+                )) as href,
+                format('font-size: calc(%s * 1ch', least(2, nentry::float)) as style
+            ),
+                format('%s (%s)', word, nentry)
+            ))
+        ))
+        from (
+            with stat as (
+                select * from ts_stat('select fts from blog.post')
+            ),
+            top as (
+                select word, nentry
+                from stat
+                order by nentry desc
+                limit 5
+            ),
+            rand as (
+                select word, nentry
+                from stat
+                where not exists (select from top where stat.word = top.word)
+                order by random()
+                limit 5
+            )
+            table top
+            union table rand
+        )
+    )
+    select xmlelement(name div, xmlattributes('grid' as class),
+        xmlelement(name div, form.html),
+        cloud.html
+    )::text
+    from form, cloud
+);
 
 grant select on table head to anon;
 
@@ -331,8 +402,15 @@ create or replace view blog (html)
 with (security_invoker)
 as table head
 union all
-select body::text
-from post_html
+select xmlelement(name a, xmlattributes(
+    url('/blog/query', jsonb_build_object(
+        'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
+        'params[]', post_id
+    )) as href
+),
+    xmlelement(name h2, post.title)
+)::text
+from post
 ;
 
 grant select on table blog to anon;

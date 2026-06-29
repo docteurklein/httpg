@@ -5,6 +5,10 @@ set  search_path to gps, url, pg_catalog, public;
 -- alter role anon set search_path to gps, url, pg_catalog, public;
 -- alter role httpg set search_path to gps, url, pg_catalog, public;
 
+grant execute on all functions in schema public to anon;
+grant usage on schema url to anon, runner;
+grant execute on all functions in schema url to anon;
+
 grant select, insert, update on table runner to anon;
 grant select, insert, update on table run to anon;
 grant select, insert, delete on table ping to anon;
@@ -269,7 +273,7 @@ geo (geom, style, popup) as (
 select xmlconcat(
     xmlelement(name a, xmlattributes(
         url('/gps/query', jsonb_build_object(
-            'sql', 'table gps.list'
+            'sql', 'select * from gps.list'
         )) as href
     ), 'back to list'),
     stat.html,
@@ -357,8 +361,8 @@ form (html) as (
             'sql' as name,
             $sql$
                 insert into gps.run (name) values (nullif($1, ''))
-                returning hstore('Location', url('/gps/query', jsonb_build_object(
-                    'sql', 'table gps.head union all table gps.map',
+                returning hstore('Location', url.url('/gps/query', jsonb_build_object(
+                    'sql', 'select * from gps.head union all select * from gps.map',
                     'run_id', run_id
                 ))) header, 303 status
             $sql$ as value
@@ -366,7 +370,7 @@ form (html) as (
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'on_error' as name,
-            'table gps.list' as value
+            'select * from gps.list' as value
         )),
         xmlelement(name input, xmlattributes(
             'text' as type,
@@ -383,7 +387,7 @@ form (html) as (
 list (html, starts_at) as (
     select xmlelement(name a, xmlattributes(
             url('/gps/query', jsonb_build_object(
-                'sql', 'table gps.head union all table gps.map',
+                'sql', 'select * from gps.head union all select * from gps.map',
                 'run_id', run_id
             )) as href
         ),
@@ -429,7 +433,7 @@ begin
         303 status,
         hstore('Location', url('/gps/query', jsonb_build_object(
             'run_id', run_id_,
-            'sql', 'table gps.head union all table gps.map'
+            'sql', 'select * from gps.head union all select * from gps.map'
         ))) header
     ;
 exception when others then
@@ -478,7 +482,7 @@ begin
         303 status,
         hstore(array[
             ['Location', url('/gps/query', jsonb_build_object(
-                'sql', 'table gps.list'
+                'sql', 'select * from gps.list'
             ))],
             ['Set-Cookie', format('gps.current_runner_id=%s; HttpOnly; Secure; Path=/gps', runner_id_)]
         ]) header
@@ -495,7 +499,7 @@ exception when unique_violation then
 end;
 $$;
 
-grant execute on procedure end_run to anon;
+grant execute on procedure login to anon;
 
 drop procedure if exists ping;
 create or replace procedure ping(run_id_ uuid, location_ geometry(point), inout status int default null, body inout text default null)

@@ -187,6 +187,8 @@
         
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
+            comrak
+            multimarkdown
             postgresql_19
             postgresql_19.pg_config
             cargo cargo-watch cargo-shear clippy rustc rust-analyzer openssl.dev pkg-config

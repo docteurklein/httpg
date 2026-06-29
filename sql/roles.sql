@@ -9,6 +9,10 @@ do $$ begin
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
 do $$ begin
+    create role runner noinherit;
+    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
+do $$ begin
     create role gieze_admin noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;

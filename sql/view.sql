@@ -2,6 +2,8 @@
 
 set  search_path to cpres, url, pg_catalog, public;
 
+grant execute on all routines in schema cpres to anon, person;
+grant execute on all routines in schema public to anon, person;
 grant execute on function url.url to anon, person, httpg;
 grant execute on function url.encode to anon, person, httpg;
 
@@ -316,14 +318,13 @@ security invoker
 immutable parallel safe -- leakproof
 language sql
 begin atomic
-with query (q, good_id, redirect, errors) as (
+with query (q, good_id, errors) as (
     with q (q, errors) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb,
         nullif(current_setting('httpg.errors', true), '')::jsonb
     )
     select q,
     q->'body'->>'form.id',
-    q->>'redirect',
     errors
     from q
 )

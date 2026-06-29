@@ -1,5 +1,5 @@
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Not};
 
 use cookie::Cookie;
 use axum::{
@@ -98,25 +98,16 @@ impl ToSql for Param {
     to_sql_checked!();
 }
 
-#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
+#[derive(Debug, Default, Deserialize, PartialEq, Clone)]
 pub struct QueryPart {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub sql: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub params: Option<Vec<serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub in_types: Option<Vec<Type>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub redirect: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub cache_control: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub order: Option<BTreeMap<String, serde_json::Value>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub on_error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub use_primary: Option<String>,
 }
 
@@ -251,7 +242,7 @@ where
 
         let order = qs.order.to_owned().or(body.order.to_owned());
 
-        let sql = qs.sql.or(body.sql).unwrap_or("".into());
+        let sql = qs.sql.or(body.sql).unwrap_or("select null".into());
         let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
             Ok(mut statements) => {
                 let mut whitelist = Whitelist(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
@@ -283,8 +274,14 @@ where
 
         let on_error = qs.on_error.to_owned().or(body.on_error.to_owned());
 
-        let params: Result<Vec<Param>, Response> = qs.params.to_owned().or(body.params.to_owned()).unwrap_or_default()
-            .iter().enumerate().map(|(i, param)| {
+        let params: Result<Vec<Param>, Response> = qs.params.to_owned()
+            .unwrap_or_default()
+            .iter()
+            .chain(body.params.to_owned()
+                .unwrap_or_default()
+                .iter()
+            )
+            .enumerate().map(|(i, param)| {
                 let t = match qs.in_types.to_owned().or(body.in_types.to_owned()) {
                     Some(t) => t.get(i).unwrap_or(&Type::Text).to_owned(),
                     None => Type::Text,
@@ -326,8 +323,18 @@ where
             ),
             params,
             files,
-            qs: raw_qs,
-            body: raw_body,
+            qs: raw_qs.into_iter().filter_map(|(key, value)|
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary"]
+                    .contains(&key.as_str())
+                    .not()
+                    .then_some((key, value))
+            ).collect(),
+            body: raw_body.into_iter().filter_map(|(key, value)|
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary"]
+                    .contains(&key.as_str())
+                    .not()
+                    .then_some((key, value))
+            ).collect(),
             scheme,
             host: host.map(str::to_string),
             origin,
