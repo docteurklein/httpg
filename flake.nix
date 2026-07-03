@@ -327,7 +327,15 @@
                   # enableJIT = true;
                   package = pkgs.postgresql_19;
                   extensions = with pkgs.postgresql19Packages; [
-                    # wal2json
+                    (wal2json.overrideAttrs (prev: {
+                      # version = "git";
+                      src = pkgs.fetchFromGitHub {
+                        owner = "eulerto";
+                        repo = "wal2json";
+                        rev = "master";
+                        sha256 = "sha256-fXEdiJ9yjuEJbJsCG0fnYdhiNzynnxDL3M5To4517jM=";
+                      };
+                    }))
                     # pg_ivm
                     # pg_hint_plan
                     # plv8
