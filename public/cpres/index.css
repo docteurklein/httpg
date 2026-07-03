@@ -13,6 +13,13 @@ ul.cloud {
 }
 
 
+button, input[type="submit"] {
+    transition: transform 0.2s;
+    &:active {
+        transform: scale(0.95);
+    }
+}
+
 :root {
     color-scheme: dark light;
     --color-surface: #1c1b22;

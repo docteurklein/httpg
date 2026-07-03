@@ -505,21 +505,19 @@ async fn stream_query(
 
     let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
-    // let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-    //     (param, param.to_owned().into())
-    // }).collect();
-
-    // let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
-
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed(&query.sql, &sql_params).await?;
+    let rows = if query.body.contains_key("stream") {
+        CancelStream::new(tx.query_typed_raw(&query.sql, sql_params).await?, guard)
+    } else {
+        CancelStream::from_vec(tx.query_typed(&query.sql, &sql_params).await?, guard)
+    };
 
     Ok(response::HttpResult {
         query: query.to_owned(),
-        rows: CancelStream::from_vec(rows, guard),
+        rows,
     })
 }
 

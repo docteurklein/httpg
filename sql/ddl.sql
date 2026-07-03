@@ -73,7 +73,7 @@ end;
 grant usage on schema cpres, url, pg_catalog to anon;
 grant usage on schema cpres, url, pg_catalog to person;
 -- alter role httpg set search_path to cpres, url, pg_catalog, public;
-alter role person set search_path to cpres, url, pg_catalog, public;
+-- alter role person set search_path to cpres, url, pg_catalog, public;
 
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;

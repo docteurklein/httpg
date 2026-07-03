@@ -6,9 +6,9 @@ use crate::error::HttpgError;
 pub struct VisitOrderBy(pub BTreeMap<String, serde_json::Value>);
 
 #[derive(Debug)]
-pub struct Whitelist(pub Result<(), HttpgError>);
+pub struct AllowList(pub Result<(), HttpgError>);
 
-impl Visitor for Whitelist {
+impl Visitor for AllowList {
     type Break = ();
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {

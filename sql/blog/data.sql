@@ -3,3 +3,5 @@
 
 delete from blog.post where title = :'title';
 insert into blog.post (title, content) values (:'title', :'content');
+
+refresh materialized view blog.ts_stat;

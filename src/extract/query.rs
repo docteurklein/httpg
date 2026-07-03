@@ -13,7 +13,7 @@ use postgres_types::{to_sql_checked, ToSql};
 use serde::{Deserialize, Serialize};
 use sqlparser::{ast::{Visit, VisitMut}, dialect::PostgreSqlDialect, parser::Parser};
 
-use crate::{HttpgError, sql::{Whitelist, VisitOrderBy}};
+use crate::{HttpgError, sql::{AllowList, VisitOrderBy}};
 
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
@@ -245,11 +245,11 @@ where
         let sql = qs.sql.or(body.sql).unwrap_or("select null".into());
         let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
             Ok(mut statements) => {
-                let mut whitelist = Whitelist(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
-                let _ = Visit::visit(&statements, &mut whitelist);
+                let mut allowlist = AllowList(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
+                let _ = Visit::visit(&statements, &mut allowlist);
 
-                if whitelist.0.is_err() {
-                    return Err(whitelist.0.into_response());
+                if allowlist.0.is_err() {
+                    return Err(allowlist.0.into_response());
                 }
 
                 if let Some(order) = order.to_owned() {
@@ -316,10 +316,12 @@ where
             order,
             cookies: BTreeMap::from_iter(
                 headers.get_all("cookie").iter().map(|c| {
-                    let c = Cookie::parse(c.to_str().unwrap()).unwrap();
+                    let c = Cookie::parse(c.to_str()?)?;
                     let (n, v) = c.name_value();
-                    (n.to_string(), v.to_string())
+                    Ok((n.to_string(), v.to_string()))
                 })
+                .collect::<Result<Vec<_>, HttpgError>>()
+                .map_err(|e| e.into_response())?
             ),
             params,
             files,

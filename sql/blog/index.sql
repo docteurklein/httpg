@@ -18,7 +18,7 @@ create table if not exists post (
         setweight(to_tsvector(language::regconfig, content), 'B')
     ) stored,
     published_at timestamptz default now(),
-    updated_at timestamptz default now()
+    updated_at timestamptz default null
 );
 
 create index if not exists fts on post using gin (fts);
@@ -32,11 +32,13 @@ drop policy if exists "published" on post;
 create policy "published" on post for all to anon
 using (published_at is not null);
 
--- drop table if exists comment cascade;
+drop table if exists comment cascade;
 create table if not exists comment (
     comment_id uuid primary key default uuidv7(),
-    author text not null check (trim(author) <> '' and length(author) <= 100),
-    content text not null check (trim(content) <> '' and length(content) <= 10000),
+    author text not null,
+    constraint "only non-empty author" check (trim(author) <> '' and length(author) <= 100),
+    content text not null,
+    constraint "only non-empty comment" check (trim(content) <> '' and length(content) <= 10000),
     language regconfig not null default 'english',
     fts tsvector not null generated always as (
         setweight(to_tsvector('simple', author), 'A') ||
@@ -54,8 +56,8 @@ grant select, insert on table comment to anon;
 
 alter table comment enable row level security;
 
-drop policy if exists "moderated_select" on comment;
-create policy "moderated_select" on comment for all to anon
+drop policy if exists "moderated" on comment;
+create policy "moderated" on comment for all to anon
 using ((
     with query (query) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb
@@ -115,10 +117,10 @@ as with httpg (qs) as (
 )
 select post_id, comment_id, xmlelement(name article, xmlattributes('card' as class),
     xmlelement(name address, comment.author),
-    xmlelement(name pre, case when qs ? 'search'
-        then ts_headline(comment.language, xmltext(comment.content)::text, websearch_to_tsquery(comment.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml
+    case when qs ? 'search'
+        then xmlelement(name pre, ts_headline(comment.language, xmltext(comment.content)::text, websearch_to_tsquery(comment.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml)
         else xmltext(comment.content)
-    end)
+    end
     -- (
     --     with recursive n (comment_id, n, i, ordinality) as (
     --         select comment_id, r.n, 0, ordinality
@@ -140,8 +142,42 @@ from comment, httpg
 
 grant select on table comment_html to anon;
 
+
+-- drop view if exists error cascade;
+create or replace view error (target, html)
+with (security_invoker)
+as
+with httpg (error, qs) as (
+    select
+        nullif(current_setting('httpg.errors', true), '')::jsonb->>'error',
+        nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
+),
+c (attname, conname) as (
+    select attname, conname::text
+    from httpg, pg_constraint c
+    join pg_attribute a on (a.attnum = any(c.conkey) and a.attrelid = c.conrelid)
+    where conname = substring(error, 'violates check constraint "([^"]+)"')
+    and connamespace = 'blog'::regnamespace
+),
+all_ (target, msg) as (
+    table c
+    union all
+    select null, error
+    from httpg
+    where error is not null
+)
+select target, xmlelement(name article, xmlattributes(
+    'card error' as class
+),
+    msg
+)::text
+from all_
+where msg is not null;
+
+grant select on table error to anon;
+
 -- drop view if exists post_html cascade;
-create or replace view post_html (post_id, body)
+create or replace view post_html (post_id, title, body)
 with (security_invoker)
 as with httpg (qs, params, comment_id) as (
     with query (query) as (
@@ -153,26 +189,27 @@ as with httpg (qs, params, comment_id) as (
         (query->'qs'->>'comment_id')::uuid
     from query
 ),
-entry (post_id, xml) as (
-    select post_id, xmlelement(name div,
+entry (post_id, title, xml) as (
+    select post_id, title, xmlelement(name div,
         xmlelement(name article, xmlattributes('card' as class),
+            xmlelement(name span, published_at::date),
             xmlelement(name a, xmlattributes(
                 url('/blog/query', jsonb_build_object(
-                    'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
-                    'params[]', post_id
-                )) as href
+                    'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+                    'params[]', title
+                )) || '#title' as href
             ),
-                xmlelement(name h2, post.title)
+                xmlelement(name h2, xmlattributes('title' as id), post.title)
             ),
-            xmlelement(name pre, case when qs ? 'search'
-                then ts_headline(post.language, post.content, websearch_to_tsquery(post.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml
+            case when qs ? 'search'
+                then xmlelement(name pre, ts_headline(post.language, post.content, websearch_to_tsquery(post.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml)
                 else post.content::xml
-            end),
+            end,
             xmlelement(name hr),
-            xmlelement(name h4, 'Comments'),
+            xmlelement(name h4, xmlattributes('comments' as id), 'Comments'),
             xmlelement(name form, xmlattributes(
                 'POST' as method,
-                '/blog/query' as action
+                '/blog/query#comments' as action
             ),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
@@ -183,7 +220,7 @@ entry (post_id, xml) as (
                             'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
                             'params[0]', post_id,
                             'comment_id', comment_id
-                        ))) header
+                        )) || '#comments') header
                     $$ as value
                 )),
                 xmlelement(name input, xmlattributes(
@@ -191,6 +228,7 @@ entry (post_id, xml) as (
                     'on_error' as name,
                     'select * from blog.head union all select body::text from blog.post_html where post_id = $4::uuid' as value
                 )),
+                (select html::xml from error where target = 'author'),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'params[0]' as name,
@@ -203,6 +241,7 @@ entry (post_id, xml) as (
                     'author' as placeholder,
                     params->>1 as value
                 )),
+                (select html::xml from error where target = 'content'),
                 xmlelement(name textarea, xmlattributes(
                     'params[2]' as name,
                     'comment' as placeholder,
@@ -220,25 +259,27 @@ entry (post_id, xml) as (
             ),
             xmlelement(name a, xmlattributes(
                 url('/blog/query', jsonb_build_object(
-                    'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
-                    'params[]', post_id,
+                    'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+                    'params[]', title,
                     'include_unmoderated', null
-                )) as href
+                )) || '#comments' as href
             ), 'Include unmoderated'),
-            xmlelement(name div, xmlattributes('messages' as class),
-                (
-                    select xmlagg(body order by published_at desc)
-                    from comment
-                    join comment_html c using (comment_id)
-                    where c.post_id = post.post_id
-                )
-            )
+            xmlelement(name div, xmlattributes('messages' as class), (
+                select xmlagg(body order by published_at desc)
+                from comment
+                join comment_html c using (comment_id)
+                where c.post_id = post.post_id
+                and case when qs ? 'search'
+                    then fts @@ websearch_to_tsquery(comment.language, qs->'params'->>0)
+                    else true
+                end
+            ))
         )
     )
     from httpg, post
     -- group by post_id
 )
-select post_id, xml
+select post_id, title, xml
 from entry
 ;
 
@@ -262,8 +303,17 @@ begin atomic
 end;
 
 grant execute on function search to anon;
+-- drop materialized view if exists ts_stat cascade;
+create materialized view if not exists ts_stat (word, nentry, ratio)
+as
+    select word, nentry, nentry::numeric / max(nentry) over ()
+    from ts_stat('select fts from blog.post')
+;
 
--- drop view if exists blog cascade;
+grant select on table ts_stat to anon;
+
+-- drop view if exists head cascade;
+create or replace view head (html) as select null; -- to allow resolution of self-depending 'head'::regclass
 create or replace view head (html)
 with (security_invoker)
 as
@@ -284,40 +334,57 @@ select $html$<!DOCTYPE html>
         ;
     " />
     <link rel="stylesheet" href="/cpres/index.css?v=4" />
+    <link rel="alternate" type="application/atom+xml"  title="Atom feed of blog posts"  href="/query?sql=select * from blog.atom" />
+    <link rel="alternate" type="application/atom+xml"  title="Atom feed of comments"  href="/query?sql=select * from blog.atom_comment" />
+    <style>
+        pre:has(code) {
+            max-height: 50vh;
+            min-width: 100%;
+            overflow: auto;
+            white-space: pre;
+
+            & code {
+                border: 0;
+            }
+        }
+
+        code {
+            border: 1px solid grey;
+            padding: 3px;
+        }
+    </style>
 </head>
 $html$
 union all
-select xmlelement(name a, xmlattributes(
-    url('/blog/query', jsonb_build_object(
-        'sql', 'select * from blog.blog'
-    )) as href
-),
-    xmlelement(name h1, 'docteurklein''s blog')
-)::text
-union all
-(with httpg (error, qs) as (
-    select
-        nullif(current_setting('httpg.errors', true), '')::jsonb->>'error',
-        nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
-)
-select xmlelement(name article, xmlattributes(
-    'card error' as class
-), coalesce(
-    (
-        with c (oid, name) as (
-            select c.oid, a.attname
-            from pg_constraint c
-            join pg_attribute a on (a.attnum = any(c.conkey) and a.attrelid = c.conrelid)
-            where conname = substring(error, 'violates check constraint "(\w+)"')
-            and connamespace = to_regnamespace('blog')
-        )
-        select string_agg(format('%s: %s', name, pg_get_constraintdef(oid)), ', ')
-        from c
+select xmlelement(name nav, xmlelement(name ul,
+    xmlelement(name li, xmlelement(name a, xmlattributes(
+        url('/blog/query', jsonb_build_object(
+            'sql', 'select * from blog.blog'
+        )) as href
     ),
-    error
+        xmlelement(name h1, 'docteurklein''s blog')
+    )),
+    xmlelement(name li, xmlelement(name a, xmlattributes(
+        url('/blog/query', jsonb_build_object(
+            'sql', 'select * from blog.atom'
+        )) as href,
+        'application/atom+xml' as type,
+        'alternate' as rel
+     ),
+        'Atom feed of blog posts'
+    )),
+    xmlelement(name li, xmlelement(name a, xmlattributes(
+        url('/blog/query', jsonb_build_object(
+            'sql', 'select * from blog.atom_comment'
+        )) as href,
+        'application/atom+xml' as type,
+        'alternate' as rel
+     ),
+        'Atom feed of comments'
+    ))
 ))::text
-from httpg
-where error is not null)
+union all
+    select html from error where target is null
 union all (
     with httpg (qs) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
@@ -330,11 +397,11 @@ union all (
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                $$
-                select * from blog.head
+                format($$
+                select * from %s
                 union all
-                select * from blog.search($1)
-                $$ as value
+                select * from %s($1)
+                $$, 'head'::regclass, 'blog.search') as value
             )),
             xmlelement(name input, xmlattributes(
                 'search' as type,
@@ -362,30 +429,29 @@ union all (
                     'params[]', word,
                     'search', null
                 )) as href,
-                format('font-size: calc(%s * 1ch', least(2, nentry::float)) as style
+                format('font-size: calc(%s * 1ch', least(5, greatest(1, ratio * 4))) as style
             ),
                 format('%s (%s)', word, nentry)
             ))
         ))
         from (
-            with stat as (
-                select * from ts_stat('select fts from blog.post')
-            ),
-            top as (
-                select word, nentry
-                from stat
+            with top as (
+                select *
+                from ts_stat
                 order by nentry desc
                 limit 5
             ),
             rand as (
-                select word, nentry
-                from stat
-                where not exists (select from top where stat.word = top.word)
+                select *
+                from ts_stat
+                where not exists (select from top where ts_stat.word = top.word)
                 order by random()
                 limit 5
             )
             table top
-            union table rand
+            union all
+            table rand
+            order by word            
         )
     )
     select xmlelement(name div, xmlattributes('grid' as class),
@@ -404,11 +470,11 @@ as table head
 union all
 select xmlelement(name a, xmlattributes(
     url('/blog/query', jsonb_build_object(
-        'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
-        'params[]', post_id
-    )) as href
+        'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+        'params[]', title
+    )) || '#title' as href
 ),
-    xmlelement(name h2, post.title)
+    xmlelement(name h2, format('%s: %s', published_at::date, title))
 )::text
 from post
 ;
@@ -429,11 +495,11 @@ entry (xml) as (
     select xmlagg(xmlelement(name entry,
         xmlelement(name title, title),
         xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
-            'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
-            'params[]', post_id
+            'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+            'params[]', title
         )) as href)),
         xmlelement(name id, 'urn:uuid:' || post_id),
-        xmlelement(name content, xmlattributes('html' as type), content::xml)
+        xmlelement(name content, xmlattributes('html' as type), content)
     ) order by published_at desc)
     from httpg, post
     limit 50
@@ -449,7 +515,7 @@ feed (xml) as (
     )
     from entry, httpg
 )
-select hstore('content-type', 'application/xml'), null
+select hstore('content-type', 'application/atom+xml'), null
 union all
 select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all
@@ -459,3 +525,49 @@ from feed
 
 
 grant select on table atom to anon;
+
+-- drop view if exists atom_comment;
+create or replace view atom_comment (header, body)
+with (security_invoker)
+as with httpg (scheme, host) as (
+    with q (q) as (
+        select current_setting('httpg.query', true)::jsonb
+    )
+    select q->>'scheme', q->>'host'
+    from q
+),
+entry (xml) as (
+    select xmlagg(xmlelement(name entry,
+        xmlelement(name title, format('%s commented on %s', author, title)),
+        xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
+            'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+            'params[]', post.title
+        )) as href)),
+        xmlelement(name id, 'urn:uuid:' || comment_id),
+        xmlelement(name content, xmlattributes('html' as type), xmltext(comment.content)::text)
+    ) order by comment.published_at desc)
+    from httpg, comment
+    join post using (post_id)
+    limit 50
+),
+feed (xml) as (
+    select xmlelement(name feed, xmlattributes('http://www.w3.org/2005/Atom' as xmlns),
+        xmlelement(name title, 'Comments on docteurklein''s blog'),
+        xmlelement(name link, url(format('%s://%s/query', scheme, host), jsonb_build_object(
+            'sql', 'select * from blog.blog'
+        ))),
+        xmlelement(name id, 'urn:uuid:019ef8ba-51f7-7b44-a223-e85ddb5bedeb'),
+        xml
+    )
+    from entry, httpg
+)
+select hstore('content-type', 'application/atom+xml'), null
+union all
+select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
+union all
+select null, xmlserialize(document xml as text indent)
+from feed
+;
+
+
+grant select on table atom_comment to anon;

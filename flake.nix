@@ -13,6 +13,11 @@
       url = "path:/home/florian/work/docteurklein/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+    # pg-jitter = {
+    #   url = "path:/home/florian/work/docteurklein/pg_jitter";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    #   flake = false;
+    # };
     # pyproject-nix = {
     #   url = "github:nix-community/pyproject.nix";
     #   inputs.nixpkgs.follows = "nixpkgs";
@@ -58,16 +63,20 @@
           doCheck = true;
         });
 
-        packages.pg_jitter = pkgs.stdenv.mkDerivation {
+        packages.pg_jitter = pkgs.stdenv.mkDerivation rec {
           pname = "pg_jitter";
-          version = "0.2.0";
+          version = "0.3.1";
 
           srcs = [
-            (pkgs.fetchFromGitHub {
-              owner = "vladich";
-              repo = "pg_jitter";
-              rev = "v0.2.0";
-              sha256 = "sha256-OYQQOU2/YujBSVUe6AXVbbY8+6ngw8xE5aNzZpZI+28=";
+            # (pkgs.fetchFromGitHub {
+            #   owner = "vladich";
+            #   repo = "pg_jitter";
+            #   rev = version;
+            #   sha256 = "sha256-OYQQOU2/YujBSVUe6AXVbbY8+6ngw8xE5aNzZpZI+28=";
+            #   name = "pg_jitter";
+            # })
+            (builtins.fetchGit {
+              url = /home/florian/work/docteurklein/pg_jitter;
               name = "pg_jitter";
             })
             (pkgs.fetchFromGitHub {
@@ -85,10 +94,10 @@
               name = "stringzilla";
             })
             (pkgs.fetchFromGitHub {
-              owner = "zherczeg";
+              owner = "vladich";
               repo = "sljit";
               rev = "master";
-              sha256 = "sha256-rpgcLzr+BYDhMguie7bvg6CppICkFpziXOq4hwTAvdw=";
+              sha256 = "sha256-SBD81k+QNnpry7UoYhjFn64tuizhS2m9vZt5ZBibjwI=";
               name = "sljit";
             })
           ];
@@ -101,7 +110,9 @@
 
           nativeBuildInputs = with pkgs; [
             cmake
+            python3
             postgresql_19.pg_config
+            pcre2.dev
           ];
 
           dontConfigure = true;
