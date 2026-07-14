@@ -113,7 +113,7 @@ pub struct QueryPart {
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
-    pub sql: String,
+    pub sql: Option<String>,
     pub cookies: BTreeMap<String, String>,
     #[serde(skip)]
     pub params: Vec<Param>,
@@ -242,26 +242,28 @@ where
 
         let order = qs.order.to_owned().or(body.order.to_owned());
 
-        let sql = qs.sql.or(body.sql).unwrap_or("select null".into());
-        let sql = match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
-            Ok(mut statements) => {
-                let mut allowlist = AllowList(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
-                let _ = Visit::visit(&statements, &mut allowlist);
+        let sql = qs.sql.or(body.sql);
+        let sql = match sql {
+            Some(sql) => match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
+                Ok(mut statements) => {
+                    let mut allowlist = AllowList(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
+                    let _ = Visit::visit(&statements, &mut allowlist);
 
-                if allowlist.0.is_err() {
-                    return Err(allowlist.0.into_response());
-                }
+                    if allowlist.0.is_err() {
+                        return Err(allowlist.0.into_response());
+                    }
 
-                if let Some(order) = order.to_owned() {
-                    let _ = VisitMut::visit(&mut statements, &mut VisitOrderBy(order));
-                    Ok(statements[0].to_string())
-                }
-                else {Ok(sql.to_string())}
-            },
-            Err(e) =>
-                // Ok(sql.to_string())
-                Err(HttpgError::RefusedSql {query: sql.to_string(), reason: Some(e.to_string())}.into_response()),
-        }?;
+                    if let Some(order) = order.to_owned() {
+                        let _ = VisitMut::visit(&mut statements, &mut VisitOrderBy(order));
+                        Ok(Some(statements[0].to_string()))
+                    }
+                    else {Ok(Some(sql.to_string()))}
+                },
+                Err(e) =>
+                    Err(HttpgError::RefusedSql {query: sql.to_string(), reason: Some(e.to_string())}.into_response()),
+            }?,
+            None => None,
+        };
 
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
@@ -377,7 +379,7 @@ mod tests {
         };
         let q = Query::from_request(req, &state).await.unwrap();
 
-        assert_eq!(q.sql, "".to_string());
+        assert_eq!(q.sql, Some("".to_string()));
         assert_eq!(q.params[0], Param::Text("b".into()));
         assert_eq!(q.params[1], Param::Text("c".into()));
     }
@@ -401,7 +403,7 @@ mod tests {
         };
         let q = Query::from_request(req, &state).await.unwrap();
 
-        assert_eq!(q.sql, "select 1".to_string());
+        assert_eq!(q.sql, Some("select 1".to_string()));
         assert_eq!(q.params[0], Param::Text("b".into()));
         assert_eq!(q.params[1], Param::Text("c".into()));
     }

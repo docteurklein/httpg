@@ -37,7 +37,7 @@
     "username": "postgres",
     "database": "httpg",
     "connTimeoutSecs": 10,
-    "disableConnection": false
-    // "allowStatementExecutionsAgainst": ["127.0.0.1/*", "localhost/*", "10.250.0.2/*"]
+    "disableConnection": false,
+    "allowStatementExecutionsAgainst": ["127.0.0.1/*", "localhost/*", "10.250.0.2/*"]
   }
 }

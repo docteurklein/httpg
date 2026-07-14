@@ -202,6 +202,7 @@
             multimarkdown
             postgresql_19
             postgresql_19.pg_config
+            postgresql19Packages.postgis
             cargo cargo-watch cargo-shear clippy rustc rust-analyzer openssl.dev pkg-config
             mold clang
             biscuit-cli

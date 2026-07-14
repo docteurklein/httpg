@@ -32,7 +32,7 @@ drop policy if exists "published" on post;
 create policy "published" on post for all to anon
 using (published_at is not null);
 
-drop table if exists comment cascade;
+-- drop table if exists comment cascade;
 create table if not exists comment (
     comment_id uuid primary key default uuidv7(),
     author text not null,
@@ -116,27 +116,12 @@ as with httpg (qs) as (
     from query
 )
 select post_id, comment_id, xmlelement(name article, xmlattributes('card' as class),
-    xmlelement(name address, comment.author),
+    xmlelement(name address, format('%s (%s)', author, published_at)),
     case when qs ? 'search'
-        then xmlelement(name pre, ts_headline(comment.language, xmltext(comment.content)::text, websearch_to_tsquery(comment.language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml)
-        else xmltext(comment.content)
+        then xmlelement(name pre, ts_headline(language, xmltext(content)::text, websearch_to_tsquery(language, qs->'params'->>0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2')::xml)
+        else xmltext(content)
     end
-    -- (
-    --     with recursive n (comment_id, n, i, ordinality) as (
-    --         select comment_id, r.n, 0, ordinality
-    --         from unnest(xpath('/root/*[name() != ''script'']', xmlelement(name root, comment.content::xml))) with ordinality r(n)
-    --         union all
-    --         select comment_id, c.n, i + 1, c.ordinality
-    --         from n, unnest(xpath('/root/*/child::*[name() != ''script'']', xmlelement(name root, n.n))) with ordinality c(n)
-    --         -- where i < 20
-    --     )
-    --     select xmlagg(n.n order by i, ordinality)
-    --     from n
-    --     group by comment_id
-    --     -- order by i, ordinality
-    -- )),
 )
--- order by comment.published_at desc
 from comment, httpg
 ;
 
@@ -352,6 +337,8 @@ select $html$<!DOCTYPE html>
             border: 1px solid grey;
             padding: 3px;
         }
+
+         frea
     </style>
 </head>
 $html$

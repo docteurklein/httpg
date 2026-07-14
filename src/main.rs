@@ -111,8 +111,9 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/query/{cursor}", post(post_query))
         .route("/email", post(email))
         .route("/{path}/email", post(email))
-        .route("/http", get(http).post(http))
-        .route("/{path}/http", get(http).post(http))
+        // .route("/http", get(http).post(http))
+        // .route("/{path}/http", get(http).post(http))
+        .route("/webpush", get(web_push).post(web_push))
         .route("/{path}/webpush", get(web_push).post(web_push))
         // .layer(axum::middleware::from_fn_with_state(state.clone(), pre))
         .route("/login", get(login).post(login))
@@ -199,12 +200,12 @@ async fn main() -> Result<(), HttpgError> {
 #[debug_handler]
 async fn index(
     state: State<AppState>,
-    path: Option<Path<String>>,
+    _path: Option<Path<String>>,
     biscuit: Option<extract::biscuit::Biscuit>,
     mut query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    query.sql = state.config.index_sql.to_owned();
+    query.sql = Some(state.config.index_sql.to_owned());
 
     stream_query(state.to_owned(), biscuit, None, query).await
 }
@@ -339,75 +340,77 @@ async fn email(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
+    if let Some(sql) = query.sql.as_ref() {
+        let rows = tx.query_typed_raw(sql, sql_params).await?;
 
-    let mut mailer = AsyncSmtpTransport::<Tokio1Executor>::from_url(&smtp_relay)?;
+        let mut mailer = AsyncSmtpTransport::<Tokio1Executor>::from_url(&smtp_relay)?;
 
-    if let Some(smtp_password) = smtp_password {
-        let creds = Credentials::new(smtp_user, smtp_password);
-        mailer = mailer.credentials(creds);
+        if let Some(smtp_password) = smtp_password {
+            let creds = Credentials::new(smtp_user, smtp_password);
+            mailer = mailer.credentials(creds);
+        }
+        let mailer = mailer.build();
+
+        rows.err_into::<HttpgError>().try_for_each(async |row| {
+            let email = Message::builder()
+                .sender(smtp_sender.parse()?)
+                .from(row.get::<&str, &str>("from").parse()?)
+                .to(row.get::<&str, &str>("to").parse()?)
+                .subject(row.get::<&str, &str>("subject"))
+                .header(ContentType::TEXT_HTML)
+                .body(row.get::<&str, &str>("html").to_string())
+            ?;
+            mailer.send(email).await?;
+            Ok(())
+        }).await?;
+
+        tx.commit().await?;
     }
-    let mailer = mailer.build();
 
-    rows.err_into::<HttpgError>().try_for_each(async |row| {
-        let email = Message::builder()
-            .sender(smtp_sender.parse()?)
-            .from(row.get::<&str, &str>("from").parse()?)
-            .to(row.get::<&str, &str>("to").parse()?)
-            .subject(row.get::<&str, &str>("subject"))
-            .header(ContentType::TEXT_HTML)
-            .body(row.get::<&str, &str>("html").to_string())
-        ?;
-        mailer.send(email).await?;
-        Ok(())
-    }).await?;
-
-    tx.commit().await?;
-
-    Ok(query.redirect
-        .map(|r| Redirect::to(&r).into_response())
+    Ok(query.redirect.as_ref()
+        .map(|r| Redirect::to(r).into_response())
         .unwrap_or(NoContent.into_response())
     )
 }
 
-#[debug_handler]
-async fn http(
-    State(AppState {write_pool, config: HttpgConfig { anon_role, ..}, ..}): State<AppState>,
-    biscuit: Option<extract::biscuit::Biscuit>,
-    query: extract::query::Query,
-) -> Result<impl IntoResponse, HttpgError> {
+// #[debug_handler]
+// async fn http(
+//     State(AppState {write_pool, config: HttpgConfig { anon_role, ..}, ..}): State<AppState>,
+//     biscuit: Option<extract::biscuit::Biscuit>,
+//     query: extract::query::Query,
+// ) -> Result<impl IntoResponse, HttpgError> {
 
-    let mut conn = write_pool.get().await?;
-    let mut tx = conn.build_transaction()
-        .isolation_level(IsolationLevel::Serializable)
-        .start().await
-    ?;
+//     let mut conn = write_pool.get().await?;
+//     let mut tx = conn.build_transaction()
+//         .isolation_level(IsolationLevel::Serializable)
+//         .start().await
+//     ?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+//     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
-    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
-    }).collect();
+//     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+//         (param as &(dyn ToSql + Sync), param.to_owned().into())
+//     }).collect();
 
-    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
+//     let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
 
-    let client = reqwest::Client::new();
-    rows.err_into::<HttpgError>().try_for_each(async |row| {
-        let builder = match row.get::<&str, &str>("method") {
-            "POST" =>  client.post(row.get::<&str, &str>("url")),
-            _ =>  client.get(row.get::<&str, &str>("url")),
-        };
-        let _res = builder.send().await?;
-        Ok(())
-    }).await?;
+//     let client = reqwest::Client::new();
+//     rows.err_into::<HttpgError>().try_for_each(async |row| {
+//         let builder = match row.get::<&str, &str>("method") {
+//             "POST" =>  client.post(row.get::<&str, &str>("url")),
+//             _ =>  client.get(row.get::<&str, &str>("url")),
+//         };
+//         let _res = builder.send().await?;
+//         Ok(())
+//     }).await?;
 
-    tx.commit().await?;
+//     tx.commit().await?;
 
-    Ok(query.redirect
-        .map(|r| Redirect::to(&r).into_response())
-        .unwrap_or(NoContent.into_response())
-    )
-}
+//     Ok(query.redirect
+//         .map(|r| Redirect::to(&r).into_response())
+//         .unwrap_or(NoContent.into_response())
+//     )
+// }
 
 #[debug_handler]
 async fn web_push(
@@ -428,34 +431,39 @@ async fn web_push(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = tx.query_typed_raw(query.sql.as_ref(), sql_params).await?;
+    let n = if let Some(sql) = query.sql.as_ref() {
+        let rows = tx.query_typed_raw(sql, sql_params).await?;
 
-    let client = HyperWebPushClient::new();
+        let client = HyperWebPushClient::new();
 
-    let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
+        let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
 
-    let n = rows.err_into::<HttpgError>().try_fold(0, async |acc, row| {
-        let subscription_info = SubscriptionInfo::new(
-            row.get::<&str, &str>("endpoint"),
-            row.get::<&str, &str>("p256dh"),
-            row.get::<&str, &str>("auth"),
-        );
+        let n = rows.err_into::<HttpgError>().try_fold(0, async |acc, row| {
+            let subscription_info = SubscriptionInfo::new(
+                row.get::<&str, &str>("endpoint"),
+                row.get::<&str, &str>("p256dh"),
+                row.get::<&str, &str>("auth"),
+            );
 
-        let mut builder = WebPushMessageBuilder::new(&subscription_info);
-        builder.set_payload(ContentEncoding::Aes128Gcm, row.get::<&str, &[u8]>("content"));
+            let mut builder = WebPushMessageBuilder::new(&subscription_info);
+            builder.set_payload(ContentEncoding::Aes128Gcm, row.get::<&str, &[u8]>("content"));
 
-        let sig_builder = VapidSignatureBuilder::from_pem(
-            &private_key,
-            &subscription_info
-        )?.build()?;
+            let sig_builder = VapidSignatureBuilder::from_pem(
+                &private_key,
+                &subscription_info
+            )?.build()?;
 
-        builder.set_vapid_signature(sig_builder);
+            builder.set_vapid_signature(sig_builder);
 
-        client.send(builder.build()?).await?;
-        Ok(acc + 1)
-    }).await;
+            client.send(builder.build()?).await?;
+            Ok(acc + 1)
+        }).await;
 
-    tx.commit().await?;
+        tx.commit().await?;
+        n
+    } else {
+        Ok(0)
+    };
 
     let redirect = query.redirect.as_deref().unwrap_or("/").parse::<Uri>()?;
     let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
@@ -488,7 +496,7 @@ async fn web_push(
 async fn stream_query(
     State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
-    path: Option<Path<String>>,
+    _path: Option<Path<String>>,
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
@@ -509,10 +517,13 @@ async fn stream_query(
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
 
-    let rows = if query.body.contains_key("stream") {
-        CancelStream::new(tx.query_typed_raw(&query.sql, sql_params).await?, guard)
-    } else {
-        CancelStream::from_vec(tx.query_typed(&query.sql, &sql_params).await?, guard)
+    let rows = match &query.sql {
+        Some(sql) => if query.body.contains_key("stream") {
+            CancelStream::new(tx.query_typed_raw(sql, sql_params).await?, guard)
+        } else {
+            CancelStream::from_vec(tx.query_typed(sql, &sql_params).await?, guard)
+        },
+        None => CancelStream::from_vec(vec![], guard),
     };
 
     Ok(response::HttpResult {
@@ -528,6 +539,9 @@ async fn post_query(
     query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError>
 {
+    if query.sql.is_none() {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param as &(dyn ToSql + Sync), param.to_owned().into())
     }).collect();
@@ -539,7 +553,7 @@ async fn post_query(
 
         let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
 
-        let result = tx.query_typed(&query.sql, &sql_params).await;
+        let result = tx.query_typed(query.sql.as_ref().unwrap(), &sql_params).await;
 
         match result {
             Ok(rows) => {

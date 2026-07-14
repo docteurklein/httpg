@@ -151,7 +151,7 @@ input.price {
     --gap: 1rem;
 
     display: grid;
-    grid-gap: var(--gap);
+    gap: var(--gap);
     grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--min)), 1fr));
 
     &.media {
@@ -298,4 +298,16 @@ a.whatsapp {
 
 pre {
     text-wrap: wrap;
+}
+
+body {
+  display: grid;
+  grid-template-columns:
+    1fr
+    min(60rem, 100%)
+    1fr;
+}
+
+body > * {
+  grid-column: 2;
 }

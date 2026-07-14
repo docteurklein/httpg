@@ -184,7 +184,7 @@ mod tests {
         let conn = cfg.read_pool().unwrap().get().await.unwrap();
 
         let query = Query {
-            sql: "select 'a'::text".into(),
+            sql: Some("select 'a'::text".into()),
             accept: Some("text/html".to_string()),
             ..Default::default()
         };
@@ -193,7 +193,7 @@ mod tests {
             (param, param.to_owned().into())
         }).collect();
 
-        let rows = conn.query_typed_raw(query.sql.as_ref(), sql_params).await.unwrap();
+        let rows = conn.query_typed_raw(query.sql.as_ref().unwrap(), sql_params).await.unwrap();
 
         let guard = crate::postgres::QueryGuard {
             cancel_token: conn.cancel_token(),

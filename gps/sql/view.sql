@@ -130,10 +130,10 @@ grant select on table head to anon;
 
 drop materialized view if exists gebco_geo cascade;
 create materialized view if not exists gebco_geo (geom, rast) as
-select null::geometry, null::raster;
--- select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
--- from gebco
--- group by rast;
+-- select null::geometry, null::raster;
+select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
+from gebco
+group by rast;
 
 grant select on table gebco_geo to anon;
 
@@ -169,7 +169,8 @@ select xmlelement(name div,
                 )
             )
             from elevation
-        ))
+        )),
+        xmltext('GEBCO Compilation Group (2025) GEBCO 2025 Grid (doi:10.5285/ 37c52e96-24ea-67ce-e063-7086abc05f29)')
     )
 ), run_id
 from run

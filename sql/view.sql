@@ -1332,3 +1332,5 @@ Vous pouvez à tout moment effacer ces données optionnelles, voire même l'enti
 $$)
 ;
 grant select on table about to person, anon;
+
+select * from 
