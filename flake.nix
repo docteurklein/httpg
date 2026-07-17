@@ -215,7 +215,7 @@
             osmium-tool
           ];
           PSQLRC = "./.psqlrc";
-          PGHOST = "10.250.0.2";
+          PGHOST = "10.250.1.2";
           HTTPG_PRIVATE_KEY_FILE = "private-key-file";
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
@@ -229,8 +229,8 @@
           HTTPG_PG_USER = "httpg";
           HTTPG_PG_PASSWORD = "pg-password";
           HTTPG_PG_DBNAME = "httpg";
-          HTTPG_PG_READ_HOST = "10.250.0.2";
-          HTTPG_PG_WRITE_HOST = "10.250.0.2";
+          HTTPG_PG_READ_HOST = "10.250.2.2";
+          HTTPG_PG_WRITE_HOST = "10.250.1.2";
           PORT = "3000";
           RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
           RUST_BACKTRACE = "1";
@@ -249,7 +249,7 @@
 
           config = {
             containers.httpg = {
-              ephemeral = false;
+              ephemeral = true;
               autoStart = true;
 
               extraFlags = [
@@ -259,10 +259,9 @@
                 "--private-users-ownership=chown"
               ];
 
-              extra = {
-                addressPrefix = "10.250.0";
-                enableSSH = false;
-              };
+              privateNetwork = true;
+              hostBridge = "br0";
+              localAddress = "10.250.0.2/16";
 
               bindMounts = {
                 "${builtins.getEnv "PWD"}/private-key-file".isReadOnly = true;
@@ -283,8 +282,14 @@
         
                 system.stateVersion = "25.11";
 
-                networking.firewall.allowedTCPPorts = [ 1025 1080 3000 5432 ];
+                networking.firewall.allowedTCPPorts = [ 1025 1080 3000 ];
                 networking.useDHCP = false;
+
+                services.mailcatcher = {
+                  enable = true;
+                  http.ip = "0.0";
+                  smtp.ip = "0.0";
+                };
 
                 systemd.services.httpg = {
                   enable = false;
@@ -306,14 +311,39 @@
                       "PG_USER=httpg"
                       "PG_PASSWORD=${builtins.getEnv "PWD"}/pg-password"
                       "PG_DBNAME=httpg"
-                      "PG_READ_HOST=10.250.0.2"
-                      "PG_WRITE_HOST=10.250.0.2"
+                      "PG_READ_HOST=10.250.2.2"
+                      "PG_WRITE_HOST=10.250.1.2"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
                       "RUST_BACKTRACE=1"
                     ];
                   };
                 };
+              });
+            };
+
+            containers.pgprimary = {
+              ephemeral = true;
+              autoStart = true;
+
+              extraFlags = [
+                "--drop-capability=CAP_SYS_CHROOT"
+                "-U"
+                "--private-users=pick"
+                "--private-users-ownership=chown"
+              ];
+
+              privateNetwork = true;
+              hostBridge = "br0";
+              localAddress = "10.250.1.2/16";
+
+              config = ({ pkgs, ... }: {
+                boot.isNspawnContainer = true;
+        
+                system.stateVersion = "25.11";
+
+                networking.firewall.allowedTCPPorts = [ 5432 ];
+                networking.useDHCP = false;
 
                 users.users.postgres = {
                   name = "postgres";
@@ -363,7 +393,152 @@
                   initialScript = pkgs.writeText "backend-init-script" ''
                     CREATE ROLE postgres WITH SUPERUSER LOGIN CREATEDB;
                     CREATE USER httpg;
+                    SELECT * FROM pg_create_physical_replication_slot('replica1');
                   '';
+
+                  authentication = pkgs.lib.mkForce ''
+                    local all         all               trust
+                    host  all         all   0.0.0.0/0   trust
+                    host  replication all   0.0.0.0/0   trust
+                  '';
+
+                  settings = {
+                    allow_alter_system = false;
+                    wal_level = "replica";
+                    log_connections = true;
+                    log_disconnections = true;
+                    log_temp_files = 0;
+                    # logging_collector = true;
+                    log_destination = nixpkgs.lib.mkForce "stderr";
+                    track_functions = "all";
+                    # log_min_messages = "DEBUG1";
+                    log_statement = "all";
+                    # "auto_explain.log_min_duration" = 0;
+                    "auto_explain.log_nested_statements" = false;
+                    "auto_explain.log_format" = "json";
+                    "auto_explain.log_analyze" = true;
+                    "auto_explain.log_timing" = true;
+                    "auto_explain.log_buffers" = true;
+                    "auto_explain.log_verbose" = true;
+                    "auto_explain.log_triggers" = true;
+                    # "auto_explain.log_parameter_values" = true;
+                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    max_connections = 100;
+                    # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
+                    # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
+                    # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
+                    # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
+                    work_mem = "20MB";
+                    maintenance_work_mem = "1GB";
+                    checkpoint_completion_target = 0.9;
+                    wal_buffers = "16MB";
+                    default_statistics_target = 100;
+                    random_page_cost = 1.1;
+                    effective_io_concurrency = 200;
+                    min_wal_size = "1GB";
+                    max_wal_size = "4GB";
+                    max_wal_senders = 6;
+                    max_worker_processes = 6;
+                    max_parallel_workers_per_gather = 3;
+                    max_parallel_workers = 6;
+                    max_parallel_maintenance_workers = 3;
+                    client_connection_check_interval = "2s";
+                    jit = "off";
+                    jit_provider = "pg_jitter";
+                    "pg_jitter.backend" = "sljit";
+                    io_method = "io_uring";
+                  };
+                };
+              });
+            };
+
+            containers.pgreplica = {
+              ephemeral = true;
+              autoStart = true;
+
+              extraFlags = [
+                "--drop-capability=CAP_SYS_CHROOT"
+                "-U"
+                "--private-users=pick"
+                "--private-users-ownership=chown"
+              ];
+
+              privateNetwork = true;
+              hostBridge = "br0";
+              localAddress = "10.250.2.2/16";
+
+              config = ({ pkgs, ... }: {
+                boot.isNspawnContainer = true;
+        
+                system.stateVersion = "25.11";
+
+                networking.firewall.allowedTCPPorts = [ 5432 ];
+                networking.useDHCP = false;
+
+                users.users.postgres = {
+                  name = "postgres";
+                  group = "postgres";
+                  isSystemUser = true;
+                };
+
+                users.groups.postgres = { };
+
+                systemd.services.pg_basebackup = {
+                  enable = true;
+                  requiredBy = [ "postgresql.target" ];
+                  before = [ "postgresql.service" "postgresql-setup.service" ];
+                  serviceConfig = {
+                    Type = "oneshot";
+                    ExecStart = pkgs.lib.getExe (pkgs.writeShellScriptBin "init" ''
+                      set -exu
+                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do sleep 2; done;
+                      ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
+                      touch /var/lib/postgresql/19/standby.signal
+                      chown -R postgres: /var/lib/postgresql/19
+                    '');
+                    # User = "postgres";
+                    # Group = "postgres";
+                  };
+                };
+
+                services.postgresql = {
+                  enable = true;
+                  # enableJIT = true;
+                  package = pkgs.postgresql_19;
+                  extensions = with pkgs.postgresql19Packages; [
+                    (wal2json.overrideAttrs (prev: {
+                      # version = "git";
+                      src = pkgs.fetchFromGitHub {
+                        owner = "eulerto";
+                        repo = "wal2json";
+                        rev = "master";
+                        sha256 = "sha256-fXEdiJ9yjuEJbJsCG0fnYdhiNzynnxDL3M5To4517jM=";
+                      };
+                    }))
+                    # pg_ivm
+                    # pg_hint_plan
+                    # plv8
+                    pgvector
+                    pgsql-http
+                    postgis
+                    pgrouting
+                    h3-pg
+                    # self'.packages.pg_jitter
+                  ];
+
+                  enableTCPIP = true;
+                  ensureDatabases = [ "postgres" "httpg" ];
+                  ensureUsers = [
+                    {
+                      name = "postgres";
+                      ensureDBOwnership = true;
+                    }
+                    {
+                      name = "httpg";
+                      ensureDBOwnership = true;
+                    }
+                  ];
+                  initialScript = null;
 
                   authentication = pkgs.lib.mkForce ''
                     local all      all               trust
@@ -371,6 +546,8 @@
                   '';
 
                   settings = {
+                    primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
+                    primary_slot_name = "replica1";
                     allow_alter_system = false;
                     wal_level = "logical";
                     log_connections = true;
@@ -389,7 +566,7 @@
                     "auto_explain.log_buffers" = true;
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
-                    "auto_explain.log_parameter_values" = true;
+                    # "auto_explain.log_parameter_values" = true;
                     shared_preload_libraries = "auto_explain,pg_stat_statements";
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
@@ -415,12 +592,6 @@
                     "pg_jitter.backend" = "sljit";
                     io_method = "io_uring";
                   };
-                };
-
-                services.mailcatcher = {
-                  enable = true;
-                  http.ip = "0.0";
-                  smtp.ip = "0.0";
                 };
               });
             };
