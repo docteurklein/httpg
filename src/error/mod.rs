@@ -142,6 +142,13 @@ pub enum HttpgError {
     InvalidColType {
         type_: postgres_types::Type,
     },
+    Unknown,
+}
+
+impl From<HttpgError> for Response<axum::body::Body> {
+    fn from(val: HttpgError) -> Self {
+        val.into_response()
+    }
 }
 
 impl IntoResponse for HttpgError {

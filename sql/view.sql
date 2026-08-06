@@ -1333,4 +1333,3 @@ $$)
 ;
 grant select on table about to person, anon;
 
-select * from 

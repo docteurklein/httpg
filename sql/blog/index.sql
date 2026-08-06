@@ -416,7 +416,7 @@ union all (
                     'params[]', word,
                     'search', null
                 )) as href,
-                format('font-size: calc(%s * 1ch', least(5, greatest(1, ratio * 4))) as style
+                format('font-size: calc(%s * 1ch)', round(least(5, greatest(1, ratio * 4)), 2)) as style
             ),
                 format('%s (%s)', word, nentry)
             ))

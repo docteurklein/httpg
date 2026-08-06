@@ -234,7 +234,7 @@ select xmlelement(name ul, xmlattributes('cloud' as class),
             'params[]', word,
             'search', null
         )) as href,
-        format('font-size: calc(%s * 1ch', least(2, nentry::float)) as style
+        format('font-size: calc(%s * 1ch)', least(2, nentry::float)) as style
     ),
         format('%s (%s)', word, nentry)
     ))

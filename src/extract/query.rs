@@ -32,6 +32,15 @@ pub enum Param {
     File(File),
 }
 
+impl Param {
+    pub fn tosql_sync(&self) -> &(dyn ToSql + Sync)
+    where
+        Self: Sized + Sync
+    {
+        self
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum Type {
@@ -243,27 +252,7 @@ where
         let order = qs.order.to_owned().or(body.order.to_owned());
 
         let sql = qs.sql.or(body.sql);
-        let sql = match sql {
-            Some(sql) => match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
-                Ok(mut statements) => {
-                    let mut allowlist = AllowList(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
-                    let _ = Visit::visit(&statements, &mut allowlist);
-
-                    if allowlist.0.is_err() {
-                        return Err(allowlist.0.into_response());
-                    }
-
-                    if let Some(order) = order.to_owned() {
-                        let _ = VisitMut::visit(&mut statements, &mut VisitOrderBy(order));
-                        Ok(Some(statements[0].to_string()))
-                    }
-                    else {Ok(Some(sql.to_string()))}
-                },
-                Err(e) =>
-                    Err(HttpgError::RefusedSql {query: sql.to_string(), reason: Some(e.to_string())}.into_response()),
-            }?,
-            None => None,
-        };
+        let sql = parse_sql(&order, sql)?;
 
         let referer_header = headers.get(REFERER);
         let referer = referer_header.and_then(|value| value.to_str().ok());
@@ -275,8 +264,9 @@ where
         };
 
         let on_error = qs.on_error.to_owned().or(body.on_error.to_owned());
+        let on_error = parse_sql(&order, on_error)?;
 
-        let params: Result<Vec<Param>, Response> = qs.params.to_owned()
+        let params: Result<Vec<Param>, HttpgError> = qs.params.to_owned()
             .unwrap_or_default()
             .iter()
             .chain(body.params.to_owned()
@@ -292,15 +282,15 @@ where
                     Type::Jsonb => Ok(Param::Jsonb(param.to_owned())),
                     Type::Bytea => Ok(Param::Bytea(
                         serde_json::to_vec(param)
-                        .map_err(|_| HttpgError::InvalidParam { i, param: param.to_string() }.into_response())?
+                        .map_err(|_| HttpgError::InvalidParam { i, param: param.to_string() })?
                     )),
-                    _ => Ok(Param::Text(param.as_str().unwrap().to_string())),
+                    _ => param.as_str().map(|p| Param::Text(p.to_string())).ok_or(HttpgError::InvalidParam { i, param: param.to_string() }),
                 }
             })
             .collect()
         ;
         let params = [
-            params?,
+            params.map_err(|e| e.into_response())?,
             files.to_owned().iter().map(|f| Param::File(f.to_owned())).collect()
         ].concat();
 
@@ -352,7 +342,34 @@ where
     }
 }
 
+fn parse_sql(order: &Option<BTreeMap<String, serde_json::Value>>, root_sql: Option<String>) -> Result<Option<String>, HttpgError> {
+    let sql = match &root_sql {
+        Some(sql) => match Parser::parse_sql(&PostgreSqlDialect{}, sql.as_str()) {
+            Ok(mut statements) => {
+                let mut allowlist = AllowList(Err(HttpgError::RefusedSql { query: sql.clone(), reason: None }));
+                let _ = Visit::visit(&statements, &mut allowlist);
+
+                if allowlist.0.is_err() {
+                    return allowlist.0.map(|_| root_sql.clone());
+                }
+
+                if let Some(order) = order.to_owned() {
+                    let _ = VisitMut::visit(&mut statements, &mut VisitOrderBy(order));
+                    Ok(statements.first().map(|s|s.to_string()))
+                }
+                else {Ok(Some(sql.to_string()))}
+            },
+            Err(e) =>
+                Err(HttpgError::RefusedSql {query: sql.to_string(), reason: Some(e.to_string())}),
+        }?,
+        None => None,
+    };
+    Ok(sql)
+}
+
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
 

@@ -28,7 +28,7 @@ where
 
                 let sql: Vec<(String,)> = authorizer.query("sql($sql) <- sql($sql)")?;
 
-                Ok(Some(Biscuit(sql.into_iter().map(|t| t.0).collect())))
+                Ok(Some(Self(sql.into_iter().map(|t| t.0).collect())))
             }
             _ => Ok(None)
         }

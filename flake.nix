@@ -63,7 +63,7 @@
           doCheck = true;
         });
 
-        packages.pg_jitter = pkgs.stdenv.mkDerivation rec {
+        packages.pg_jitter = pkgs.stdenv.mkDerivation {
           pname = "pg_jitter";
           version = "0.3.1";
 
@@ -292,7 +292,7 @@
                 };
 
                 systemd.services.httpg = {
-                  enable = false;
+                  enable = true;
                   wantedBy = [ "default.target" ];
                   serviceConfig = {
                     Type = "simple";
@@ -323,7 +323,7 @@
             };
 
             containers.pgprimary = {
-              ephemeral = true;
+              ephemeral = false;
               autoStart = true;
 
               extraFlags = [
@@ -422,7 +422,8 @@
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
                     # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
+                    "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
@@ -453,7 +454,7 @@
             };
 
             containers.pgreplica = {
-              ephemeral = true;
+              ephemeral = false;
               autoStart = true;
 
               extraFlags = [
@@ -491,7 +492,12 @@
                     Type = "oneshot";
                     ExecStart = pkgs.lib.getExe (pkgs.writeShellScriptBin "init" ''
                       set -exu
-                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do sleep 2; done;
+                      if test -e /var/lib/postgresql/19/PG_VERSION; then
+                        exit
+                      fi
+                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
+                        sleep 2
+                      done
                       ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
                       touch /var/lib/postgresql/19/standby.signal
                       chown -R postgres: /var/lib/postgresql/19
@@ -567,7 +573,8 @@
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
                     # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
+                    "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections

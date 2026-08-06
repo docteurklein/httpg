@@ -3,6 +3,7 @@ use std::{collections::HashMap, pin::Pin, task::{Context, Poll}};
 use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
 use bytes::{BufMut, BytesMut};
 use futures::{Stream, StreamExt, stream};
+use http::HeaderMap;
 use postgres_types::{Type};
 use tokio_postgres::{Row, RowStream};
 
@@ -70,8 +71,8 @@ impl Stream for CancelStream {
                 for (i, col) in row.columns().iter().enumerate() {
                     match col.name() {
                         "status" => {
-                            if let Ok(status) = row.try_get::<usize, i32>(i) {
-                                res.status = Some(status as u16);
+                            if let Ok(status) = row.try_get::<usize, i8>(i) {
+                                res.status = u16::try_from(status).ok();
                             }
                         },
                         "header" => {
@@ -119,7 +120,8 @@ impl IntoResponse for HttpResult {
             return Redirect::to(&redirect).into_response();
         }
         let mut builder = Response::builder();
-        let headers = builder.headers_mut().unwrap();
+        let mut d = HeaderMap::new();
+        let headers = builder.headers_mut().unwrap_or(&mut d);
 
         let accept: Option<HeaderValue> = self.query.accept.and_then(|a| a.parse().ok());
         headers.insert(CONTENT_TYPE, match accept {
@@ -171,6 +173,7 @@ impl IntoResponse for HttpResult {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use axum::response::IntoResponse;
     use conf::Conf;

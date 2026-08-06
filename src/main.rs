@@ -228,7 +228,7 @@ async fn login(
     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
+        (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
     let facts = tx.query_typed(login_query.as_ref(), sql_params.as_slice()).await?;
@@ -337,7 +337,7 @@ async fn email(
     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
+        (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
     if let Some(sql) = query.sql.as_ref() {
@@ -428,7 +428,7 @@ async fn web_push(
     let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
+        (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
     let n = if let Some(sql) = query.sql.as_ref() {
@@ -514,7 +514,7 @@ async fn stream_query(
     let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
+        (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
     let rows = match &query.sql {
@@ -543,7 +543,7 @@ async fn post_query(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
-        (param as &(dyn ToSql + Sync), param.to_owned().into())
+        (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
     let mut retry = 0;
@@ -553,7 +553,7 @@ async fn post_query(
 
         let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
 
-        let result = tx.query_typed(query.sql.as_ref().unwrap(), &sql_params).await;
+        let result = tx.query_typed(query.sql.as_ref().ok_or(HttpgError::Unknown)?, &sql_params).await;
 
         match result {
             Ok(rows) => {

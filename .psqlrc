@@ -1,4 +1,4 @@
 \set ON_ERROR_STOP 1
-\set PROMPT1 '%n@%M > '
+\set PROMPT1 '%n@%M (%i) [%S]\n> '
 \set PROMPT2 '> '
 \pset null '␀'
