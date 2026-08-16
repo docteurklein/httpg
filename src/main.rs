@@ -6,9 +6,9 @@ mod postgres;
 
 use http::Uri;
 use axum::{
-    Router, extract::{DefaultBodyLimit, State, Path}, http::{
+    Router, extract::{DefaultBodyLimit, Path, State}, http::{
         StatusCode, header::SET_COOKIE,
-    }, response::{IntoResponse, NoContent, Redirect}, routing::{get, post}
+    }, response::{IntoResponse, NoContent, Redirect, Sse, sse::Event}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
@@ -16,10 +16,9 @@ use axum_macros::debug_handler;
 use conf::Conf;
 
 use cookie::time::{Duration, OffsetDateTime};
-use futures::{TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use lettre::{
-    message::header::ContentType, transport::smtp::authentication::Credentials, AsyncSmtpTransport,
-    AsyncTransport, Message, Tokio1Executor,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType, transport::smtp::authentication::{Credentials, Mechanism::Login}
 };
 use serde_json::json;
 use tower::builder::ServiceBuilder;
@@ -106,6 +105,7 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
+        .route("/sse/{channel}", get(sse_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
         .route("/{path}/query/{cursor}", post(post_query))
@@ -532,6 +532,44 @@ async fn stream_query(
     })
 }
 
+#[debug_handler]
+async fn sse_query(
+    State(AppState {config, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    Path(channel): Path<String>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError> {
+
+    let (client, mut conn) = config.pg.connect().await?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, HttpgError>>();
+
+    let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+    tokio::spawn(async move {
+        client.simple_query_raw(&format!("listen {channel}")).await.unwrap();
+        while let Some(Ok(m)) = stream.next().await {
+            match m {
+                 tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
+                 tokio_postgres::AsyncMessage::Notification(n) => {
+                     tx.send(Ok(
+                        Event::default().data(n.payload())
+                     )).unwrap();
+                 },
+             _ => todo!()
+            }
+        }
+    });
+
+    Ok(Sse::new(
+        tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+    ))
+    // .keep_alive(
+    //     axum::response::sse::KeepAlive::new()
+    //         .interval(tokio::time::Duration::from_secs(1))
+    //         .text("keep-alive-text"),
+    // ))
+}
+
 async fn post_query(
     State(AppState {ref read_pool, ref write_pool, config: HttpgConfig {ref anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
@@ -546,14 +584,14 @@ async fn post_query(
         (param.tosql_sync(), param.to_owned().into())
     }).collect();
 
-    let mut retry = 0;
+    let mut retry: u8 = 0;
     loop {
         let mut conn = write_pool.get().await?;
         let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
         let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
 
-        let result = tx.query_typed(query.sql.as_ref().ok_or(HttpgError::Unknown)?, &sql_params).await;
+        let result = tx.query_typed(query.sql.as_ref().ok_or(HttpgError::anyhow("no sql passed"))?, &sql_params).await;
 
         match result {
             Ok(rows) => {
@@ -576,7 +614,10 @@ async fn post_query(
                 }.into_response());
             },
             Err(e) => {
-                retry += 1;
+                let error = &e.as_db_error().map(|e| e.message().to_string()).unwrap_or(e.to_string());
+                tracing::warn!(error);
+                
+                retry = retry.checked_add(1).ok_or(HttpgError::anyhow("Retry overflow"))?;
                 if retry > 5 {
                     break Err(e);
                 }
@@ -584,10 +625,10 @@ async fn post_query(
                     Some(&tokio_postgres::error::SqlState::T_R_SERIALIZATION_FAILURE)
                     | Some(&tokio_postgres::error::SqlState::T_R_DEADLOCK_DETECTED))
                 {
+                    tokio::time::sleep(std::time::Duration::from_millis(retry.into())).await;
                     continue;
                 }
 
-                let error = &e.as_db_error().map(|e| e.message().to_string()).unwrap_or(e.to_string());
             
                 match &query.on_error {
                     Some(on_error) => {

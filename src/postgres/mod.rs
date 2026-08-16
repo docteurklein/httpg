@@ -44,7 +44,7 @@ impl PostgresConfig {
         self.rest(&mut cfg)
     }
 
-    pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream>), HttpgError> {
+    pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream + use<>>), HttpgError> {
         let cfg = tokio_postgres::Config::new()
             .user(self.user.clone())
             .password(self.password.clone())

@@ -1,3 +1,5 @@
+use std::{backtrace::Backtrace, borrow::Cow};
+
 use axum::{extract::multipart, http::{self, header}, response::{IntoResponse, Response}};
 use biscuit_auth::error;
 use deadpool_postgres::{CreatePoolError, PoolError};
@@ -142,7 +144,18 @@ pub enum HttpgError {
     InvalidColType {
         type_: postgres_types::Type,
     },
+    #[snafu(display("{msg}"))]
+    Anyhow {
+        msg: String,
+        backtrace: snafu::Backtrace,
+    },
     Unknown,
+}
+
+impl HttpgError {
+    pub fn anyhow(msg: impl Into<String>) -> Self {
+        Self::Anyhow { msg: msg.into(), backtrace: snafu::Backtrace::capture() }
+    }
 }
 
 impl From<HttpgError> for Response<axum::body::Body> {
