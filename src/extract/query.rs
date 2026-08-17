@@ -371,11 +371,14 @@ fn parse_sql(order: &Option<BTreeMap<String, serde_json::Value>>, root_sql: Opti
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
-    use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
+    use std::sync::Arc;
+
+use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
 
     use axum::extract::FromRequest;
     use conf::Conf;
-    use crate::extract::query::{Param, Query};
+use tokio_postgres::AsyncMessage;
+    use crate::{extract::query::{Param, Query}};
 
     #[tokio::test]
     async fn test_json_body() {
@@ -388,11 +391,17 @@ mod tests {
 
         let read_pool = httpg_config.pg.read_pool().unwrap();
         let write_pool = httpg_config.pg.write_pool().unwrap();
+
+        let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
     
         let state = crate::AppState {
             read_pool,
             write_pool,
             config: httpg_config.to_owned(),
+            tx,
+            client: Arc::new(client),
         };
         let q = Query::from_request(req, &state).await.unwrap();
 
@@ -413,10 +422,16 @@ mod tests {
         let read_pool = httpg_config.pg.read_pool().unwrap();
         let write_pool = httpg_config.pg.write_pool().unwrap();
     
+        let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
+
+        let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
+    
         let state = crate::AppState {
             read_pool,
             write_pool,
             config: httpg_config.to_owned(),
+            tx,
+            client: Arc::new(client),
         };
         let q = Query::from_request(req, &state).await.unwrap();
 

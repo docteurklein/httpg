@@ -18,15 +18,17 @@ use conf::Conf;
 use cookie::time::{Duration, OffsetDateTime};
 use futures::{StreamExt, TryStreamExt};
 use lettre::{
-    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType, transport::smtp::authentication::{Credentials, Mechanism::Login}
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType, transport::smtp::authentication::{Credentials}
 };
 use serde_json::json;
+use tokio::sync::{broadcast::Sender};
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tower::builder::ServiceBuilder;
-use tower_http::{compression::CompressionLayer, cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
+use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
-use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}};
+use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, ops::Deref, sync::Arc};
 use std::collections::HashMap;
-use tokio_postgres::{IsolationLevel, types::{ToSql, Type}};
+use tokio_postgres::{AsyncMessage, Client, IsolationLevel, types::{ToSql, Type}};
 use deadpool_postgres::{Pool, Transaction};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
@@ -77,6 +79,8 @@ struct AppState {
     read_pool: Pool,
     write_pool: Pool,
     config: HttpgConfig,
+    tx: Sender<AsyncMessage>,
+    client: Arc<Client>,
 }
 
 #[tokio::main]
@@ -93,11 +97,39 @@ async fn main() -> Result<(), HttpgError> {
 
     let read_pool = httpg_config.pg.read_pool()?;
     let write_pool = httpg_config.pg.write_pool()?;
+
+    let (client, mut conn) = httpg_config.pg.connect().await?;
+
+    let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
+
+    let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+
+    let wrapped_tx = tx.clone();
+    tokio::spawn(async move {
+        while let Some(Ok(m)) = stream.next().await {
+            wrapped_tx.send(m).unwrap();
+            //     Event::default().data(n.payload())
+            // )).map_err(|e| HttpgError::anyhow(e.to_string()))?;
+            // match m {
+            //      tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
+            //      tokio_postgres::AsyncMessage::Notification(n) => {
+            //          tx.send(Ok(
+            //             Event::default().data(n.payload())
+            //          )).map_err(|e| HttpgError::anyhow(e.to_string()))?;
+            //      },
+            //  _ => {HttpgError::anyhow("unsupported AsyncMessage");},
+            // }
+        }
+
+        Ok::<_, HttpgError>(())
+    });
     
     let state = AppState {
         read_pool,
         write_pool,
         config: httpg_config.to_owned(),
+        tx,
+        client: Arc::new(client),
     };
 
     let app = Router::new()
@@ -309,8 +341,7 @@ async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Bi
             serde_json::to_string(&query)?,
             Type::TEXT
         )
-    ])
-    .await?;
+    ]).await?;
 
     if let Some(extract::biscuit::Biscuit(b)) = biscuit {
         futures::future::join_all(b.iter().map(async |sql| {
@@ -534,34 +565,32 @@ async fn stream_query(
 
 #[debug_handler]
 async fn sse_query(
-    State(AppState {config, ..}): State<AppState>,
-    biscuit: Option<extract::biscuit::Biscuit>,
+    State(AppState {tx, client, ..}): State<AppState>,
     Path(channel): Path<String>,
-    query: extract::query::Query,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    let (client, mut conn) = config.pg.connect().await?;
-
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Result<Event, HttpgError>>();
-
-    let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
-    tokio::spawn(async move {
-        client.simple_query_raw(&format!("listen {channel}")).await.unwrap();
-        while let Some(Ok(m)) = stream.next().await {
-            match m {
-                 tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
-                 tokio_postgres::AsyncMessage::Notification(n) => {
-                     tx.send(Ok(
-                        Event::default().data(n.payload())
-                     )).unwrap();
-                 },
-             _ => todo!()
-            }
-        }
-    });
+    client.simple_query_raw(&format!("listen {channel}")).await?;
 
     Ok(Sse::new(
-        tokio_stream::wrappers::UnboundedReceiverStream::new(rx)
+        tokio_stream::wrappers::BroadcastStream::new(tx.subscribe())
+            .try_filter_map(move |m| {
+                let channel = channel.clone();
+                async move {
+                    match m {
+                        tokio_postgres::AsyncMessage::Notice(n) => {
+                            tracing::info!("{n:#?}");
+                            Ok(None)
+                        },
+                        tokio_postgres::AsyncMessage::Notification(n) => {
+                            match n.channel() {
+                                c if c == channel => Ok(Some(Event::default().data(n.payload()))),
+                                _ => Ok(None)
+                            }
+                        },
+                        _ => Err(BroadcastStreamRecvError::Lagged(1)),
+                    }
+                }
+            })
     ))
     // .keep_alive(
     //     axum::response::sse::KeepAlive::new()
