@@ -13,6 +13,11 @@ pub enum HttpgError {
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
+    SendError {
+        source: Box<tokio::sync::broadcast::error::SendError<tokio_postgres::Notification>>,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
     Conf {
         source: conf::Error,
         backtrace: snafu::Backtrace,

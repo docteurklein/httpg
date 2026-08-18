@@ -22,18 +22,17 @@ use lettre::{
 };
 use serde_json::json;
 use tokio::sync::{broadcast::Sender};
-use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tower::builder::ServiceBuilder;
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
-use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, ops::Deref, sync::Arc};
+use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
 use std::collections::HashMap;
-use tokio_postgres::{AsyncMessage, Client, IsolationLevel, types::{ToSql, Type}};
-use deadpool_postgres::{Pool, Transaction};
+use tokio_postgres::{AsyncMessage, Client, IsolationLevel, Notification, types::Type};
+use deadpool_postgres::Pool;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
 
-use crate::{error::HttpgError, extract::query::Query, postgres::{PostgresConfig, QueryGuard}, response::CancelStream};
+use crate::{error::HttpgError, postgres::{PostgresConfig, QueryGuard}, response::CancelStream};
 
 #[derive(Clone, Conf)]
 struct TlsConfig {
@@ -79,7 +78,7 @@ struct AppState {
     read_pool: Pool,
     write_pool: Pool,
     config: HttpgConfig,
-    tx: Sender<AsyncMessage>,
+    tx: Sender<Notification>,
     client: Arc<Client>,
 }
 
@@ -99,28 +98,21 @@ async fn main() -> Result<(), HttpgError> {
     let write_pool = httpg_config.pg.write_pool()?;
 
     let (client, mut conn) = httpg_config.pg.connect().await?;
-
-    let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
-
+    let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
     let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
-
     let wrapped_tx = tx.clone();
     tokio::spawn(async move {
         while let Some(Ok(m)) = stream.next().await {
-            wrapped_tx.send(m).unwrap();
-            //     Event::default().data(n.payload())
-            // )).map_err(|e| HttpgError::anyhow(e.to_string()))?;
-            // match m {
-            //      tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
-            //      tokio_postgres::AsyncMessage::Notification(n) => {
-            //          tx.send(Ok(
-            //             Event::default().data(n.payload())
-            //          )).map_err(|e| HttpgError::anyhow(e.to_string()))?;
-            //      },
-            //  _ => {HttpgError::anyhow("unsupported AsyncMessage");},
-            // }
+            match m {
+                tokio_postgres::AsyncMessage::Notice(n) => {
+                    tracing::info!("{n:#?}");
+                },
+                tokio_postgres::AsyncMessage::Notification(n) => {
+                    wrapped_tx.send(n).map_err(Box::new)?;
+                }
+                _ => {}
+            }
         }
-
         Ok::<_, HttpgError>(())
     });
     
@@ -138,6 +130,7 @@ async fn main() -> Result<(), HttpgError> {
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
         .route("/sse/{channel}", get(sse_query))
+        .route("/{path}/sse/{channel}", get(sse_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
         .route("/{path}/query/{cursor}", post(post_query))
@@ -252,12 +245,13 @@ async fn login(
     let root = KeyPair::from(&PrivateKey::from_bytes(&private_key, Algorithm::Ed25519)?);
 
     let mut conn = write_pool.get().await?;
-    let mut tx = conn.build_transaction()
+    let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await?
     ;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -306,50 +300,15 @@ async fn logout(
     ))
 }
 
-async fn pre<'a>(tx: &mut Transaction<'a>, biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, query: &'a Query) -> Result<QueryGuard, HttpgError> {
+fn pre(biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String) -> String {
 
-    let guard = QueryGuard {
-        cancel_token: tx.cancel_token(),
-        finished: false,
-    };
+    let mut s = vec![
+        format!("set local role to {anon_role}"),
+    ];
 
-    tx.batch_execute(&format!("set local role to {anon_role}")).await?;
+    s.push(biscuit.to_owned().map(|b| b.0.join(";")).unwrap_or_default());
 
-    if let Some(lang) = &query.accept_language {
-        let mut lang = lang.split(",").next().unwrap_or("en-US").replace("-", "_");
-        lang.push_str(".UTF8");
-
-        let params: [(&(dyn ToSql + Sync), Type); 1] = [
-            (
-                &lang,
-                Type::TEXT
-            )
-        ];
-        
-        let stx = tx.savepoint("lc_time").await?;
-
-        let res = stx.query_typed("select set_config('lc_time', $1, true)", &params).await;
-
-        match res {
-            Ok(_) => stx.commit().await?,
-            Err(_) => stx.rollback().await?,
-        }
-    }
-
-    tx.query_typed_raw("select set_config('httpg.query', $1, true)", vec![
-        (
-            serde_json::to_string(&query)?,
-            Type::TEXT
-        )
-    ]).await?;
-
-    if let Some(extract::biscuit::Biscuit(b)) = biscuit {
-        futures::future::join_all(b.iter().map(async |sql| {
-            tx.batch_execute(sql).await
-        })).await;
-    }
-
-    Ok(guard)
+    s.join(";")
 }
 
 #[debug_handler]
@@ -360,12 +319,17 @@ async fn email(
 ) -> Result<impl IntoResponse, HttpgError> {
 
     let mut conn = write_pool.get().await?;
-    let mut tx = conn.build_transaction()
+    let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::Serializable)
         .start().await
     ?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = QueryGuard {
+        cancel_token: tx.cancel_token(),
+        finished: false,
+    };
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -451,12 +415,17 @@ async fn web_push(
 ) -> Result<impl IntoResponse, HttpgError> {
 
     let mut conn = read_pool.get().await?;
-    let mut tx = conn.build_transaction()
+    let tx = conn.build_transaction()
         .isolation_level(IsolationLevel::RepeatableRead)
         .start().await
     ?;
 
-    let _guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let _guard = QueryGuard {
+        cancel_token: tx.cancel_token(),
+        finished: false,
+    };
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -536,13 +505,20 @@ async fn stream_query(
         None => read_pool,
     }.get().await?;
 
-    let mut tx = conn.build_transaction()
+    let tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::RepeatableRead)
         .start().await?
     ;
 
-    let guard = pre(&mut tx, &biscuit, &anon_role, &query).await?;
+    let guard = QueryGuard {
+        cancel_token: tx.cancel_token(),
+        finished: false,
+    };
+
+    tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+
+    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -573,21 +549,12 @@ async fn sse_query(
 
     Ok(Sse::new(
         tokio_stream::wrappers::BroadcastStream::new(tx.subscribe())
-            .try_filter_map(move |m| {
+            .try_filter_map(move |n| {
                 let channel = channel.clone();
                 async move {
-                    match m {
-                        tokio_postgres::AsyncMessage::Notice(n) => {
-                            tracing::info!("{n:#?}");
-                            Ok(None)
-                        },
-                        tokio_postgres::AsyncMessage::Notification(n) => {
-                            match n.channel() {
-                                c if c == channel => Ok(Some(Event::default().data(n.payload()))),
-                                _ => Ok(None)
-                            }
-                        },
-                        _ => Err(BroadcastStreamRecvError::Lagged(1)),
+                    match n.channel() {
+                        c if c == channel => Ok(Some(Event::default().data(n.payload()))),
+                        _ => Ok(None)
                     }
                 }
             })
@@ -616,9 +583,14 @@ async fn post_query(
     let mut retry: u8 = 0;
     loop {
         let mut conn = write_pool.get().await?;
-        let mut tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
+        let tx = conn.build_transaction().isolation_level(IsolationLevel::Serializable).start().await?;
 
-        let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
+        let guard = QueryGuard {
+            cancel_token: tx.cancel_token(),
+            finished: false,
+        };
+        tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+        tx.batch_execute(&pre(&biscuit, anon_role)).await?;
 
         let result = tx.query_typed(query.sql.as_ref().ok_or(HttpgError::anyhow("no sql passed"))?, &sql_params).await;
 
@@ -658,19 +630,20 @@ async fn post_query(
                     continue;
                 }
 
-            
                 match &query.on_error {
                     Some(on_error) => {
-                        let errors = json!({"error": &error});
-
                         let mut conn = read_pool.get().await?;
-                        let mut tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
+                        let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
 
-                        let guard = pre(&mut tx, &biscuit, anon_role, &query).await?;
+                        let guard = QueryGuard {
+                            cancel_token: tx.cancel_token(),
+                            finished: false,
+                        };
+                        tx.batch_execute(&pre(&biscuit, anon_role)).await?;
 
                         tx.query_typed_raw(
                             "select set_config('httpg.errors', $1, true)",
-                            vec![(serde_json::to_string(&errors)?, Type::TEXT)]
+                            vec![(serde_json::to_string(&json!({"error": &error}))?, Type::TEXT)]
                         ).await?;
 
                         let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;

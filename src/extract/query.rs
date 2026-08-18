@@ -377,7 +377,7 @@ use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
 
     use axum::extract::FromRequest;
     use conf::Conf;
-use tokio_postgres::AsyncMessage;
+use tokio_postgres::Notification;
     use crate::{extract::query::{Param, Query}};
 
     #[tokio::test]
@@ -394,7 +394,7 @@ use tokio_postgres::AsyncMessage;
 
         let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
 
-        let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
+        let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
     
         let state = crate::AppState {
             read_pool,
@@ -424,7 +424,7 @@ use tokio_postgres::AsyncMessage;
     
         let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
 
-        let (tx, _rx) = tokio::sync::broadcast::channel::<AsyncMessage>(16);
+        let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
     
         let state = crate::AppState {
             read_pool,
