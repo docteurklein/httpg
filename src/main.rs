@@ -140,7 +140,6 @@ async fn main() -> Result<(), HttpgError> {
         // .route("/{path}/http", get(http).post(http))
         .route("/webpush", get(web_push).post(web_push))
         .route("/{path}/webpush", get(web_push).post(web_push))
-        // .layer(axum::middleware::from_fn_with_state(state.clone(), pre))
         .route("/login", get(login).post(login))
         .route("/{path}/login", get(login).post(login))
         .fallback_service(ServeDir::new(httpg_config.public_dir))
@@ -517,7 +516,6 @@ async fn stream_query(
     };
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-
     tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
@@ -545,7 +543,7 @@ async fn sse_query(
     Path(channel): Path<String>,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    client.simple_query_raw(&format!("listen {channel}")).await?;
+    client.execute(&format!("listen {channel}"), &[]).await?;
 
     Ok(Sse::new(
         tokio_stream::wrappers::BroadcastStream::new(tx.subscribe())
@@ -639,6 +637,7 @@ async fn post_query(
                             cancel_token: tx.cancel_token(),
                             finished: false,
                         };
+                        tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
                         tx.batch_execute(&pre(&biscuit, anon_role)).await?;
 
                         tx.query_typed_raw(
