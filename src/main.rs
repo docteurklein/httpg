@@ -63,6 +63,8 @@ struct HttpgConfig {
     index_sql: String,
     #[conf(long, env)]
     login_query: String,
+    #[conf(long, env)]
+    listen: bool,
     #[conf(long, env, default_value="3000")]
     port: u16,
     #[conf(flatten)]
@@ -74,12 +76,17 @@ struct HttpgConfig {
 }
 
 #[derive(Clone)]
+struct Listen {
+    tx: Sender<Notification>,
+    client: Arc<Client>,
+}
+
+#[derive(Clone)]
 struct AppState {
     read_pool: Pool,
     write_pool: Pool,
     config: HttpgConfig,
-    tx: Sender<Notification>,
-    client: Arc<Client>,
+    listen: Option<Listen>,
 }
 
 #[tokio::main]
@@ -97,40 +104,42 @@ async fn main() -> Result<(), HttpgError> {
     let read_pool = httpg_config.pg.read_pool()?;
     let write_pool = httpg_config.pg.write_pool()?;
 
-    let (client, mut conn) = httpg_config.pg.connect().await?;
-    let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
-    let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
-    let wrapped_tx = tx.clone();
-    tokio::spawn(async move {
-        while let Some(Ok(m)) = stream.next().await {
-            match m {
-                tokio_postgres::AsyncMessage::Notice(n) => {
-                    tracing::info!("{n:#?}");
-                },
-                tokio_postgres::AsyncMessage::Notification(n) => {
-                    wrapped_tx.send(n).map_err(Box::new)?;
+    let listen = if httpg_config.listen {
+        let (client, mut conn) = httpg_config.pg.connect().await?;
+        let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
+        let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
+        let wrapped_tx = tx.clone();
+        tokio::spawn(async move {
+            while let Some(Ok(m)) = stream.next().await {
+                match m {
+                    tokio_postgres::AsyncMessage::Notice(n) => {
+                        tracing::info!("{n:#?}");
+                    },
+                    tokio_postgres::AsyncMessage::Notification(n) => {
+                        wrapped_tx.send(n).map_err(Box::new)?;
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-        Ok::<_, HttpgError>(())
-    });
+            Ok::<_, HttpgError>(())
+        });
+        Some(Listen {tx, client: Arc::new(client)})
+    } else {
+        None
+    };
     
     let state = AppState {
         read_pool,
         write_pool,
         config: httpg_config.to_owned(),
-        tx,
-        client: Arc::new(client),
+        listen,
     };
 
-    let app = Router::new()
+    let mut app = Router::new()
         .route("/", get(index))
         .route("/{path}/", get(index))
         .route("/logout", get(logout).post(logout))
         .route("/{path}/logout", get(logout).post(logout))
-        .route("/sse/{channel}", get(sse_query))
-        .route("/{path}/sse/{channel}", get(sse_query))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
         .route("/{path}/query/{cursor}", post(post_query))
@@ -142,6 +151,14 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/webpush", get(web_push).post(web_push))
         .route("/login", get(login).post(login))
         .route("/{path}/login", get(login).post(login))
+    ;
+    if httpg_config.listen {
+        app = app
+            .route("/listen/{channel}", get(listen_query))
+            .route("/{path}/listen/{channel}", get(listen_query))
+        ;
+    }
+    let app = app
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
@@ -155,42 +172,6 @@ async fn main() -> Result<(), HttpgError> {
             )
         )
     ;
-
-    // tokio::spawn(async move {
-    //     let (client, mut conn) = cfg.connect().await?;
-
-    //     let mut stream = futures::stream::poll_fn(move |cx| conn.poll_message(cx));
-
-    //     let state = axum::extract::State(state);
-
-    //     client.simple_query("listen web_push").await?;
-    //     // client.simple_query("listen job").await?;
-
-    //     while let Some(Ok(m)) = stream.next().await {
-    //         match m {
-    //             tokio_postgres::AsyncMessage::Notice(n) => tracing::info!("{n:#?}"),
-    //             tokio_postgres::AsyncMessage::Notification(n) => {
-    //                 match n.channel() {
-    //                     "web_push" => {
-    //                         let res = web_push(
-    //                                 state.to_owned(),
-    //                                 None,
-    //                                 Query::default()
-    //                             )
-    //                             .await?
-    //                             .into_response()
-    //                         ;
-    //                         dbg!(&res);
-    //                     }
-    //                     _ => todo!("{n:#?}")
-    //                 }
-    //             },
-    //             _ => todo!(),
-    //         }
-    //     }
-
-    //     Ok::<(), HttpgError>(())
-    // });
 
     let addr = SocketAddr::from((
         [0, 0, 0, 0],
@@ -538,11 +519,12 @@ async fn stream_query(
 }
 
 #[debug_handler]
-async fn sse_query(
-    State(AppState {tx, client, ..}): State<AppState>,
+async fn listen_query(
+    State(AppState {listen, ..}): State<AppState>,
     Path(channel): Path<String>,
 ) -> Result<impl IntoResponse, HttpgError> {
 
+    let Listen {tx, client } = listen.ok_or(HttpgError::anyhow("no listen"))?;
     client.execute(&format!("listen {channel}"), &[]).await?;
 
     Ok(Sse::new(

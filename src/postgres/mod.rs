@@ -11,10 +11,18 @@ use crate::{HttpgError};
 
 #[derive(Clone, Debug, Conf)]
 pub struct PostgresConfig {
+    #[conf(long, env, default_value="")]
+    read_url: String,
     #[conf(long, env)]
     read_host: String,
+    #[conf(long, env, default_value="5432")]
+    read_port: u16,
+    #[conf(long, env, default_value="")]
+    write_url: String,
     #[conf(long, env)]
     write_host: String,
+    #[conf(long, env, default_value="5432")]
+    write_port: u16,
     #[conf(long, env)]
     user: String,
     #[conf(long="password-file", env="PASSWORD_FILE", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
@@ -33,14 +41,18 @@ impl PostgresConfig {
     pub fn read_pool(&self) -> Result<Pool, HttpgError> {
         let mut cfg = deadpool_postgres::Config::new();
 
+        cfg.url = Some(self.read_url.clone());
         cfg.host = Some(self.read_host.clone());
+        cfg.port = Some(self.read_port);
         self.rest(&mut cfg)
     }
 
     pub fn write_pool(&self) -> Result<Pool, HttpgError> {
         let mut cfg = deadpool_postgres::Config::new();
 
+        cfg.url = Some(self.write_url.clone());
         cfg.host = Some(self.write_host.clone());
+        cfg.port = Some(self.write_port);
         self.rest(&mut cfg)
     }
 
@@ -50,6 +62,7 @@ impl PostgresConfig {
             .password(self.password.clone())
             .dbname(self.dbname.clone())
             .host(self.write_host.clone())
+            .port(self.write_port)
             .ssl_mode(match self.ssl_mode.as_deref() {
                 Some("require") => tokio_postgres::config::SslMode::Require,
                 _ => tokio_postgres::config::SslMode::Prefer,
@@ -59,7 +72,6 @@ impl PostgresConfig {
                 _ => tokio_postgres::config::ChannelBinding::Prefer,
             })
             .application_name(self.application_name.to_owned())
-            // .options("-c statement_timeout=600ms")
             .to_owned()
         ;
 

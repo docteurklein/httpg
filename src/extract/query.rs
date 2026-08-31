@@ -378,7 +378,7 @@ use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
     use axum::extract::FromRequest;
     use conf::Conf;
 use tokio_postgres::Notification;
-    use crate::{extract::query::{Param, Query}};
+    use crate::{Listen, extract::query::{Param, Query}};
 
     #[tokio::test]
     async fn test_json_body() {
@@ -400,8 +400,7 @@ use tokio_postgres::Notification;
             read_pool,
             write_pool,
             config: httpg_config.to_owned(),
-            tx,
-            client: Arc::new(client),
+            listen: Some(Listen {tx, client: Arc::new(client) }),
         };
         let q = Query::from_request(req, &state).await.unwrap();
 
@@ -430,8 +429,7 @@ use tokio_postgres::Notification;
             read_pool,
             write_pool,
             config: httpg_config.to_owned(),
-            tx,
-            client: Arc::new(client),
+            listen: Some(Listen {tx, client: Arc::new(client) }),
         };
         let q = Query::from_request(req, &state).await.unwrap();
 

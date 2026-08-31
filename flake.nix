@@ -292,7 +292,7 @@
                 };
 
                 systemd.services.httpg = {
-                  enable = true;
+                  enable = false;
                   wantedBy = [ "default.target" ];
                   serviceConfig = {
                     Type = "simple";
@@ -473,7 +473,7 @@
         
                 system.stateVersion = "25.11";
 
-                networking.firewall.allowedTCPPorts = [ 5432 ];
+                networking.firewall.allowedTCPPorts = [ 5432 6432 ];
                 networking.useDHCP = false;
 
                 users.users.postgres = {
@@ -504,6 +504,21 @@
                     '');
                     # User = "postgres";
                     # Group = "postgres";
+                  };
+                };
+
+                services.pgbouncer = {
+                  enable = true;
+                  openFirewall = true;
+                  settings = {
+                    databases = {
+                      httpg = "host=10.250.2.2 user=httpg";
+                    };
+                    pgbouncer = {
+                      auth_type = "any";
+                      listen_addr = "10.250.2.2";
+                      pool_mode = "transaction";
+                    };
                   };
                 };
 
