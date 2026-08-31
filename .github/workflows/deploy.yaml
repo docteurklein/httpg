@@ -41,7 +41,7 @@ jobs:
       #     nix --accept-flake-config build .#httpg-test
 
   deploy:
-    needs: [build]
+    # needs: [build]
     environment: production
     runs-on: ubuntu-latest
     permissions:
