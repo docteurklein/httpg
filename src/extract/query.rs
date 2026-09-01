@@ -118,6 +118,7 @@ pub struct QueryPart {
     pub order: Option<BTreeMap<String, serde_json::Value>>,
     pub on_error: Option<String>,
     pub use_primary: Option<String>,
+    pub wait_for: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
@@ -151,6 +152,8 @@ pub struct Query {
     pub body: serde_json::Map<String, serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub use_primary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_for: Option<String>,
 }
 
 impl<S> FromRequest<S> for Query
@@ -302,6 +305,7 @@ where
         let cache_control = qs.cache_control.to_owned().or(body.cache_control.to_owned());
 
         let use_primary = qs.use_primary.or(body.use_primary);
+        let wait_for = qs.wait_for.or(body.wait_for);
 
         Ok(Self {
             sql,
@@ -318,13 +322,13 @@ where
             params,
             files,
             qs: raw_qs.into_iter().filter_map(|(key, value)|
-                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary"]
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for"]
                     .contains(&key.as_str())
                     .not()
                     .then_some((key, value))
             ).collect(),
             body: raw_body.into_iter().filter_map(|(key, value)|
-                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary"]
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for"]
                     .contains(&key.as_str())
                     .not()
                     .then_some((key, value))
@@ -338,6 +342,7 @@ where
             cache_control,
             on_error,
             use_primary,
+            wait_for,
         })
     }
 }

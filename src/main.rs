@@ -27,7 +27,7 @@ use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
 use std::collections::HashMap;
-use tokio_postgres::{AsyncMessage, Client, IsolationLevel, Notification, types::Type};
+use tokio_postgres::{Client, IsolationLevel, Notification, types::Type};
 use deadpool_postgres::Pool;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use biscuit_auth::{KeyPair, PrivateKey, Biscuit, builder::*};
@@ -485,9 +485,14 @@ async fn stream_query(
         None => read_pool,
     }.get().await?;
 
+    if let Some(lsn) = query.wait_for.as_ref() {
+        conn.execute(&format!("wait for lsn '{lsn}' with (timeout '1s', no_throw)"), &[]).await?;
+    }
+
     let tx = conn.build_transaction()
         .read_only(true)
         .isolation_level(IsolationLevel::RepeatableRead)
+        // .deferrable(true)
         .start().await?
     ;
 

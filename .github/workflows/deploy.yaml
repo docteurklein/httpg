@@ -2,7 +2,7 @@ name: "deploy"
 on:
   push:
 jobs:
-  build:
+  test:
     environment: production
     runs-on: ubuntu-latest
     permissions:
@@ -41,7 +41,7 @@ jobs:
       #     nix --accept-flake-config build .#httpg-test
 
   deploy:
-    # needs: [build]
+    # needs: [test]
     environment: production
     runs-on: ubuntu-latest
     permissions:
@@ -88,7 +88,7 @@ jobs:
         run: 'echo "${{ steps.deploy.outputs.url }}"'
   
   migrate:
-    needs: [build]
+    needs: [test]
     environment: production
     runs-on: ubuntu-latest
     permissions:
