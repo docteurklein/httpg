@@ -26,6 +26,7 @@ Select queries are run in read-only transactions (and rollbacked once done, even
 
 ## dev
 
+
 Containers requires a bridge interface `br0` on the host:
 
 ```
@@ -69,4 +70,17 @@ openssl req -x509 -out localhost.crt -keyout localhost.key \
     -subj '/CN=localhost' -extensions EXT -config ( \
     printf "[dn]\nCN=localhost\n[req]\ndistinguished_name = dn\n[EXT]\nsubjectAltName=DNS:localhost\nkeyUsage=digitalSignature\nextendedKeyUsage=serverAuth" | psub \
 )
+```
+
+## breakpoints
+
+
+```
+rust-lldb -- target/debug/httpg --pg-password-file pg-password --pem-file localhost.crt --pem-key-file localhost.key --listen --webpush-private-key-file private-key-file
+
+
+b src/response/mod.rs:75
+r
+v
+c
 ```

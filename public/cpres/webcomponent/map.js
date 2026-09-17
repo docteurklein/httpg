@@ -60,7 +60,7 @@ class IsMap extends HTMLInputElement {
 
     if (this.getAttribute('geolocate') === 'init') {
       navigator.geolocation.getCurrentPosition(async pos => {
-        let location = `(${pos.coords.logitude},${pos.coords.latitude})`;
+        let location = `(${pos.coords.longitude},${pos.coords.latitude})`;
 
         if (!this.value) {
           this.value = location;
@@ -166,10 +166,6 @@ class IsMap extends HTMLInputElement {
         }
       }
     });
-  }
-
-  on(event, f) {
-    this.map.on(event, f);
   }
 
   openPopup(id) {

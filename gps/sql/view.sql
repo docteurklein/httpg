@@ -62,7 +62,7 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <title>GPS</title>
     <meta name="color-scheme" content="dark light" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/charts.css/dist/charts.min.css" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
@@ -467,12 +467,7 @@ begin
     insert into runner (name, password, salt)
     select name_, crypt(password_, salt), salt
     from salt
-    on conflict (name) do
-        nothing;
-    -- update set
-    --     password = crypt(password_, excluded.salt),
-    --     salt = excluded.salt
-    -- where runner.password = password_;
+    on conflict (name) do nothing;
 
     select runner_id into runner_id_
     from runner

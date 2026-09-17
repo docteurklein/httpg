@@ -1,3 +1,9 @@
+create extension if not exists hstore schema public;
+
+set "ivm.slot_name" to :'slot_name';
+
+select * from pg_create_logical_replication_slot(:'slot_name', 'wal2json')
+where not exists (select from pg_replication_slots where slot_name = :'slot_name');
 
 -- drop function if exists wal2json_v1_to_record(jsonb);
 create or replace function wal2json_v1_to_record(change jsonb)
@@ -38,48 +44,66 @@ select 1, count(post_id)
 from blog.post
 on conflict (id) do nothing;
 
-set session characteristics as transaction isolation level serializable;
+-- drop function if exists log_;
+create or replace function log_(e anyelement, msg text default null) returns anyelement
+language plpgsql as $$
+begin
+    raise notice '% %', msg, e;
+    return e;
+end;
+$$;
 
+-- create or replace procedure ivm()
+-- language plpgsql
+set session characteristics as transaction isolation level serializable;
 do $$
 declare
     lsn_ pg_lsn;
-    change_ jsonb;
 begin
+set log_min_messages to fatal; -- unfortunate but pg_logical_slot_peek_changes floods server logs
 select confirmed_flush_lsn
 into lsn_
 from pg_replication_slots
-where slot_name = 'test';
+where slot_name = current_setting('ivm.slot_name');
 raise notice '%', lsn_;
 loop
     with change (lsn, change) as (
         select lsn, change
-        from pg_logical_slot_peek_changes('test', null, null, 'include-types', 'false', 'add-tables', 'blog.post'),
+        from pg_logical_slot_peek_changes(current_setting('ivm.slot_name'), null, null, 'include-types', 'false', 'add-tables', 'blog.post'),
         jsonb_array_elements(data::jsonb->'change') change
     ),
-    stat as (
+    blog_stat as (
+        with sum (lsn, ins, del) as (
+            select lsn, count(1) filter (where change->>'kind' = 'insert'), count(1) filter (where change->>'kind' = 'delete')
+            from change
+            where (change->>'schema', change->>'table') = ('blog', 'post')
+            and change->>'kind' in ('insert', 'delete')
+            group by 1
+        )
         update blog.stat
-        set nposts = nposts + case when change->>'kind' = 'insert' then 1 else -1 end,
-        lsn = change.lsn
-        from change
-        where (change->>'schema', change->>'table') = ('blog', 'post')
-        and id = 1
-        and stat.lsn < change.lsn
-        and change->>'kind' in ('insert', 'delete')
+        set nposts = nposts + ins - del,
+        lsn = sum.lsn
+        from sum
+        where stat.id = 1
+        and stat.lsn < sum.lsn
     )
-    select lsn, change
-    into lsn_, change_
+    select lsn into lsn_ --, jsonb_agg(change)
     from change;
-    --, change_--, change, change->>'schema', change->>'table', change->>'kind', old, new, new - old diff into found, lsn_, change_
+    -- group by 1;
+    --, change_--, change, change->>'schema', change->>'table', change->>'kind', old, new, new - old diff into found, lsn, change_
     --, wal2json_v1_to_record(change), jsonb_populate_record(null::blog.post, new::jsonb) n;
 
-    raise notice '%', change_;
     commit;
-    perform pg_replication_slot_advance('test', lsn_);
+    perform pg_replication_slot_advance(current_setting('ivm.slot_name'), lsn_);
     if lsn_ is not null then
         raise notice '%', lsn_;
+        -- raise notice '%', change_;
+    else
+        perform pg_sleep(1);
     end if;
-    perform pg_sleep(1);
 end loop;
 
 end;
 $$;
+
+-- call ivm();

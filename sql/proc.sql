@@ -5,7 +5,7 @@ set local search_path to cpres, url, pg_catalog, public;
 create or replace function compare_search() returns trigger
 volatile strict parallel safe -- leakproof
 security definer
-set search_path to cpres, url, pg_catalog
+set search_path to cpres, url, pg_catalog, public
 as $$
 begin
     with result (good_id, person_id, interest, query, rerank_distance) as (
@@ -26,7 +26,7 @@ $$ language plpgsql;
 
 create or replace trigger compare_search
 after insert or update of title, description on good
-for each row
+for each statement
 execute procedure compare_search();
 
 create or replace procedure give(_good_id uuid, _receiver uuid)
@@ -164,10 +164,9 @@ begin atomic
                 push_endpoint = excluded.push_endpoint
     ),
     url as (
-        select login_person.*, url(format('https://%s/cpres/login', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
+        select login_person.*, url(format('%s://%s/cpres/login', current_setting('httpg.query', true)::jsonb->>'scheme', current_setting('httpg.query', true)::jsonb->>'host'), jsonb_build_object(
             'redirect', '/cpres/',
             'login_challenge', login_challenge,
-            'sql', 'select',
             'params[]', 'cpres'
         )) as url
         from login_person
@@ -196,7 +195,7 @@ begin atomic
     from url;
 end;
 
-grant execute on function send_login_email(text, text, text) to person;
+grant execute on function send_login_email(text, text, text) to person, anon;
 
 drop function if exists web_push(uuid, text, text);
 create or replace function web_push(person_id_ uuid, title text, content text, path text)
@@ -243,7 +242,7 @@ web_push(
     ),
     content,
     url('/cpres/query', jsonb_build_object(
-        'sql', format('table cpres.head union all table cpres.%I', case m.author
+        'sql', format('select * from cpres.head union all select * from cpres.%I', case m.author
             when m.person_id then 'giving activity' -- author is the one interested, so we show message to giver
             else 'receiving activity' end
         )
@@ -274,7 +273,7 @@ web_push(
     ),
     null,
     url('/cpres/query', jsonb_build_object(
-        'sql', 'table cpres.head union all table cpres."receiving activity"'
+        'sql', 'select * from cpres.head union all select * from cpres."receiving activity"'
     )) || '#' || good.title
 ) p
 where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);
@@ -302,7 +301,7 @@ web_push(
     ),
     null,
     url('/cpres/query', jsonb_build_object(
-        'sql', 'table cpres.head union all table cpres."giving activity"'
+        'sql', 'select * from cpres.head union all select * from cpres."giving activity"'
     )) || format('#%s-%s', good.good_id, receiver.person_id)
 ) p
 where (interest.good_id, interest.person_id) = (good_id_, receiver_id_);

@@ -19,6 +19,7 @@ begin atomic
         from translation
         where (id, lang) = (id_, coalesce(
             lang_,
+            current_setting('httpg.query', true)::jsonb->'qs'->>'lang',
             substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-?\w*,?.*')
         ))
         limit 1
@@ -62,7 +63,7 @@ begin atomic;
             select xmlelement(name form, xmlattributes(
                 'POST' as method,
                 url('/cpres/query', jsonb_build_object(
-                    'sql', format('call cpres.want(%L, $2::interest_level, $1)', good.good_id)
+                    'sql', format('call cpres.want(%L, $2::cpres.interest_level, $1)', good.good_id)
                 )) as action,
                 null as class
             ),
@@ -70,7 +71,7 @@ begin atomic;
                     'hidden' as type,
                     'redirect' as name,
                     url('/cpres/webpush', jsonb_build_object(
-                        'sql', 'select * from web_push_want($1::uuid, $2::uuid)',
+                        'sql', 'select * from cpres.web_push_want($1::uuid, $2::uuid)',
                         'params[0]', interest.good_id,
                         'params[1]', interest.person_id,
                         'redirect', 'referer'
@@ -316,6 +317,7 @@ grant select on table "good_detail" to person, anon;
 create or replace function good_form(id text, params jsonb, sql text) returns xml
 security invoker
 immutable parallel safe -- leakproof
+set search_path to cpres, pg_catalog
 language sql
 begin atomic
 with query (q, good_id, errors) as (
@@ -330,12 +332,7 @@ with query (q, good_id, errors) as (
 )
 select xmlelement(name form, xmlattributes(
         'POST' as method,
-        url('/cpres/query', jsonb_build_object(
-            'redirect', url('/cpres/query', jsonb_build_object(
-                'sql', 'select * from cpres.head union all select html from cpres."good admin"',
-                'flash[green]', 'Saved successfully'
-            ))
-        )) as action
+        '/cpres/query' as action
     ),
     case when good_form.id = query.good_id then
         xmlelement(name article, xmlattributes(
@@ -355,7 +352,7 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name input, xmlattributes(
         'hidden' as type,
         'on_error' as name,
-        coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'select * from head union all select html from "good admin"') as value
+        coalesce(q->'body'->>'on_error', q->'qs'->>'sql', 'select * from cpres.head union all select html from cpres."good admin"') as value
     )),
     xmlelement(name div, xmlattributes('grid' as class),
         xmlelement(name div,
@@ -393,6 +390,7 @@ from query;
 end;
 
 grant execute on function good_form to person;
+grant execute on function hstore(text, text) to person;
 
 create or replace view "good admin" (html)
 with (security_invoker)
@@ -408,7 +406,13 @@ result (html, good_id) as (
                 when good_id::text then q->'body'->'params'
                 else jsonb_build_array(title, description, good.location)
             end,
-            format('update good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L', good_id)
+            format($sql$
+            update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L
+            returning 303 status, hstore('Location', url.url('/cpres/query', jsonb_build_object(
+                'sql', 'select * from cpres.head union all select html from cpres."good admin"',
+                'flash[green]', 'Updated successfully'
+            ))) header
+            $sql$, good_id)
         ),
         xmlelement(name div, xmlattributes('grid media' as class), coalesce((
             select xmlagg(xmlelement(name article, xmlattributes('card' as class),
@@ -483,6 +487,7 @@ result (html, good_id) as (
                             select $1::bytea[]
                         )
                         insert into cpres.good_media (good_id, name, content, content_type)
+                        on conflict do select
                         select %L, convert_from(f[3], 'UTF8'), f[1], convert_from(f[2], 'UTF8')
                         from f
                         where f[1] <> ''
@@ -546,7 +551,13 @@ select xmlelement(name div, xmlattributes('new' as class),
             when 'new' then q->'body'->'params'
             else '[]'
         end,
-        'insert into cpres.good (title, description, location) values ($1, $2, $3::point)'
+        $sql$
+        insert into cpres.good (title, description, location) values ($1, $2, $3::point)
+        returning 303 status, hstore('Location', url.url('/cpres/query', jsonb_build_object(
+            'sql', 'select * from cpres.head union all select html from cpres."good admin"',
+            'flash[green]', 'Saved successfully'
+        ))) header
+        $sql$
     ),
     xmlelement(name h2, _('Existing goods'))
 )::text
@@ -664,7 +675,7 @@ html (html) as (
                                 'hidden' as type,
                                 'redirect' as name,
                                 url('/cpres/webpush', jsonb_build_object(
-                                    'sql', 'select * from web_push_gift($1::uuid, $2::uuid)',
+                                    'sql', 'select * from cpres.web_push_gift($1::uuid, $2::uuid)',
                                     'params[0]', interest.good_id,
                                     'params[1]', interest.person_id,
                                     'redirect', url('/cpres/query', jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"'))
@@ -706,9 +717,10 @@ html (html) as (
     from data, q
 )
 select xmlelement(name h2, _('Giving activity'))::text
-union all select xmlelement(name div, xmlattributes('grid good' as class), coalesce(xmlagg(html), ''))::text from html
-union all select _('Nothing yet.') where not exists (select from html limit 1)
-;
+union all select xmlelement(name div, xmlattributes('grid good' as class),
+    (select coalesce(xmlagg(html), '') from html),
+    (select _('Nothing yet.') where not exists (select from html limit 1))
+)::text;
 
 grant select on table "giving activity" to person;
 
@@ -821,9 +833,9 @@ html (good, html) as (
 )
 select xmlelement(name h2, _('Receiving activity'))::text
 union all select xmlelement(name div, xmlattributes('grid good' as class),
-    coalesce(xmlagg(html order by coalesce((good).updated_at, (good).created_at) desc), ''))::text from html
-union all select _('Nothing yet.') where not exists (select from html limit 1)
-;
+    (select coalesce(xmlagg(html order by coalesce((good).updated_at, (good).created_at) desc), '') from html),
+    (select _('Nothing yet.') where not exists (select from html limit 1))
+)::text;
 
 grant select on table "receiving activity" to person;
 
@@ -859,7 +871,7 @@ grant select on table finding_list to person, anon;
 drop view if exists good_marker cascade;
 create or replace view good_marker (geom, id, popup)
 with (security_invoker) as
-select location, good_id, jsonb_build_object(
+select location::geometry, good_id, jsonb_build_object(
     'content', html,
     'maxHeight', 300,
     'minWidth', 200,
@@ -1042,7 +1054,7 @@ map (html) as (
                 from (
                     -- select ST_AsGeoJSON(route)::jsonb from cpres.route
                     -- union all
-                    select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from cpres.good_marker
+                    select ST_AsGeoJSON(good_marker, id_column => 'id', geom_column => 'geom')::jsonb from cpres.good_marker
                     -- union all
                     -- select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from cpres.route) step
                 ) _ (feature)
@@ -1059,7 +1071,7 @@ map (html) as (
             from (
                 select ST_AsGeoJSON(route)::jsonb from route
                 union all
-                select ST_AsGeoJSON(good_marker, id_column => 'id')::jsonb from good_marker
+                select ST_AsGeoJSON(good_marker, id_column => 'id', geom_column => 'geom')::jsonb from good_marker
                 union all
                 select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
                 -- union all
@@ -1082,7 +1094,6 @@ union all select xmlelement(name div, xmlattributes('grid search-results' as cla
     xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list)),
     xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1)))
 )::text
-union all select _('Nothing yet.') where not exists (select from finding_list limit 1)
 ;
 
 grant select on table "findings" to person, anon;
@@ -1098,7 +1109,7 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <title>cpres</title>
     <meta name="color-scheme" content="dark light" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
     <link rel="stylesheet" href="/cpres/index.css?v=4" />
@@ -1218,7 +1229,7 @@ union all select xmlelement(name nav, xmlattributes('menu' as class),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'sql' as name,
-                    $$update person set name = $1, phone = nullif($2, '') where person_id = current_person_id()$$ as value
+                    $$update cpres.person set name = $1, phone = nullif($2, '') where person_id = cpres.current_person_id()$$ as value
                 )),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,

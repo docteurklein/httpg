@@ -13,15 +13,6 @@
       url = "path:/home/florian/work/docteurklein/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    # pg-jitter = {
-    #   url = "path:/home/florian/work/docteurklein/pg_jitter";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    #   flake = false;
-    # };
-    # pyproject-nix = {
-    #   url = "github:nix-community/pyproject.nix";
-    #   inputs.nixpkgs.follows = "nixpkgs";
-    # };
   };
 
   outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
@@ -63,6 +54,22 @@
           doCheck = true;
         });
 
+        packages.pg-trickle = pkgs.buildPgrxExtension (finalAttrs: {
+          postgresql = pkgs.postgresql_18;
+          cargo-pgrx = pkgs.cargo-pgrx_0_18_0;
+          pname = "pg-trickle";
+          version = "main";
+          src = builtins.fetchGit {
+            # url = "git@github.com:trickle-labs/pg-trickle.git";
+            url = "/home/florian/work/docteurklein/pg-trickle";
+            # rev = "9e16cd814f9855690aa12c3553a354bcf44e73ec";
+            exportIgnore = false;
+          };
+          doCheck = false;
+
+          cargoHash = "sha256-wXyt6zhOGOhNunYag3kLt4nDIfT0m7Z+KDTrNIZvizA=";
+        });
+
         packages.pg_jitter = pkgs.stdenv.mkDerivation {
           pname = "pg_jitter";
           version = "0.3.1";
@@ -78,6 +85,7 @@
             (builtins.fetchGit {
               url = /home/florian/work/docteurklein/pg_jitter;
               name = "pg_jitter";
+              rev = "463a6120ab45bc43d6ef73ac09a52e8c28691752";
             })
             (pkgs.fetchFromGitHub {
               owner = "asmjit";
@@ -111,7 +119,7 @@
           nativeBuildInputs = with pkgs; [
             cmake
             python3
-            postgresql_19.pg_config
+            postgresql_18.pg_config
             pcre2.dev
           ];
 
@@ -120,16 +128,16 @@
           buildPhase = ''
             ${pkgs.bash}/bin/bash build.sh \
               sljit \
-              -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
+              -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
 
             # ${pkgs.bash}/bin/bash build.sh \
             #   asmjit \
-            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
+            #   -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
           '';
 
           installPhase = ''
             mkdir -p $out/lib
-            cp -rv build/pg19/pg_jitter*.so $out/lib
+            cp -rv build/pg18/pg_jitter*.so $out/lib
           '';
         };
 
@@ -200,10 +208,13 @@
           packages = with pkgs; [
             comrak
             multimarkdown
-            postgresql_19
-            postgresql_19.pg_config
-            postgresql19Packages.postgis
-            cargo cargo-watch cargo-shear clippy rustc rust-analyzer openssl.dev pkg-config
+            postgresql_18
+            postgresql_18.pg_config
+            postgresql18Packages.postgis
+            openssl.dev pkg-config
+            cargo cargo-watch cargo-shear clippy rustc rust-analyzer
+            cargo-flamegraph
+            lldb
             mold clang
             biscuit-cli
             pkgs.extra-container
@@ -302,7 +313,7 @@
                       "HTTPG_WEBPUSH_PRIVATE_KEY_FILE=${builtins.getEnv "PWD"}/webpush.pem"
                       # "HTTPG_SMTP_PASSWORD_FILE='${builtins.getEnv "PWD"}/smtp-password'"
                       "HTTPG_ANON_ROLE=anon"
-                      "HTTPG_INDEX_SQL='table cpres.head union all table cpres.findings'"
+                      "HTTPG_INDEX_SQL='select * from cpres.head union all select * from cpres.findings'"
                       "HTTPG_LOGIN_QUERY='select login($1)'"
                       "HTTPG_SMTP_SENDER=florian.klein@free.fr"
                       "HTTPG_SMTP_USER=florian.klein@free.fr"
@@ -356,8 +367,8 @@
                 services.postgresql = {
                   enable = true;
                   # enableJIT = true;
-                  package = pkgs.postgresql_19;
-                  extensions = with pkgs.postgresql19Packages; [
+                  package = pkgs.postgresql_18;
+                  extensions = with pkgs.postgresql18Packages; [
                     (wal2json.overrideAttrs (prev: {
                       # version = "git";
                       src = pkgs.fetchFromGitHub {
@@ -376,6 +387,7 @@
                     pgrouting
                     h3-pg
                     # self'.packages.pg_jitter
+                    # self'.packages.pg-trickle
                   ];
 
                   enableTCPIP = true;
@@ -404,7 +416,7 @@
 
                   settings = {
                     allow_alter_system = false;
-                    wal_level = "replica";
+                    wal_level = "logical";
                     log_connections = true;
                     log_disconnections = true;
                     log_temp_files = 0;
@@ -417,13 +429,13 @@
                     "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;
-                    "auto_explain.log_timing" = true;
+                    "auto_explain.log_timing" = true; # perf hit
                     "auto_explain.log_buffers" = true;
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
-                    # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
-                    "pg_plan_advice.feedback_warnings" = true;
+                    # "auto_explain.log_parameter_max_length" = -1;
+                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    # "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
@@ -448,6 +460,8 @@
                     jit_provider = "pg_jitter";
                     "pg_jitter.backend" = "sljit";
                     io_method = "io_uring";
+
+                    # "pg_trickle.cdc_mode" = "auto";
                   };
                 };
               });
@@ -492,15 +506,15 @@
                     Type = "oneshot";
                     ExecStart = pkgs.lib.getExe (pkgs.writeShellScriptBin "init" ''
                       set -exu
-                      if test -e /var/lib/postgresql/19/PG_VERSION; then
+                      if test -e /var/lib/postgresql/18/PG_VERSION; then
                         exit
                       fi
-                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
+                      until ${pkgs.postgresql_18}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
                         sleep 2
                       done
-                      ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
-                      touch /var/lib/postgresql/19/standby.signal
-                      chown -R postgres: /var/lib/postgresql/19
+                      ${pkgs.postgresql_18}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/18
+                      touch /var/lib/postgresql/18/standby.signal
+                      chown -R postgres: /var/lib/postgresql/18
                     '');
                     # User = "postgres";
                     # Group = "postgres";
@@ -525,8 +539,8 @@
                 services.postgresql = {
                   enable = true;
                   # enableJIT = true;
-                  package = pkgs.postgresql_19;
-                  extensions = with pkgs.postgresql19Packages; [
+                  package = pkgs.postgresql_18;
+                  extensions = with pkgs.postgresql18Packages; [
                     (wal2json.overrideAttrs (prev: {
                       # version = "git";
                       src = pkgs.fetchFromGitHub {
@@ -588,8 +602,8 @@
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
                     # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
-                    "pg_plan_advice.feedback_warnings" = true;
+                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    # "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections

@@ -5,27 +5,24 @@ create schema if not exists url;
 -- drop function if exists url.encode cascade;
 create or replace function url.encode(value text)
 returns text
+set search_path to pg_catalog
 language sql
 immutable strict
 begin atomic
-  select
-    string_agg(
-      case
-        when ol>1 or ch !~ '[0-9a-za-z:/@._?#-]+' 
-          then regexp_replace(upper(substring(ch::bytea::text, 3)), '(..)', E'%\\1', 'g')
-        else ch
-      end,
-      ''
-    )
-  from (
-    select ch, octet_length(ch) as ol
-    from regexp_split_to_table(value, '') as ch
-  ) as s;
+  select string_agg(
+    case when octet_length(ch) > 1 or ch !~ '[0-9a-za-z:/@._?#-]+' 
+      then regexp_replace(upper(substring(ch::bytea::text, 3)), '(..)', E'%\\1', 'g')
+      else ch
+    end,
+    ''
+  )
+  from regexp_split_to_table(value, '') ch;
 end;
 
 -- drop function if exists url.url cascade;
 create or replace function url.url(path text, params jsonb = '{}')
 returns text
+set search_path to pg_catalog
 language sql
 immutable parallel safe -- leakproof
 begin atomic

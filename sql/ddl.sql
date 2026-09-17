@@ -11,6 +11,7 @@ set neon.allow_unstable_extensions='true';
 select current_setting('neon.project_id', true) is not null as is_neon
 \gset
 
+create extension if not exists hstore with schema public cascade;
 create extension if not exists vector with schema public cascade;
 create extension if not exists fuzzystrmatch with schema public cascade;
 create extension if not exists postgis with schema public cascade;
@@ -190,6 +191,7 @@ create table good (
     given_at timestamptz default null
 );
 
+-- create unique index on good (title);
 create index on good using hnsw (embedding vector_cosine_ops);
 
 create trigger updated_at

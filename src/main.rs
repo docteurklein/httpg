@@ -23,7 +23,7 @@ use lettre::{
 use serde_json::json;
 use tokio::sync::{broadcast::Sender};
 use tower::builder::ServiceBuilder;
-use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer};
+use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer, compression::CompressionLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
 use std::collections::HashMap;
@@ -164,7 +164,7 @@ async fn main() -> Result<(), HttpgError> {
         .layer(ServiceBuilder::new()
             .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
             // .layer(axum::middleware::from_fn(compress_stream::compress_stream))
-            // .layer(CompressionLayer::new())
+            .layer(CompressionLayer::new())
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::new()
                 .allow_origin(Any)
@@ -276,7 +276,7 @@ async fn logout(
                 .to_string()
             ),
         ],
-        Redirect::to(query.redirect.as_deref().or(path.as_ref().map(|p| p.as_str())).unwrap_or("/")).into_response()
+        Redirect::to(&query.redirect.or(path.map(|p| ["/", p.as_str()].concat())).unwrap_or("/".to_string())).into_response()
     ))
 }
 

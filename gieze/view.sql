@@ -111,7 +111,7 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <title>La Gièze</title>
     <meta name="color-scheme" content="dark light" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
     <link rel="stylesheet" href="/gieze/index.css?v=1" />
 </head>
@@ -561,7 +561,7 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <title>La Gièze</title>
     <meta name="color-scheme" content="dark light" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width" />
     <link rel="stylesheet" href="/cpres/index.css?v=1" />
     <link rel="stylesheet" href="/gieze/index.css?v=1" />
 </head>

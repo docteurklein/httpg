@@ -7,6 +7,10 @@ grant usage on schema blog, url, public to anon;
 grant execute on function public.hstore(text, text) to anon;
 grant execute on function url.url, url.encode to anon;
 
+revoke all on all tables in schema pg_catalog from anon, httpg, public;
+grant select on table pg_constraint to anon, httpg;
+grant select on table pg_attribute to anon, httpg;
+
 -- drop table if exists post cascade;
 create table if not exists post (
     post_id uuid primary key default uuidv7(),
@@ -308,7 +312,7 @@ select $html$<!DOCTYPE html>
     <meta charset="utf-8" />
     <title>docteurklein's blog</title>
     <meta name="color-scheme" content="dark light" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width" />
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         base-uri 'self';

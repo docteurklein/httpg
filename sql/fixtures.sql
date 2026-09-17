@@ -19,7 +19,7 @@ from generate_series(4, 100) i;
 -- ;
 
 insert into person_detail (person_id, location)
-select person_id, format('(%s, %s)', random(44.000, 48.200), random(1.600, 5.700))::point
+select person_id, format('(%s, %s)', random(1.600, 5.700), random(44.000, 48.200))::point
 from person p;
 
 insert into search (person_id, query, interest) values

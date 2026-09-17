@@ -71,7 +71,7 @@ impl Stream for CancelStream {
                 for (i, col) in row.columns().iter().enumerate() {
                     match col.name() {
                         "status" => {
-                            if let Ok(status) = row.try_get::<usize, i8>(i) {
+                            if let Ok(status) = row.try_get::<usize, i32>(i) {
                                 res.status = u16::try_from(status).ok();
                             }
                         },

@@ -23,7 +23,7 @@ as_conversions = "deny"
 
 [profile.dev]
 debug = true
-strip = "debuginfo"
+# strip = "debuginfo"
 
 [profile.dev.build-override]
 debug = false

@@ -80,7 +80,6 @@ using (exists(
     and run.run_id = ping.run_id
 ));
 
-alter table ping enable row level security;
 create policy "recent" on ping
 as restrictive
 for select to anon

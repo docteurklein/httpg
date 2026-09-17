@@ -32,12 +32,12 @@
     "enabled": false
   },
   "db": {
-    "host": "10.250.0.2",
+    "host": "10.250.1.2",
     "port": 5432,
     "username": "postgres",
     "database": "httpg",
     "connTimeoutSecs": 10,
     "disableConnection": false,
-    "allowStatementExecutionsAgainst": ["127.0.0.1/*", "localhost/*", "10.250.0.2/*"]
+    "allowStatementExecutionsAgainst": ["127.0.0.1/*", "localhost/*", "10.250.1.2/*"]
   }
 }
