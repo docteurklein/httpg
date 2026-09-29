@@ -486,7 +486,7 @@ async fn stream_query(
     }.get().await?;
 
     if let Some(lsn) = query.wait_for.as_ref() {
-        conn.execute(&format!("wait for lsn '{lsn}' with (timeout '1s', no_throw)"), &[]).await?;
+        conn.execute(&format!("wait for lsn '{lsn}' with (timeout '15s', no_throw)"), &[]).await?;
     }
 
     let tx = conn.build_transaction()
@@ -520,6 +520,7 @@ async fn stream_query(
     Ok(response::HttpResult {
         query: query.to_owned(),
         rows,
+        lsn: None,
     })
 }
 
@@ -593,10 +594,12 @@ async fn post_query(
                     None => rows,
                 };
                 tx.commit().await?;
+                let row = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?;
 
                 return Ok(response::HttpResult {
                     query,
                     rows: CancelStream::from_vec(rows, guard),
+                    lsn: Some(row.try_get(0)?),
                 }.into_response());
             },
             Err(e) => {
@@ -642,6 +645,7 @@ async fn post_query(
                             response::HttpResult {
                                 query,
                                 rows: CancelStream::new(rows, guard),
+                                lsn: None,
                             }
                         ).into_response());
                     }

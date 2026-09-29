@@ -35,14 +35,16 @@ end;
 
 -- drop table if exists blog.stat;
 create table if not exists blog.stat (
-    id int primary key default 1,
-    nposts int default 0,
+    post_id uuid primary key references blog.post (post_id) on delete cascade,
+    ncomments int default 0,
     lsn pg_lsn default '0/0'
 );
-insert into blog.stat (id, nposts)
-select 1, count(post_id)
-from blog.post
-on conflict (id) do nothing;
+insert into blog.stat (post_id, ncomments)
+select post_id, count(comment_id)
+from blog.comment
+-- join blog.post using (post_id)
+group by 1
+on conflict (post_id) do nothing;
 
 -- drop function if exists log_;
 create or replace function log_(e anyelement, msg text default null) returns anyelement
@@ -59,44 +61,56 @@ set session characteristics as transaction isolation level serializable;
 do $$
 declare
     lsn_ pg_lsn;
+    change_ jsonb;
 begin
 set log_min_messages to fatal; -- unfortunate but pg_logical_slot_peek_changes floods server logs
 select confirmed_flush_lsn
 into lsn_
 from pg_replication_slots
 where slot_name = current_setting('ivm.slot_name');
-raise notice '%', lsn_;
+raise notice 'starting at %', lsn_;
 loop
     with change (lsn, change) as (
-        select lsn, change
-        from pg_logical_slot_peek_changes(current_setting('ivm.slot_name'), null, null, 'include-types', 'false', 'add-tables', 'blog.post'),
-        jsonb_array_elements(data::jsonb->'change') change
+        select lsn, value
+        from pg_logical_slot_peek_changes(current_setting('ivm.slot_name'), null, null, 'include-types', 'false'), --, 'add-tables', 'blog.post'),
+        jsonb_array_elements(data::jsonb->'change')
     ),
     blog_stat as (
-        with sum (lsn, ins, del) as (
-            select lsn, count(1) filter (where change->>'kind' = 'insert'), count(1) filter (where change->>'kind' = 'delete')
-            from change
-            where (change->>'schema', change->>'table') = ('blog', 'post')
+        with sum (post_id, ins, del) as (
+            select post_id, count(1) filter (where change->>'kind' = 'insert'), count(1) filter (where change->>'kind' = 'delete')
+            from change,
+            wal2json_v1_to_record(change),
+            jsonb_populate_record(null::blog.comment, case when change->>'kind' = 'delete' then old::jsonb else new::jsonb end)
+            join blog.post using (post_id)
+            where (change->>'schema', change->>'table') = ('blog', 'comment')
             and change->>'kind' in ('insert', 'delete')
             group by 1
         )
-        update blog.stat
-        set nposts = nposts + ins - del,
-        lsn = sum.lsn
-        from sum
-        where stat.id = 1
-        and stat.lsn < sum.lsn
+        merge into blog.stat
+        using sum
+        on sum.post_id = stat.post_id
+        -- and stat.lsn < sum.lsn
+        when matched and ins - del <= 0 then delete
+        when matched then update
+            set ncomments = ncomments + ins - del
+            -- lsn = sum.lsn
+        when not matched then insert
+            (post_id, ncomments) values
+            (post_id, ins - del)
     )
-    select lsn into lsn_ --, jsonb_agg(change)
-    from change;
-    -- group by 1;
+    select lsn, jsonb_agg(change) into lsn_, change_
+    from change
+    group by 1;
     --, change_--, change, change->>'schema', change->>'table', change->>'kind', old, new, new - old diff into found, lsn, change_
-    --, wal2json_v1_to_record(change), jsonb_populate_record(null::blog.post, new::jsonb) n;
 
+    -- exception when serialization_failure then
+    --     raise warning '%', sqlerrm;
+    --     continue;
+    -- end;
     commit;
     perform pg_replication_slot_advance(current_setting('ivm.slot_name'), lsn_);
     if lsn_ is not null then
-        raise notice '%', lsn_;
+        raise notice 'commited %', lsn_;
         -- raise notice '%', change_;
     else
         perform pg_sleep(1);

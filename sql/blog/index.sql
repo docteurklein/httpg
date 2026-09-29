@@ -198,7 +198,7 @@ entry (post_id, title, xml) as (
             xmlelement(name h4, xmlattributes('comments' as id), 'Comments'),
             xmlelement(name form, xmlattributes(
                 'POST' as method,
-                '/blog/query#comments' as action
+                '/blog/query?include_lsn=#comments' as action
             ),
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,

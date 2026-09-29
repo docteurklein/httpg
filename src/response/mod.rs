@@ -4,7 +4,7 @@ use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode, header::{CACH
 use bytes::{BufMut, BytesMut};
 use futures::{Stream, StreamExt, stream};
 use http::HeaderMap;
-use postgres_types::{Type};
+use postgres_types::{PgLsn, Type};
 use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
@@ -14,6 +14,7 @@ pub mod compress_stream;
 pub struct HttpResult {
     pub query: Query,
     pub rows: CancelStream,
+    pub lsn: Option<PgLsn>,
 }
 
 pub struct CancelStream {
@@ -147,7 +148,26 @@ impl IntoResponse for HttpResult {
             }
             if let Some(h) = a.header {
                 for (k, v) in h.into_iter() {
-                    if let (Ok(k), Some(Ok(v))) = (HeaderName::from_bytes(k.as_bytes()), v.as_ref().map(String::as_bytes).map(HeaderValue::from_bytes)) {
+                    if let (Ok(k), Some(Ok(mut v))) = (HeaderName::from_bytes(k.as_bytes()), v.as_ref().map(String::as_bytes).map(HeaderValue::from_bytes)) {
+                        if let (Some(lsn), Some(_)) = (self.lsn, self.query.include_lsn.as_deref()) {
+                            if k.as_str().to_lowercase() == "location" {
+                                let redirect = v.to_str().unwrap().parse::<http::Uri>().unwrap();
+                                let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
+
+                                let mut qs = match redirect.query() {
+                                    Some(r) => {
+                                        serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(r).unwrap()
+                                    },
+                                    None => serde_json::Map::new(),
+                                };
+                                qs.insert("wait_for".into(), serde_json::json!(&lsn.to_string()));
+
+                                let builder = http::uri::Builder::from(redirect.to_owned());
+                                let builder = builder.path_and_query([redirect.path(), "?", serde_qs::to_string(&qs).unwrap().as_str()].join(""));
+
+                                v = HeaderValue::from_str(builder.build().unwrap().to_string().as_str()).unwrap_or(v)
+                            };
+                        }
                         builder = builder.header(k, v);
                     }
                 }
@@ -207,6 +227,7 @@ mod tests {
         let res = response::HttpResult {
             query: query.clone(),
             rows,
+            lsn: None,
         };
 
         let body = res.into_response().into_body();

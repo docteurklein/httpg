@@ -13,10 +13,12 @@ impl Visitor for AllowList {
 
     fn pre_visit_expr(&mut self, expr: &Expr) -> ControlFlow<Self::Break> {
         self.0 = match expr {
-            Expr::Function(Function { name, ..}) if name.to_string() == "set_config" => Err(HttpgError::RefusedSql {
-                query: expr.to_string(),
-                reason: Some("illegal set_config".to_string()),
-            }),
+            Expr::Function(Function { name, ..}) if ["set_config", "current_setting"].contains(&name.to_string().as_str()) => {
+                Err(HttpgError::RefusedSql {
+                    query: expr.to_string(),
+                    reason: Some(format!("illegal function: {name}")),
+                })
+            },
             _ => Ok(()),
         };
         if self.0.is_err() {

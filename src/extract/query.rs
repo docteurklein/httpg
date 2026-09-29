@@ -119,11 +119,14 @@ pub struct QueryPart {
     pub on_error: Option<String>,
     pub use_primary: Option<String>,
     pub wait_for: Option<String>,
+    pub include_lsn: Option<String>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Clone)]
 pub struct Query {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub sql: Option<String>,
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub cookies: BTreeMap<String, String>,
     #[serde(skip)]
     pub params: Vec<Param>,
@@ -154,6 +157,8 @@ pub struct Query {
     pub use_primary: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub wait_for: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_lsn: Option<String>,
 }
 
 impl<S> FromRequest<S> for Query
@@ -322,13 +327,13 @@ where
             params,
             files,
             qs: raw_qs.into_iter().filter_map(|(key, value)|
-                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for"]
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for", "include_lsn"]
                     .contains(&key.as_str())
                     .not()
                     .then_some((key, value))
             ).collect(),
             body: raw_body.into_iter().filter_map(|(key, value)|
-                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for"]
+                ["sql", "on_error", "accept", "content_type", "in_types", "redirect", "cache_control", "order", "use_primary", "wait_for", "include_lsn"]
                     .contains(&key.as_str())
                     .not()
                     .then_some((key, value))
@@ -343,6 +348,7 @@ where
             on_error,
             use_primary,
             wait_for,
+            include_lsn: qs.include_lsn.or(body.include_lsn),
         })
     }
 }

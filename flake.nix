@@ -54,21 +54,21 @@
           doCheck = true;
         });
 
-        packages.pg-trickle = pkgs.buildPgrxExtension (finalAttrs: {
-          postgresql = pkgs.postgresql_18;
-          cargo-pgrx = pkgs.cargo-pgrx_0_18_0;
-          pname = "pg-trickle";
-          version = "main";
-          src = builtins.fetchGit {
-            # url = "git@github.com:trickle-labs/pg-trickle.git";
-            url = "/home/florian/work/docteurklein/pg-trickle";
-            # rev = "9e16cd814f9855690aa12c3553a354bcf44e73ec";
-            exportIgnore = false;
-          };
-          doCheck = false;
+        # packages.pg-trickle = pkgs.buildPgrxExtension (finalAttrs: {
+        #   postgresql = pkgs.postgresql_18;
+        #   cargo-pgrx = pkgs.cargo-pgrx_0_18_0;
+        #   pname = "pg-trickle";
+        #   version = "main";
+        #   src = builtins.fetchGit {
+        #     # url = "git@github.com:trickle-labs/pg-trickle.git";
+        #     url = "/home/florian/work/docteurklein/pg-trickle";
+        #     # rev = "9e16cd814f9855690aa12c3553a354bcf44e73ec";
+        #     exportIgnore = false;
+        #   };
+        #   doCheck = false;
 
-          cargoHash = "sha256-wXyt6zhOGOhNunYag3kLt4nDIfT0m7Z+KDTrNIZvizA=";
-        });
+        #   cargoHash = "sha256-wXyt6zhOGOhNunYag3kLt4nDIfT0m7Z+KDTrNIZvizA=";
+        # });
 
         packages.pg_jitter = pkgs.stdenv.mkDerivation {
           pname = "pg_jitter";
@@ -119,7 +119,7 @@
           nativeBuildInputs = with pkgs; [
             cmake
             python3
-            postgresql_18.pg_config
+            postgresql_19.pg_config
             pcre2.dev
           ];
 
@@ -128,16 +128,54 @@
           buildPhase = ''
             ${pkgs.bash}/bin/bash build.sh \
               sljit \
-              -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+              -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
 
             # ${pkgs.bash}/bin/bash build.sh \
             #   asmjit \
-            #   -DPG_CONFIG=${pkgs.postgresql_18.pg_config}/bin/pg_config
+            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
           '';
 
           installPhase = ''
             mkdir -p $out/lib
-            cp -rv build/pg18/pg_jitter*.so $out/lib
+            cp -rv build/pg19/pg_jitter*.so $out/lib
+          '';
+        };
+
+        packages.pg_wait_tracer = pkgs.stdenv.mkDerivation {
+          pname = "pg_wait_tracer";
+          version = "master";
+
+          src = pkgs.fetchFromGitHub {
+            owner = "DmitryNFomin";
+            repo = "pg_wait_tracer";
+            rev = "master";
+            sha256 = "sha256-ysVWeevQQJHPkPKzGTejkx+MSC/Z5F8d4y5cn/q3f5Y=";
+            name = "pg_wait_tracer";
+          };
+
+          buildInputs = with pkgs; [
+            gcc clang llvm cmake
+            postgresql_19.pg_config
+            libbpf bpftools libelf libcap zlib lz4
+            llvmPackages.clang-unwrapped
+            llvmPackages.bintools-unwrapped
+            git
+            cacert
+            pkg-config
+          ];
+
+          hardeningDisable = [ "zerocallusedregs" "stackprotector" ];
+
+
+          preBuild = ''
+            echo 'echo yes' > scripts/detect_libbpf_usdt.sh
+          '';
+
+          dontConfigure = true;
+
+          installPhase = ''
+            mkdir -p $out/bin
+            cp -rv {pg_wait_tracer,pgwt-server} $out/bin
           '';
         };
 
@@ -208,9 +246,9 @@
           packages = with pkgs; [
             comrak
             multimarkdown
-            postgresql_18
-            postgresql_18.pg_config
-            postgresql18Packages.postgis
+            postgresql_19
+            postgresql_19.pg_config
+            postgresql19Packages.postgis
             openssl.dev pkg-config
             cargo cargo-watch cargo-shear clippy rustc rust-analyzer
             cargo-flamegraph
@@ -367,8 +405,8 @@
                 services.postgresql = {
                   enable = true;
                   # enableJIT = true;
-                  package = pkgs.postgresql_18;
-                  extensions = with pkgs.postgresql18Packages; [
+                  package = pkgs.postgresql_19;
+                  extensions = with pkgs.postgresql19Packages; [
                     (wal2json.overrideAttrs (prev: {
                       # version = "git";
                       src = pkgs.fetchFromGitHub {
@@ -418,6 +456,7 @@
                     allow_alter_system = false;
                     wal_level = "logical";
                     log_connections = true;
+                    log_lock_waits = true;
                     log_disconnections = true;
                     log_temp_files = 0;
                     # logging_collector = true;
@@ -506,15 +545,15 @@
                     Type = "oneshot";
                     ExecStart = pkgs.lib.getExe (pkgs.writeShellScriptBin "init" ''
                       set -exu
-                      if test -e /var/lib/postgresql/18/PG_VERSION; then
+                      if test -e /var/lib/postgresql/19/PG_VERSION; then
                         exit
                       fi
-                      until ${pkgs.postgresql_18}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
+                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
                         sleep 2
                       done
-                      ${pkgs.postgresql_18}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/18
-                      touch /var/lib/postgresql/18/standby.signal
-                      chown -R postgres: /var/lib/postgresql/18
+                      ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
+                      touch /var/lib/postgresql/19/standby.signal
+                      chown -R postgres: /var/lib/postgresql/19
                     '');
                     # User = "postgres";
                     # Group = "postgres";
@@ -539,8 +578,8 @@
                 services.postgresql = {
                   enable = true;
                   # enableJIT = true;
-                  package = pkgs.postgresql_18;
-                  extensions = with pkgs.postgresql18Packages; [
+                  package = pkgs.postgresql_19;
+                  extensions = with pkgs.postgresql19Packages; [
                     (wal2json.overrideAttrs (prev: {
                       # version = "git";
                       src = pkgs.fetchFromGitHub {
@@ -582,10 +621,12 @@
 
                   settings = {
                     primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
+                    # recovery_min_apply_delay = "10s";
                     primary_slot_name = "replica1";
                     allow_alter_system = false;
                     wal_level = "logical";
                     log_connections = true;
+                    log_lock_waits = true;
                     log_disconnections = true;
                     log_temp_files = 0;
                     # logging_collector = true;
