@@ -39,7 +39,6 @@ group by 1, 2
 order by 2 asc, 1 asc;
 
 grant select on future_invoice to gieze_admin;
-grant execute on function hstore(text, text) to anon, gieze_admin;
 
 create or replace view todo(html) as
 select xmlelement(name h1, 'TODO')::text
@@ -193,7 +192,7 @@ select xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as a
     $$
       insert into gieze.bl (client) values ($1) returning
         303 status,
-        hstore('Location', url.url('/gieze/query', jsonb_build_object(
+        jsonb_build_object('Location', url.url('/gieze/query', jsonb_build_object(
           'sql', 'select * from gieze.head union all select * from gieze.bl_admin'
         ))) header
     $$ as value
@@ -229,7 +228,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
           where bl = $1::bigint
           returning
             303 status,
-            hstore('Location', url.url('/gieze/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('/gieze/query', jsonb_build_object(
               'sql', 'select * from gieze.head union all select * from gieze.bl_admin'
             ))) header
         $$ as value
@@ -270,7 +269,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
                 set quantity = excluded.quantity
               returning
                 303 status,
-                hstore('Location', url.url('/gieze/query', jsonb_build_object(
+                jsonb_build_object('Location', url.url('/gieze/query', jsonb_build_object(
                   'sql', 'select * from gieze.head union all select * from gieze.bl_admin'
                 ))) header
             $$ as value
@@ -430,7 +429,7 @@ select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class)
             phone = excluded.phone
           returning
             303 status,
-            hstore('Location', url.url('/gieze/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('/gieze/query', jsonb_build_object(
               'sql', 'select * from gieze.head union all select * from gieze.client_admin'
             ))) header
         $$ as value
@@ -502,7 +501,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
             tva_rate = excluded.tva_rate
           returning
             303 status,
-            hstore('Location', url.url('/gieze/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('/gieze/query', jsonb_build_object(
               'sql', 'select * from gieze.head union all select * from gieze.product_admin'
             ))) header
         $$ as value

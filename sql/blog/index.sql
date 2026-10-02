@@ -2,9 +2,7 @@ create schema if not exists blog;
 
 set search_path to blog, url, public;
 
-create extension if not exists hstore schema public cascade;
 grant usage on schema blog, url, public to anon;
-grant execute on function public.hstore(text, text) to anon;
 grant execute on function url.url, url.encode to anon;
 
 revoke all on all tables in schema pg_catalog from anon, httpg, public;
@@ -205,7 +203,7 @@ entry (post_id, title, xml) as (
                     'sql' as name,
                     $$
                         insert into blog.comment (comment_id, author, content, post_id) values ($1::uuid, $2, $3, $4::uuid)
-                        returning 303 status, hstore('Location', url.url('/blog/query', jsonb_build_object(
+                        returning 303 status, jsonb_build_object('Location', url.url('/blog/query', jsonb_build_object(
                             'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
                             'params[0]', post_id,
                             'comment_id', comment_id
@@ -227,6 +225,7 @@ entry (post_id, title, xml) as (
                 xmlelement(name input, xmlattributes(
                     'text' as type,
                     'params[1]' as name,
+                    'required' as required,
                     'author' as placeholder,
                     params->>1 as value
                 )),
@@ -234,6 +233,7 @@ entry (post_id, title, xml) as (
                 xmlelement(name textarea, xmlattributes(
                     'params[2]' as name,
                     'comment' as placeholder,
+                    'required' as required,
                     7 as rows
                 ), coalesce(params->>2, '')),
                 xmlelement(name input, xmlattributes(
@@ -506,7 +506,7 @@ feed (xml) as (
     )
     from entry, httpg
 )
-select hstore('content-type', 'application/atom+xml'), null
+select jsonb_build_object('content-type', 'application/atom+xml'), null
 union all
 select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all
@@ -552,7 +552,7 @@ feed (xml) as (
     )
     from entry, httpg
 )
-select hstore('content-type', 'application/atom+xml'), null
+select jsonb_build_object('content-type', 'application/atom+xml'), null
 union all
 select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all

@@ -77,7 +77,8 @@ impl Stream for CancelStream {
                             }
                         },
                         "header" => {
-                            if let Ok(h) = row.try_get::<usize, HashMap<String, Option<String>>>(i) {
+                            if let Ok(h) = row.try_get::<usize, serde_json::Value>(i) {
+                                let h: HashMap<String, Option<String>> = serde_json::from_value(h)?;
                                 res.header = res.header.map_or(Some(h.clone()), |mut hs| {hs.extend(h); Some(hs)});
                             }
                         },

@@ -85,7 +85,7 @@ select xmlelement(name form, xmlattributes(
         'sql' as name,
         $$
             insert into blog.comment (comment_id, author, content, post_id) values ($1::uuid, $2, $3, $4::uuid)
-            returning 303 status, hstore('Location', url.url('/blog/query', jsonb_build_object(
+            returning 303 status, jsonb_build_object('Location', url.url('/blog/query', jsonb_build_object(
                 'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
                 'params[0]', post_id,
                 'comment_id', comment_id

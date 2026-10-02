@@ -279,6 +279,7 @@
           HTTPG_PG_PASSWORD = "pg-password";
           HTTPG_PG_DBNAME = "httpg";
           HTTPG_PG_READ_HOST = "10.250.2.2";
+          HTTPG_PG_READ_PORT = "6432";
           HTTPG_PG_WRITE_HOST = "10.250.1.2";
           PORT = "3000";
           RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
@@ -333,6 +334,7 @@
 
                 networking.firewall.allowedTCPPorts = [ 1025 1080 3000 ];
                 networking.useDHCP = false;
+                networking.enableIPv6 = true;
 
                 services.mailcatcher = {
                   enable = true;
@@ -361,6 +363,7 @@
                       "PG_PASSWORD=${builtins.getEnv "PWD"}/pg-password"
                       "PG_DBNAME=httpg"
                       "PG_READ_HOST=10.250.2.2"
+                      "PG_READ_PORT=6432"
                       "PG_WRITE_HOST=10.250.1.2"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
@@ -393,6 +396,7 @@
 
                 networking.firewall.allowedTCPPorts = [ 5432 ];
                 networking.useDHCP = false;
+                networking.enableIPv6 = true;
 
                 users.users.postgres = {
                   name = "postgres";
@@ -520,6 +524,7 @@
               privateNetwork = true;
               hostBridge = "br0";
               localAddress = "10.250.2.2/16";
+              localAddress6 = "fdfd:b3f0:482::1";
 
               config = ({ pkgs, ... }: {
                 boot.isNspawnContainer = true;
@@ -528,6 +533,7 @@
 
                 networking.firewall.allowedTCPPorts = [ 5432 6432 ];
                 networking.useDHCP = false;
+                networking.enableIPv6 = true;
 
                 users.users.postgres = {
                   name = "postgres";
@@ -617,9 +623,11 @@
                   authentication = pkgs.lib.mkForce ''
                     local all      all               trust
                     host  all      all   0.0.0.0/0   trust
+                    host  all      all   ::/0        trust
                   '';
 
                   settings = {
+                    listen_addresses = "*";
                     primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
                     # recovery_min_apply_delay = "10s";
                     primary_slot_name = "replica1";

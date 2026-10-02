@@ -11,8 +11,7 @@ create extension if not exists postgis with schema public cascade;
 create extension if not exists h3 with schema public cascade;
 create extension if not exists h3_postgis with schema public cascade;
 create extension if not exists pgcrypto schema public;
-create extension if not exists hstore schema public;
-
+-- 
 create schema if not exists gps;
 
 grant usage on schema gps, url, pg_catalog to httpg;

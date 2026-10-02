@@ -362,7 +362,7 @@ form (html) as (
             'sql' as name,
             $sql$
                 insert into gps.run (name) values (nullif($1, ''))
-                returning hstore('Location', url.url('/gps/query', jsonb_build_object(
+                returning jsonb_build_object('Location', url.url('/gps/query', jsonb_build_object(
                     'sql', 'select * from gps.head union all select * from gps.map',
                     'run_id', run_id
                 ))) header, 303 status
@@ -432,7 +432,7 @@ begin
 
     open res for select
         303 status,
-        hstore('Location', url('/gps/query', jsonb_build_object(
+        jsonb_build_object('Location', url('/gps/query', jsonb_build_object(
             'run_id', run_id_,
             'sql', 'select * from gps.head union all select * from gps.map'
         ))) header
@@ -476,7 +476,7 @@ begin
 
     open res for select
         303 status,
-        hstore(array[
+        jsonb_build_object(array[
             ['Location', url('/gps/query', jsonb_build_object(
                 'sql', 'select * from gps.list'
             ))],

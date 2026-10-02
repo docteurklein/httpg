@@ -390,7 +390,6 @@ from query;
 end;
 
 grant execute on function good_form to person;
-grant execute on function hstore(text, text) to person;
 
 create or replace view "good admin" (html)
 with (security_invoker)
@@ -408,7 +407,7 @@ result (html, good_id) as (
             end,
             format($sql$
             update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L
-            returning 303 status, hstore('Location', url.url('/cpres/query', jsonb_build_object(
+            returning 303 status, jsonb_build_object('Location', url.url('/cpres/query', jsonb_build_object(
                 'sql', 'select * from cpres.head union all select html from cpres."good admin"',
                 'flash[green]', 'Updated successfully'
             ))) header
@@ -553,7 +552,7 @@ select xmlelement(name div, xmlattributes('new' as class),
         end,
         $sql$
         insert into cpres.good (title, description, location) values ($1, $2, $3::point)
-        returning 303 status, hstore('Location', url.url('/cpres/query', jsonb_build_object(
+        returning 303 status, jsonb_build_object('Location', url.url('/cpres/query', jsonb_build_object(
             'sql', 'select * from cpres.head union all select html from cpres."good admin"',
             'flash[green]', 'Saved successfully'
         ))) header

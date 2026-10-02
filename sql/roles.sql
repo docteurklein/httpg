@@ -37,9 +37,7 @@ revoke create on schema public, pg_catalog from public, anon;
 alter default privileges grant all on types to public, anon;
 grant usage on schema public, pg_catalog to public, anon;
 
-grant select on table pg_namespace to anon;
-grant select on table pg_range to anon;
-grant select on table pg_type to anon;
+alter role httpg set plan_cache_mode = force_custom_plan;
 
 alter role httpg set statement_timeout to "50000ms"; -- only at login time, so we set on http user, not person role
 alter role httpg set transaction_timeout to "50000ms";
