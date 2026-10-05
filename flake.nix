@@ -385,6 +385,13 @@
                 "--private-users-ownership=chown"
               ];
 
+              # bindMounts = {
+              #   "/var/lib/postgresql/19" = {
+              #     isReadOnly = false;
+              #     hostPath = "/mnt";
+              #   };
+              # };
+
               privateNetwork = true;
               hostBridge = "br0";
               localAddress = "10.250.1.2/16";
@@ -511,7 +518,7 @@
             };
 
             containers.pgreplica = {
-              ephemeral = false;
+              ephemeral = true;
               autoStart = true;
 
               extraFlags = [

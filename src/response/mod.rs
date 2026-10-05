@@ -77,7 +77,7 @@ impl Stream for CancelStream {
                             }
                         },
                         "header" => {
-                            if let Ok(h) = row.try_get::<usize, serde_json::Value>(i) {
+                            if let Ok(h) = row.try_get::<usize, serde_json::Value>(i) { // hstore forces oid lookup
                                 let h: HashMap<String, Option<String>> = serde_json::from_value(h)?;
                                 res.header = res.header.map_or(Some(h.clone()), |mut hs| {hs.extend(h); Some(hs)});
                             }
@@ -148,29 +148,12 @@ impl IntoResponse for HttpResult {
                 builder = builder.status(s);
             }
             if let Some(h) = a.header {
-                for (k, v) in h.into_iter() {
-                    if let (Ok(k), Some(Ok(mut v))) = (HeaderName::from_bytes(k.as_bytes()), v.as_ref().map(String::as_bytes).map(HeaderValue::from_bytes)) {
-                        if let (Some(lsn), Some(_)) = (self.lsn, self.query.include_lsn.as_deref()) {
-                            if k.as_str().to_lowercase() == "location" {
-                                let redirect = v.to_str().unwrap().parse::<http::Uri>().unwrap();
-                                let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
-
-                                let mut qs = match redirect.query() {
-                                    Some(r) => {
-                                        serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(r).unwrap()
-                                    },
-                                    None => serde_json::Map::new(),
-                                };
-                                qs.insert("wait_for".into(), serde_json::json!(&lsn.to_string()));
-
-                                let builder = http::uri::Builder::from(redirect.to_owned());
-                                let builder = builder.path_and_query([redirect.path(), "?", serde_qs::to_string(&qs).unwrap().as_str()].join(""));
-
-                                v = HeaderValue::from_str(builder.build().unwrap().to_string().as_str()).unwrap_or(v)
-                            };
-                        }
-                        builder = builder.header(k, v);
+                let mut hs = h.into_iter();
+                while let Some((k, Some(mut v))) = hs.next() {
+                    if let (Some(lsn), Some(_), "location") = (self.lsn, self.query.include_lsn.as_deref(), k.to_lowercase().as_str()) {
+                        v = add_query_param(v, "wait_for", lsn.to_string()).unwrap_or_default();
                     }
+                    builder = builder.header(k, v);
                 }
             }
             if a.body.is_some() {
@@ -191,6 +174,25 @@ impl IntoResponse for HttpResult {
             .body(Body::from_stream(stream.map(|r| r.map(|r| r.body.unwrap_or_default()))))
             .unwrap_or(StatusCode::BAD_REQUEST.into_response())
     }
+}
+
+fn add_query_param(url: impl Into<String>, param: impl Into<String>, value: impl Into<String>) -> Result<String, HttpgError> {
+    let url = url.into().parse::<http::Uri>()?;
+    let serde_qs = serde_qs::Config::new().max_depth(0).use_form_encoding(true);
+
+    let mut qs = match url.query() {
+        Some(r) => {
+            serde_qs.deserialize_str::<serde_json::Map<String, serde_json::Value>>(r)?
+        },
+        None => serde_json::Map::new(),
+    };
+    qs.insert(param.into(), serde_json::json!(&value.into()));
+
+    http::uri::Builder::from(url.to_owned())
+        .path_and_query([url.path(), "?", serde_qs::to_string(&qs).unwrap_or_default().as_str()].join(""))
+        .build()
+        .map_err(Into::into)
+        .map(|url| url.to_string())
 }
 
 #[cfg(test)]

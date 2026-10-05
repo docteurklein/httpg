@@ -594,12 +594,12 @@ async fn post_query(
                     None => rows,
                 };
                 tx.commit().await?;
-                let row = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?;
+                let lsn = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?.try_get(0).ok();
 
                 return Ok(response::HttpResult {
                     query,
                     rows: CancelStream::from_vec(rows, guard),
-                    lsn: Some(row.try_get(0)?),
+                    lsn,
                 }.into_response());
             },
             Err(e) => {

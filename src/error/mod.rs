@@ -58,27 +58,27 @@ pub enum HttpgError {
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    Axum {
+    Httpg {
         source: http::Error,
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    AxumHeaderName {
+    HeaderName {
         source: header::InvalidHeaderName,
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    AxumHeaderValue {
+    HeaderValue {
         source: header::InvalidHeaderValue,
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    AxumCode {
+    HttpCode {
         source: http::status::InvalidStatusCode,
         backtrace: snafu::Backtrace,
     },
     #[snafu(transparent)]
-    AxumMultipart {
+    Multipart {
         source: multipart::MultipartError,
         backtrace: snafu::Backtrace,
     },
