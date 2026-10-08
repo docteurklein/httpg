@@ -1,0 +1,22 @@
+body {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+}
+
+.day {
+  /* grid-row: max(1, calc(sibling-index() / 5)); */
+  /* grid-column: mod(sibling-index(), 7); */
+  border: 1px solid;
+  min-height: calc(95vh / 5);
+  position: relative;
+}
+
+.booking {
+  /* position: absolute; */
+  /* top: calc(sibling-index() * 1em); */
+  /* width: calc(var(--days) * (100vw / 7)); */
+  background-color: oklch(from var(--color) l c h / 0.2);
+  /* grid-row: var(--row); */
+  /* grid-column: var(--start-col) / var(--days); */
+  /* align-self: end; */
+}

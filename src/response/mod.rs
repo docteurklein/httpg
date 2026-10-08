@@ -34,7 +34,6 @@ impl CancelStream {
 
     pub fn from_vec(vec: Vec<Row>, guard: QueryGuard) -> Self
     {
-        
         Self {
             inner: Box::pin(stream::iter(vec.into_iter().map(Ok).collect::<Vec::<_>>())),
             guard,

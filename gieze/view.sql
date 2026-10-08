@@ -179,7 +179,8 @@ select xmlelement(name form, xmlattributes('POST' as method, '/gieze/query' as a
   xmlelement(name input, xmlattributes(
       'clients' as list,
       'params[0]' as name,
-      'client' as placeholder
+      'client' as placeholder,
+      'required' as required
   )),
   xmlelement(name input, xmlattributes(
     'hidden' as type,
@@ -253,11 +254,13 @@ select xmlelement(name div, xmlattributes('grid' as class),
               'products' as list,
               'params[1]' as name,
               'product' as placeholder,
+              'required' as required,
               product as value
           )),
           xmlelement(name input, xmlattributes(
               'number' as type,
               'params[2]' as name,
+              'required' as required,
               quantity as value
           )),
           xmlelement(name input, xmlattributes(
@@ -281,14 +284,14 @@ select xmlelement(name div, xmlattributes('grid' as class),
           )),
           xmlelement(name input, xmlattributes(
               'submit' as type,
-              button as value
+              action as value
           ))
-      )))
+      ) order by product nulls first))
       from (
         values (bl.bl, null, 1, 'Add')
         union all
         select bl, product, quantity, 'Edit' from bl_line l where l.bl = bl.bl
-      ) _ (bl, product, quantity, button)
+      ) _ (bl, product, quantity, action)
     )
   ) order by bl.bl desc), '')
 )::text
@@ -443,12 +446,14 @@ select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class)
           'text' as type,
           'params[0]' as name,
           'client' as placeholder,
+          'required' as required,
           client as value
       )),
       xmlelement(name input, xmlattributes(
           'text' as type,
           'params[1]' as name,
           'Adresse de facturation' as placeholder,
+          'required' as required,
           billing_address as value
       )),
       xmlelement(name input, xmlattributes(
@@ -468,6 +473,7 @@ select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class)
           button as value
       ))
     ))
+    order by client nulls first
 ), '')) as text indent)
 from (
   values (null, null, null, null, 'Add')
@@ -515,6 +521,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
           'text' as type,
           'params[0]' as name,
           'produit' as placeholder,
+          'required' as required,
           product as value
       )),
       xmlelement(name input, xmlattributes(
@@ -522,6 +529,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
           '0.01' as step,
           'params[1]' as name,
           'Prix Unitaire HT' as placeholder,
+          'required' as required,
           unit_price_ht as value
       )),
       xmlelement(name input, xmlattributes(
@@ -529,6 +537,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
           '0.01' as step,
           'params[2]' as name,
           'Taux TVA (%)' as placeholder,
+          'required' as required,
           round(tva_rate * 100, 2) as value
       )),
       xmlelement(name input, xmlattributes(
