@@ -10,7 +10,7 @@
       inputs.nixpkgs.follows = "nixpkgs";
     };
     extra-container = {
-      url = "path:/home/florian/work/docteurklein/extra-container";
+      url = "github:stevelr/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -424,7 +424,7 @@
                         owner = "eulerto";
                         repo = "wal2json";
                         rev = "master";
-                        sha256 = "sha256-fXEdiJ9yjuEJbJsCG0fnYdhiNzynnxDL3M5To4517jM=";
+                        sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
                       };
                     }))
                     # pg_ivm
@@ -599,7 +599,7 @@
                         owner = "eulerto";
                         repo = "wal2json";
                         rev = "master";
-                        sha256 = "sha256-fXEdiJ9yjuEJbJsCG0fnYdhiNzynnxDL3M5To4517jM=";
+                        sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
                       };
                     }))
                     # pg_ivm
