@@ -39,7 +39,9 @@ create or replace view head (body)
 with (security_invoker) as
     select '<!DOCTYPE html>'
     union all
-    select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href), '')::text
+    select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
+    union all
+    select '<meta name="viewport" content="width=device-width">'
 ;
 
 create or replace view booking_html (body)
@@ -53,40 +55,83 @@ day (d) as (
         date_trunc('month', coalesce(when_, now())) + interval '1 month' - interval '1 day',
         '1 day'
     ) d
-)
-select xmlelement(name div, xmlattributes(
-    'day' as class,
-    case when now()::date = d::date
-        then 'background-color: oklch(from grey l c h / 0.2)'
-    end as style
 ),
-    xmlelement(name time, xmlattributes(d::date as timestamp),
-        to_char(d, 'dy dd/mm')
+calendar (html) as (
+    select xmlelement(name div, xmlattributes(
+        'day' as class,
+        case when now()::date = d::date
+            then 'background-color: oklch(from grey l c h / 0.2)'
+        end as style
     ),
-    xmlagg(xmlelement(name section, xmlattributes(
-        'booking' as class,
-        format('--days: %s; --start-col: %s; --row: %s; --color: %s',
-            days(period), date_part('isodow', lower(period)), date_part('day', lower(period))::int % 7,
-            case status
-                when 'confirmed' then 'green'
-                when 'in progress' then 'yellow'
-                when 'canceled' then 'red'
+        xmlelement(name time, xmlattributes(d::date as timestamp),
+            to_char(d, 'dy dd/mm')
+        ),
+        xmlagg(xmlelement(name section, xmlattributes(
+            'booking' as class,
+            format('--days: %s; --start-col: %s; --row: %s; --color: %s',
+                days(period), date_part('isodow', lower(period)), date_part('day', lower(period))::int % 7,
+                case status
+                    when 'confirmed' then 'green'
+                    when 'in progress' then 'yellow'
+                    when 'canceled' then 'red'
+                end
+            ) as style
+        ),
+            case when room_id is not null then
+                xmlelement(name a, xmlattributes(
+                    url('/grandroc/query', jsonb_build_object(
+                        'sql', 'select * from grandroc.head union all select body::text from grandroc.contract where booking_id = $1::uuid',
+                        'params[0]', booking_id
+                    )) as href
+                ), format('%s in %s', occupant ,room_id))
             end
-        ) as style
-    ),
-        case when room_id is not null then
-            xmlelement(name a, xmlattributes(
-                url('/grandroc/query', jsonb_build_object(
-                    'sql', 'select body from grandroc.contract where booking_id = $1::uuid',
-                    'params[0]', booking_id
-                )) as href
-            ), format('%s in %s', occupant ,room_id))
-        end
-    ) order by booking_id)
+        ) order by booking_id)
+    )
+    from day
+    left join booking on period @> d
+    group by d
 )
-from day
-left join booking on period @> d
-group by d
+select xmlelement(name h1, 'Le Grand Roc')
+union all select xmlelement(name form, xmlattributes(
+        'POST' as method,
+        '/grandroc/query' as action
+    ),
+    xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'sql' as name,
+        $$
+            insert into grandroc.booking (room_id, occupant, period) select $1, $2, tstzrange($3::date, $4::date, '[]') returning
+            303 status,
+            jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+                'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
+                'when', to_char($3::date, 'MM-YY')
+            ))) header
+        $$ as value
+    )),
+    xmlelement(name input, xmlattributes('required' as required, 'text' as type, 'params[0]' as name, 'room_id' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'text' as type, 'params[1]' as name, 'occupant' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[2]' as name, 'from' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[3]' as name, 'to' as placeholder)),
+    xmlelement(name input, xmlattributes('submit' as type))
+)
+union all select xmlelement(name menu,
+    xmlelement(name a, xmlattributes(
+        url.url('/grandroc/query', jsonb_build_object(
+            'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
+            'when', to_char(coalesce(when_, now()::date) - interval '1 month', 'MM-YY')
+        )) as href
+    ), 'prev'),
+    xmltext(coalesce(when_, now()::date)::text),
+    xmlelement(name a, xmlattributes(
+        url.url('/grandroc/query', jsonb_build_object(
+            'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
+            'when', to_char(coalesce(when_, now()::date) + interval '1 month', 'MM-YY')
+        )) as href
+    ), 'next')
+)
+from httpg
+union all select xmlelement(name div, xmlattributes('calendar' as class), xmlagg(html))
+from calendar
 ;
 
 create or replace view contract (body)
@@ -168,32 +213,32 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
 from booking
 ;
 
-truncate table booking;
-insert into booking (room_id, occupant, period)
-select
-    (array_sample(array['A', 'B', 'C'], 1))[1],
-    (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
-    tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
-from generate_series(now(), now() + interval '1 year', '3 days') i
-;
-insert into booking (room_id, occupant, period)
-select
-    (array_sample(array['A', 'B', 'C'], 1))[1],
-    (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
-    tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
-from generate_series(now(), now() + interval '1 year', '6 days') i
-;
-insert into booking (room_id, occupant, period)
-select
-    (array_sample(array['A', 'B', 'C'], 1))[1],
-    (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
-    tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
-from generate_series(now(), now() + interval '1 year', '8 days') i
-;
+-- truncate table booking;
+-- insert into booking (room_id, occupant, period)
+-- select
+--     (array_sample(array['A', 'B', 'C'], 1))[1],
+--     (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
+--     tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
+-- from generate_series(now(), now() + interval '1 year', '3 days') i
+-- ;
+-- insert into booking (room_id, occupant, period)
+-- select
+--     (array_sample(array['A', 'B', 'C'], 1))[1],
+--     (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
+--     tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
+-- from generate_series(now(), now() + interval '1 year', '6 days') i
+-- ;
+-- insert into booking (room_id, occupant, period)
+-- select
+--     (array_sample(array['A', 'B', 'C'], 1))[1],
+--     (array_sample(array['simon', 'georges', 'tintin'], 1))[1],
+--     tstzrange(i, i + format('%s days', random(1, 4))::interval, '[)')
+-- from generate_series(now(), now() + interval '1 year', '8 days') i
+-- ;
 
 grant usage on schema grandroc to anon;
 grant select on table head to anon;
-grant select on table booking to anon;
+grant select, insert on table booking to anon;
 grant select on table booking_html to anon;
 grant select on table contract to anon;
 grant execute on function days to anon;
