@@ -93,10 +93,6 @@ nav.menu {
     z-index: 1;
 }
 
-form {
-    margin: 0 auto;
-}
-
 form input.inline-name {
     field-sizing: content;
     width: auto;

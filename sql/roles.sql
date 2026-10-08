@@ -16,6 +16,10 @@ do $$ begin
     create role gieze_admin noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
+do $$ begin
+    create role grandroc noinherit;
+    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
 
 \if :{?password}
 select format('create user httpg with password %L noinherit', :'password')

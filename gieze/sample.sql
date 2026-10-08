@@ -32,11 +32,11 @@ with salt (salt) as (
     select gen_salt('sha512crypt')
 )
 insert into admin (name, password, salt)
-select 'flopi', crypt('flopi', salt), salt
+select 'flopi', crypt(:'password', salt), salt
 from salt;
 with salt (salt) as (
     select gen_salt('sha512crypt')
 )
 insert into admin (name, password, salt)
-select 'admin', crypt('admin', salt), salt
+select 'admin', crypt(:'password', salt), salt
 from salt;
