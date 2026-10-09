@@ -1,7 +1,8 @@
-menu {
+nav {
   display: flex;
   justify-content: center;
   gap: 1em;
+  margin-bottom: 1rem;
 }
 
 .calendar {
@@ -18,4 +19,21 @@ menu {
   & .booking {
     background-color: oklch(from var(--color) l c h / 0.2);
   }
+}
+
+body {
+  overflow-wrap: break-word;
+}
+
+header.grid {
+  --min: 40vw;
+}
+
+@media print {
+
+  body>h1,
+  body>nav {
+    display: none;
+  }
+
 }

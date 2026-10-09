@@ -210,9 +210,9 @@ where
             Some(ct) if ct.starts_with("application/x-www-form-urlencoded") => {
                 (
                     serde_qs.deserialize_bytes::<serde_json::Map<String, serde_json::Value>>(
-                        &Bytes::from_request(req, state).await.or(Err(StatusCode::BAD_REQUEST.into_response()))?
+                        &Bytes::from_request(req, state).await.map_err(|e| HttpgError::from(e).into_response())?
                     )
-                    .or(Err(StatusCode::BAD_REQUEST.into_response()))?,
+                    .map_err(|e| HttpgError::from(e).into_response())?,
                     vec![]
                 )
             },

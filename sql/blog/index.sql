@@ -342,7 +342,15 @@ select $html$<!DOCTYPE html>
             padding: 3px;
         }
 
-         frea
+        body {
+          display: grid;
+          grid-template-columns:
+            1fr min(60rem, 100%) 1fr;
+        }
+
+        body>* {
+          grid-column: 2;
+        }
     </style>
 </head>
 $html$

@@ -32,25 +32,30 @@ $$;
 -- drop table if exists place cascade;
 create table if not exists place (
     place text primary key,
-    price_ht amount not null,
-    cleaning_price_ht amount not null
+    price_1 amount not null,
+    price_2 amount not null,
+    price_other amount not null,
+    taxe_sejour int not null,
+    cleaning_price amount not null
 );
 
--- drop table if exists contract cascade;
-create table if not exists contract (
-    booking_id uuid not null,
-    occupant occupant not null,
-    place place not null
-);
+insert into place (place, price_1, price_2, price_other, taxe_sejour, cleaning_price)
+values ('grand gite', 900, 1100, 2000, 1.25, 20)
+on conflict (place) do nothing;
 
 -- drop table if exists booking cascade;
 create table if not exists booking (
     booking_id uuid primary key default uuidv7(),
-    place text not null,
-    occupant text not null,
+    place text not null references place (place) on delete cascade,
+    occupant text not null references occupant (occupant) on delete cascade,
     period tstzrange not null,
     status booking_status not null default 'in progress',
+    nb_adults int,
     nb_children int,
+    nb_horses int,
+    with_draps bool default false,
+    with_serviette bool default false,
+    food_price amount,
     exclude using gist (
         place with =,
         period with &&
@@ -68,14 +73,11 @@ end;
 create or replace view head (body)
 with (security_invoker) as
     select '<!DOCTYPE html>'
-    union all
-    select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
-    union all
-    select '<meta name="viewport" content="width=device-width">'
-    union all
-    select xmlelement(name h1, 'Le Grand Roc')::text
-    union all
-    select xmlelement(name form, xmlattributes(
+    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/cpres/index.css' as href))::text
+    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
+    union all select '<meta name="viewport" content="width=device-width">'
+    union all select xmlelement(name h1, 'Le Grand Roc')::text
+    union all select xmlelement(name form, xmlattributes(
         'grid' as class,
         'POST' as method,
         url('/grandroc/login', jsonb_build_object(
@@ -101,7 +103,7 @@ with (security_invoker) as
         xmlelement(name input, xmlattributes('submit' as type, 'login' as value))
     )::text
     where current_role <> 'grandroc'
-    union all select xmlelement(name menu,
+    union all select xmlelement(name nav,
         xmlelement(name a, xmlattributes(
             url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html'
@@ -118,32 +120,35 @@ with (security_invoker) as
             )) as href
         ), 'Places'),
         xmlelement(name a, xmlattributes(
-            url.url('/grandroc/query', jsonb_build_object(
-                'sql', 'select * from grandroc.head union all select contract || ''<br>'' from grandroc.contract'
+            url.url('/grandroc/logout', jsonb_build_object(
+                'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
             )) as href
-        ), 'Contracts')
+        ), 'Logout')
     )::text
     where current_role = 'grandroc'
 ;
 
 -- drop procedure if exists book;
-create or replace procedure book(uuid, text, text, int, date, date, inout status int default null, header inout jsonb default null)
+create or replace procedure book(uuid, text, text, int, int, int, int, date, date, inout status int default null, header inout jsonb default null)
 language sql
 begin atomic
-    with occupant (occupant) as (
+    with httpg (body) as (
+        select nullif(current_setting('httpg.query', true), '')::jsonb->'body'
+    ),
+    occupant (occupant) as (
         insert into occupant (occupant) values ($3)
-        on conflict (occupant) do select
+        on conflict (occupant) do nothing
         returning occupant
     )
-    insert into grandroc.booking (booking_id, place, occupant, nb_children, period)
-    select coalesce($1, uuidv7()), $2, occupant, $4, tstzrange($5, $6, '[]')
-    from occupant
+    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_horses, with_draps, with_serviette, food_price, period)
+    select coalesce($1, uuidv7()), $2, coalesce((select occupant from occupant), $3), $4, $5, $6, body->>'with_draps' = 'on', body->>'with_serviette' = 'on', $7, tstzrange($8, $9, '[]')
+    from httpg
     on conflict (booking_id) do update set
         nb_children = excluded.nb_children
     returning 303 status,
     jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
         'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
-        'when', to_char($5::date, 'MM-YY')
+        'when', to_char($8::date, 'MM-YY')
     ))) header;
 end;
 
@@ -195,29 +200,35 @@ calendar (html) as (
     group by d
 )
 select xmlelement(name form, xmlattributes(
+        'grid' as class,
         'POST' as method,
         '/grandroc/query' as action
     ),
     xmlelement(name input, xmlattributes(
         'hidden' as type,
         'sql' as name,
-        $$call grandroc.book(nullif($1, '')::uuid, $2, $3, $4::int, $5::date, $6::date)$$ as value
+        $$call grandroc.book(nullif($1, '')::uuid, $2, $3, $4::int, nullif($5, '')::int, nullif($6, '')::int, nullif($7, '')::int, $8::date, $9::date)$$ as value
     )),
-    xmlelement(name input, xmlattributes('hidden' as type, 'params[0]' as name, null as value)),
-    xmlelement(name input, xmlattributes('required' as required, 'places' as list, 'params[1]' as name, 'place' as placeholder)),
     xmlelement(name datalist, xmlattributes('places' as id),
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(place as value)) order by place) from place), '')
     ),
-    xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder)),
     xmlelement(name datalist, xmlattributes('occupants' as id),
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(occupant as value)) order by occupant) from occupant), '')
     ),
-    xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb enfants' as placeholder)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[4]' as name, 'from' as placeholder)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[5]' as name, 'to' as placeholder)),
+    xmlelement(name input, xmlattributes('hidden' as type, 'params[0]' as name, null as value)),
+    xmlelement(name input, xmlattributes('required' as required, 'places' as list, 'params[1]' as name, 'place' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb adultes' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb chevaux' as placeholder)),
+    xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name))),
+    xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name))),
+    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'Prix repas' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[7]' as name, 'from' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[8]' as name, 'to' as placeholder)),
     xmlelement(name input, xmlattributes('submit' as type))
 )
-union all select xmlelement(name menu,
+union all select xmlelement(name nav,
     xmlelement(name a, xmlattributes(
         url.url('/grandroc/query', jsonb_build_object(
             'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
@@ -246,18 +257,21 @@ with httpg (error) as (
 select xmlelement(name div, xmlattributes(true as contenteditable),
   xmlelement(name header, xmlattributes('grid' as class),
     xmlelement(name div,
-      xmlelement(name img, xmlattributes('https://static.wixstatic.com/media/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png/v1/fill/w_454,h_476,al_c,q_85,usm_0.66_1.00_0.01,enc_avif,quality_auto/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png' as src)),
+      xmlelement(name img, xmlattributes(
+        'https://static.wixstatic.com/media/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png/v1/fill/w_454,h_476,al_c,q_85,usm_0.66_1.00_0.01,enc_avif,quality_auto/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png' as src,
+        '100' as width
+      )),
       xmlelement(name h2, 'Le Grand Roc'),
       xmlelement(name p, '03250 Ferrières-sur-Sichon'),
       xmlelement(name p, '06 60 77 09 97')
+    ),
+    xmlelement(name div,
+      -- xmlelement(name h2, format('Facture %s-%s', to_char(month, 'YY-MM'), to_char(increment, 'fm000'))),
+      -- xmlelement(name p, format('Facturé: %s', invoiced_at::date)),
+      -- xmlelement(name p, format('Echéance: %s', deadline_at::date)),
+      xmlelement(name h3, occupant.occupant),
+      xmlelement(name p, occupant.email)
     )
-    -- xmlelement(name div,
-    --   -- xmlelement(name h2, format('Facture %s-%s', to_char(month, 'YY-MM'), to_char(increment, 'fm000'))),
-    --   -- xmlelement(name p, format('Facturé: %s', invoiced_at::date)),
-    --   -- xmlelement(name p, format('Echéance: %s', deadline_at::date)),
-    --   -- xmlelement(name h3, client),
-    --   -- xmlelement(name p, client_address)
-    -- )
   ),
   xmlelement(name table,
     xmlelement(name thead,
@@ -314,6 +328,8 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
   )
 )::text, booking_id
 from booking
+join occupant using (occupant)
+join place using (place)
 ;
 
 -- truncate table booking;
@@ -379,7 +395,6 @@ grant select on table head to anon, grandroc;
 grant select, insert, update on table booking to grandroc;
 grant select, insert on table occupant to grandroc;
 grant select, insert on table place to grandroc;
-grant select, insert on table contract to grandroc;
 grant select on table booking_html to grandroc;
 grant select on table contract_html to grandroc;
 grant execute on function days to grandroc;

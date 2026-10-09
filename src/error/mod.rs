@@ -8,6 +8,11 @@ use lettre::{address, transport};
 #[snafu(visibility(pub(crate)))]
 pub enum HttpgError {
     #[snafu(transparent)]
+    BytesRejection {
+        source: axum::extract::rejection::BytesRejection,
+        backtrace: snafu::Backtrace,
+    },
+    #[snafu(transparent)]
     Io {
         source: std::io::Error,
         backtrace: snafu::Backtrace,
