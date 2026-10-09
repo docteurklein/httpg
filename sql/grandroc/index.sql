@@ -256,7 +256,7 @@ with httpg (error) as (
 )
 select xmlelement(name div, xmlattributes(true as contenteditable),
   xmlelement(name header, xmlattributes('grid' as class),
-    xmlelement(name div,
+    xmlelement(name div, xmlattributes('grid' as class, '--min: 15ch' as style),
       xmlelement(name img, xmlattributes(
         'https://static.wixstatic.com/media/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png/v1/fill/w_454,h_476,al_c,q_85,usm_0.66_1.00_0.01,enc_avif,quality_auto/649509_a87968ee91eb4900bc9856f2ce150d2d~mv2.png' as src,
         '100' as width
@@ -284,8 +284,11 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
         xmlelement(name th, 'TVA'),
         xmlelement(name th, 'TTC')
       )
-    )
-    -- xmlelement(name tbody, (
+    ),
+    xmlelement(name tbody,
+      xmlelement(name tr,
+        xmlelement(name td, price_1)
+      )
     --   with grouped (bl, shipped_at, lines) as (
     --     select bl, shipped_at, xmlagg(
     --       xmlelement(name tr,
@@ -307,16 +310,16 @@ select xmlelement(name div, xmlattributes(true as contenteditable),
     --     lines
     --   ))
     --   from grouped
-    -- )),
-    -- xmlelement(name tfoot,
-    --   xmlelement(name tr,
-    --     xmlelement(name th, xmlattributes(3 as colspan), 'Total €'),
-    --     xmlelement(name td, total_ht),
-    --     xmlelement(name td, ''),
-    --     xmlelement(name td, round(total_tva, 2)),
-    --     xmlelement(name td, xmlelement(name b, round(total_ttc, 2)))
-    --   )
-    -- )
+    ),
+    xmlelement(name tfoot,
+      xmlelement(name tr,
+        xmlelement(name th, xmlattributes(3 as colspan), 'Total €'),
+        xmlelement(name td, ''),
+        xmlelement(name td, ''),
+        xmlelement(name td, ''),
+        xmlelement(name td, xmlelement(name b, ''))
+      )
+    )
   ),
   xmlelement(name footer,
     xmlelement(name pre, 'Notes'),

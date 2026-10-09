@@ -29,6 +29,20 @@ header.grid {
   --min: 40vw;
 }
 
+td {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  text-align: right;
+}
+
+td,
+th {
+  padding: .5em .8em;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 95%;
+}
+
 @media print {
 
   body>h1,
