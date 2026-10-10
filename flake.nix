@@ -435,6 +435,7 @@
                     postgis
                     pgrouting
                     h3-pg
+                    (plpython3.withPackages (p: []))
                     # self'.packages.pg_jitter
                     # self'.packages.pg-trickle
                   ];
@@ -610,6 +611,7 @@
                     postgis
                     pgrouting
                     h3-pg
+                    (plpython3.withPackages (p: []))
                     # self'.packages.pg_jitter
                   ];
 
