@@ -35,6 +35,10 @@ td {
   text-align: right;
 }
 
+input:not([type='checkbox']), textarea, select {
+  width: 100%;
+}
+
 td,
 th {
   padding: .5em .8em;
