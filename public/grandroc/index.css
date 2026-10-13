@@ -12,12 +12,43 @@ nav {
 
   & .day {
     outline: 1px solid;
-    min-height: 20%;
+    /* min-height: 20%; */
     position: relative;
+    padding-left: 5px;
+  }
+
+  &:has(.booking:hover) .booking {
+    opacity: .2;
   }
 
   & .booking {
     background-color: oklch(from var(--color) l c h / 0.2);
+    border-bottom: 5px solid var(--color);
+    margin-bottom: 5px;
+    transition: opacity 0.5s;
+
+    &:hover, &.active {
+      transform: opacity;
+      opacity: 1 !important;
+    }
+
+    @media(hover: hover) {
+      & .destructive {
+        visibility: hidden;
+      }
+    }
+
+    &:hover .destructive {
+      visibility: visible;
+    }
+
+    & a {
+      all: revert;
+    }
+
+    &.line * {
+      /* visibility: hidden; */
+    }
   }
 }
 
@@ -35,7 +66,11 @@ td {
   text-align: right;
 }
 
-input:not([type='checkbox']), textarea, select {
+.inline {
+  display: inline;
+}
+
+input:not([type='checkbox'], [type='submit']), textarea, select {
   width: 100%;
 }
 
