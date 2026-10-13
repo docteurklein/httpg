@@ -70,7 +70,7 @@ td {
   display: inline;
 }
 
-input:not([type='checkbox'], [type='submit']), textarea, select {
+input:not([type='checkbox'], [type='submit'], [type='radio']), textarea, select {
   width: 100%;
 }
 

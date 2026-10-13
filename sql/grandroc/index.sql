@@ -323,7 +323,7 @@ begin atomic
         body->>'with_serviette' = 'on',
         body->>'with_cleaning' = 'on',
         food_price_unit,
-        body->>'is_pension_complete' = 'on',
+        body->>'pension' = 'complete',
         price,
         daterange(from_, to_, '[]')
     from httpg
@@ -550,8 +550,9 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name))),
     xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name))),
     xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'Prix repas' as placeholder, 'any' as step)),
+    xmlelement(name label, 'Demi-pension?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'demi' as value))),
+    xmlelement(name label, 'Pension Complete?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'complete' as value))),
     xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step)),
-    xmlelement(name label, 'Pension complete?', xmlelement(name input, xmlattributes('checkbox' as type, 'is_pension_complete' as name))), -- TODO radio button instead
     xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[8]' as name, 'from' as placeholder)),
     xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[9]' as name, 'to' as placeholder)),
     xmlelement(name input, xmlattributes('submit' as type))
