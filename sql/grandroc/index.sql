@@ -281,7 +281,7 @@ with (security_invoker) as
             url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
             )) as href
-        ), 'Places'),
+        ), 'Logements'),
         xmlelement(name a, xmlattributes(
             url.url('/grandroc/logout', jsonb_build_object(
                 'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
@@ -668,9 +668,9 @@ booking_calc (booking_id, price, total_cleaning, total_taxe_sejour, total_servie
         select booking_id, price,
             case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price * least(2, days(period)) else 0 end,
             nb_adults * taxe_sejour * days(period),
-            case when with_serviette then (nb_adults + nb_children + nb_babies) * 4 else 0 end,
-            case when with_draps then (nb_adults + nb_children + nb_babies) * 8 else 0 end,
-            case when food_price_unit > 0 then (nb_adults + nb_children) * food_price_unit else 0 end,
+            case when with_serviette then (nb_adults + coalesce(nb_children, 0)) * 4 else 0 end,
+            case when with_draps then (nb_adults + coalesce(nb_children, 0)) * 8 else 0 end,
+            case when food_price_unit > 0 then (nb_adults + coalesce(nb_children, 0)) * food_price_unit else 0 end,
             case when nb_horses > 0 then days(period) * nb_horses * 5 else 0 end,
             case when nb_dogs > 0 and dog_price_unit is not null then nb_dogs * dog_price_unit else 0 end,
             case when is_early and is_late then 70 when is_early then 50 when is_late then 50 else 0 end,
@@ -1068,7 +1068,7 @@ xmlelement(name html, xmlattributes(
           case when nb_children > 0 then xmlelement(name p, 
             xmlelement(name strong, 
               xmltext('Enfants: ')), 
-            xmltext(nb_children::text)) end, 
+            xmltext((coalesce(nb_children, 0) + coalesce(nb_babies, 0))::text)) end, 
           xmlelement(name p, 
             xmlelement(name strong, 
               xmltext('Date du contrat: ')), 
@@ -1190,7 +1190,7 @@ xmlelement(name html, xmlattributes(
             xmlelement(name td, xmlattributes(
               'center' as "class"
             ), 
-              xmltext((nb_adults + nb_children)::text)), 
+              xmltext((nb_adults + coalesce(nb_children, 0))::text)), 
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
@@ -1206,7 +1206,7 @@ xmlelement(name html, xmlattributes(
             xmlelement(name td, xmlattributes(
               'center' as "class"
             ), 
-              xmltext((nb_adults + nb_children)::text)), 
+              xmltext((nb_adults + coalesce(nb_children, 0))::text)), 
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
@@ -1222,7 +1222,7 @@ xmlelement(name html, xmlattributes(
             xmlelement(name td, xmlattributes(
               'center' as "class"
             ), 
-              xmltext((nb_adults + nb_children)::text)), 
+              xmltext((nb_adults + coalesce(nb_children, 0))::text)), 
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
