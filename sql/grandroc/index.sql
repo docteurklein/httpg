@@ -34,6 +34,8 @@ create table if not exists place (
     place text primary key,
     taxe_sejour amount not null,
     cleaning_price amount not null,
+    electricity_cost_unit amount,
+    dog_price_unit amount,
     cgv text not null
 );
 
@@ -50,13 +52,18 @@ create table if not exists booking (
     status booking_status not null default 'in progress',
     nb_adults int,
     nb_children int,
+    nb_babies int,
     nb_horses int,
+    nb_dogs int,
+    nb_emplacements int,
     with_draps bool default false,
     with_serviette bool default false,
     with_cleaning bool default false,
     food_price_unit amount,
     is_pension_complete bool default false,
     price amount not null,
+    is_early bool not null default false,
+    is_late bool not null default false,
     at date default now(),
     color text not null default (array_sample(array[
         'antiquewhite',
@@ -222,10 +229,13 @@ with (security_invoker) as
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
-        document.body.addEventListener('mouseover', (e) => {
-            if (!e.target.classList.contains('booking')) return;
-            document.querySelectorAll(`[data-booking]`).forEach(n => n.classList.remove('active'));
-            document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.add('active'));
+        document.querySelectorAll('.booking').forEach(b => {
+            b.addEventListener('mouseenter', (e) => {
+                document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.add('active'));
+            });
+            b.addEventListener('mouseleave', (e) => {
+                document.querySelectorAll(`[data-booking]`).forEach(n => n.classList.remove('active'));
+            });
         });
     $$::text::xml)::text
     union all select xmlelement(name h1, 'Le Grand Roc')::text
@@ -293,7 +303,10 @@ create or replace procedure book(
     occupant text,
     nb_adults int,
     nb_children int,
+    nb_babies int,
     nb_horses int,
+    nb_dogs int,
+    nb_emplacements int,
     food_price_unit amount,
     price amount,
     from_ date,
@@ -311,24 +324,45 @@ begin atomic
         on conflict (occupant) do nothing
         returning occupant
     )
-    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_horses, with_draps, with_serviette, with_cleaning, food_price_unit, is_pension_complete, price, period)
+    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, with_cleaning, food_price_unit, is_pension_complete, price, is_early, is_late, period)
     select
         coalesce(booking_id, uuidv7()),
         place,
         coalesce((select occupant from occupant), occupant),
         nb_adults,
         nb_children,
+        nb_babies,
         nb_horses,
+        nb_dogs,
+        nb_emplacements,
         body->>'with_draps' = 'on',
         body->>'with_serviette' = 'on',
         body->>'with_cleaning' = 'on',
         food_price_unit,
         body->>'pension' = 'complete',
         price,
+        body->>'is_early' = 'on',
+        body->>'is_late' = 'on',
         daterange(from_, to_, '[]')
     from httpg
     on conflict (booking_id) do update set
-        nb_children = excluded.nb_children
+        place = excluded.place,
+        occupant = excluded.occupant,
+        nb_adults = excluded.nb_adults,
+        nb_children = excluded.nb_children,
+        nb_babies = excluded.nb_babies,
+        nb_horses = excluded.nb_horses,
+        nb_dogs = excluded.nb_dogs,
+        nb_emplacements = excluded.nb_emplacements,
+        with_draps = excluded.with_draps,
+        with_serviette = excluded.with_serviette,
+        with_cleaning = excluded.with_cleaning,
+        food_price_unit = excluded.food_price_unit,
+        is_pension_complete = excluded.is_pension_complete,
+        price = excluded.price,
+        is_early = excluded.is_early,
+        is_late = excluded.is_late,
+        period = excluded.period
     returning 303 status,
     jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
         'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
@@ -454,6 +488,14 @@ day (d) as (
         '1 day'
     ) d
 ),
+-- booking_pos as (
+--     select *, row_number() over (partition by d, lower(period) order by lower(period) asc range between current row and '1 day' following) pos1
+-- ),
+-- booking_pos2 as (
+--     select *, pos1 pos
+--     from
+--     booking_pos
+-- ),
 calendar (html) as (
     select xmlelement(name div, xmlattributes(
         'day' as class,
@@ -506,7 +548,7 @@ calendar (html) as (
                 )
             )
             end
-        order by period asc, place)
+        order by lower(period) asc, days(period) desc, place)
     ), '')
     from day
     left join booking on period @> d
@@ -527,11 +569,14 @@ select xmlelement(name form, xmlattributes(
                 occupant => $3,
                 nb_adults => $4::int,
                 nb_children => nullif($5, '')::int,
-                nb_horses => nullif($6, '')::int,
-                food_price_unit => nullif($7, '')::grandroc.amount,
-                price => nullif($8, '')::grandroc.amount,
-                from_ => $9::date,
-                to_ => $10::date
+                nb_babies => nullif($6, '')::int,
+                nb_horses => nullif($7, '')::int,
+                nb_dogs => nullif($8, '')::int,
+                nb_emplacements => nullif($9, '')::int,
+                food_price_unit => nullif($10, '')::grandroc.amount,
+                price => nullif($11, '')::grandroc.amount,
+                from_ => $12::date,
+                to_ => $13::date
             )
         $$ as value
     )),
@@ -544,17 +589,19 @@ select xmlelement(name form, xmlattributes(
     ),
     xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder)),
     xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb adultes' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb chevaux' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants > 4 ans' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb enfant < 4 ans' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'nb chevaux' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'nb chiens' as placeholder)),
     xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name))),
     xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name))),
     xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name))),
-    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'Prix repas' as placeholder, 'any' as step)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, 'Prix repas' as placeholder, 'any' as step)),
     xmlelement(name label, 'Demi-pension?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'demi' as value))),
     xmlelement(name label, 'Pension Complete?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'complete' as value))),
-    xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[8]' as name, 'from' as placeholder)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[9]' as name, 'to' as placeholder)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[10]' as name, 'from' as placeholder)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, 'to' as placeholder)),
     xmlelement(name input, xmlattributes('submit' as type))
 )
 union all select xmlelement(name nav,
@@ -583,22 +630,26 @@ with httpg (error) as (
   select
     nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
 ),
-booking_calc (booking_id, price, total_cleaning, total_taxe_sejour, total_food, total_horses, total, acompte) as (
-    with calc (booking_id, price, total_cleaning, total_taxe_sejour, total_food, total_horses) as (
+booking_calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec, total, acompte) as (
+    with calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec) as (
         select booking_id, price,
-            case when with_cleaning then cleaning_price else 0 end,
-            nb_adults * taxe_sejour,
+            case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price else 0 end,
+            nb_adults * taxe_sejour * days(period),
+            case when with_serviette then (nb_adults + nb_children + nb_babies) * 4 end,
+            case when with_draps then (nb_adults + nb_children + nb_babies) * 8 end,
             case when food_price_unit > 0 then (nb_adults + nb_children) * food_price_unit else 0 end,
-            case when nb_horses > 0 then days(period) * nb_horses * 5 else 0 end
+            case when nb_horses > 0 then days(period) * nb_horses * 5 else 0 end,
+            case when nb_dogs > 0 and dog_price_unit is not null then nb_dogs * dog_price_unit else 0 end,
+            case when is_early and is_late then 70 when is_early then 50 when is_late then 50 end,
+            case when electricity_cost_unit is not null then electricity_cost_unit * nb_emplacements * days(period) end
         from booking
         join place using (place)
     ),
     total as (
-        select *, price + total_cleaning + total_food + total_horses + total_taxe_sejour total
+        select *, price + total_cleaning + total_drap + total_serviette + total_food + total_horses + total_dogs + total_early_late + total_taxe_sejour + total_elec total
         from calc
     )
-    select booking_id, price, total_cleaning, total_taxe_sejour, total_food, total_horses,
-        -- round(total + (0.3 * total) - round(0.3 * total, 0), 2),
+    select booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec,
         total,
         round(round(0.3 * total, 0), 2) acompte
     from total
@@ -1069,6 +1120,22 @@ xmlelement(name html, xmlattributes(
             ), 
               xmltext(round(total_horses, 2)::text))
           ) end, 
+          case when nb_dogs > 0 then xmlelement(name tr, 
+            xmlelement(name td, 
+              xmltext('Chiens')), 
+            xmlelement(name td, xmlattributes(
+              'center' as "class"
+            ), 
+              xmltext(nb_dogs::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(dog_price_unit, 2)::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(total_dogs, 2)::text))
+          ) end, 
           xmlelement(name tr, 
             xmlelement(name td, 
               xmltext('Taxe de séjour')), 
@@ -1099,37 +1166,73 @@ xmlelement(name html, xmlattributes(
               'right' as "class"
             ), 
               xmltext(total_food::text))
+          ) end,
+          case when total_drap > 0 then xmlelement(name tr, 
+            xmlelement(name td, 
+              xmltext('Draps')), 
+            xmlelement(name td, xmlattributes(
+              'center' as "class"
+            ), 
+              xmltext((nb_adults + nb_children)::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(8, 2)::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(total_drap, 2)::text))
+          ) end,
+          case when total_serviette > 0 then xmlelement(name tr, 
+            xmlelement(name td, 
+              xmltext('Serviettes')), 
+            xmlelement(name td, xmlattributes(
+              'center' as "class"
+            ), 
+              xmltext((nb_adults + nb_children)::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(4, 2)::text)), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(round(total_serviette, 2)::text))
+          ) end,
+          case when total_early_late > 0 then xmlelement(name tr, 
+            xmlelement(name td, 
+              xmltext('Arrivée et/ou départ anticipé')), 
+            xmlelement(name td, xmlattributes(
+              'center' as "class"
+            ), 
+             '1'
+            ), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext('-')), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(total_early_late::text))
+          ) end,
+          case when total_elec > 0 then xmlelement(name tr, 
+            xmlelement(name td, 
+              xmltext('Électricité')), 
+            xmlelement(name td, xmlattributes(
+              'center' as "class"
+            ), 
+              xmltext(format('%s emplacements x %s nuits', nb_emplacements, days(period))) 
+            ), 
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+             electricity_cost_unit::text),
+            xmlelement(name td, xmlattributes(
+              'right' as "class"
+            ), 
+              xmltext(total_elec::text))
           ) end
-          -- xmlelement(name tr, 
-          --   xmlelement(name td, 
-          --     xmltext('Arrivée anticipée')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'center' as "class"
-          --   ), 
-          --     xmltext('{{ARRIVEE_ANTICIPEE}}')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'right' as "class"
-          --   ), 
-          --     xmltext('{{PRIX_ARRIVEE_ANTICIPEE}}')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'right' as "class"
-          --   ), 
-          --     xmltext('{{TOTAL_ARRIVEE_ANTICIPEE}}'))), 
-          -- xmlelement(name tr, 
-          --   xmlelement(name td, 
-          --     xmltext('Départ tardif')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'center' as "class"
-          --   ), 
-          --     xmltext('{{DEPART_TARDIF}}')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'right' as "class"
-          --   ), 
-          --     xmltext('{{PRIX_DEPART_TARDIF}}')), 
-          --   xmlelement(name td, xmlattributes(
-          --     'right' as "class"
-          --   ), 
-          --     xmltext('{{TOTAL_DEPART_TARDIF}}'))) 
         )),
       xmlelement(name section, xmlattributes(
         'payment' as "class"
@@ -1243,7 +1346,7 @@ join place using (place)
 
 
 -- truncate table booking;
--- insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_horses, food_price_unit)
+-- insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_babies, nb_horses, food_price_unit, with_draps, with_serviette)
 -- select
 --     (array_sample(array['grand gite'], 1))[1],
 --     (array_sample(array['georges'], 1))[1],
@@ -1252,8 +1355,11 @@ join place using (place)
 --     true,
 --     4,
 --     2,
+--     1,
 --     2,
---     20
+--     20,
+--     true,
+--     true
 -- from (
 --     select generate_series(now(), now() + interval '1 year', '3 days')
 --     union all 
