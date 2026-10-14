@@ -5,6 +5,14 @@ nav {
   margin-bottom: 1rem;
 }
 
+:user-invalid {
+  outline: 1px solid red;
+}
+
+fieldset {
+  border: 0;
+}
+
 .calendar {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
@@ -28,17 +36,16 @@ nav {
     transition: opacity 0.5s;
 
     &:hover, &.active {
-      transform: opacity;
       opacity: 1 !important;
     }
 
     @media(hover: hover) {
-      & .destructive {
+      & .destructive, & button {
         visibility: hidden;
       }
     }
 
-    &:hover .destructive {
+    &:hover .destructive,  &:hover button {
       visibility: visible;
     }
 

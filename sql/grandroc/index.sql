@@ -39,8 +39,9 @@ create table if not exists place (
     cgv text not null
 );
 
-insert into place (place, taxe_sejour, cleaning_price, cgv)
-values ('grand gite', 1.25, 20, 'bla bla')
+insert into place (place, taxe_sejour, cleaning_price, dog_price_unit, cgv) values
+('grand gite', 1.25, 20, 0, 'bla bla'),
+('camping', 1.25, 0, 3.50, 'bla bla')
 on conflict (place) do nothing;
 
 -- drop table if exists booking cascade;
@@ -341,8 +342,8 @@ begin atomic
         food_price_unit,
         body->>'pension' = 'complete',
         price,
-        body->>'is_early' = 'on',
-        body->>'is_late' = 'on',
+        coalesce(body->>'is_early' = 'on', false),
+        coalesce(body->>'is_late' = 'on', false),
         daterange(from_, to_, '[]')
     from httpg
     on conflict (booking_id) do update set
@@ -399,7 +400,6 @@ with (security_invoker) as
         order by occupant
     )
     select xmlelement(name article, xmlattributes('card' as class), xmlelement(name form, xmlattributes(
-            'grid' as class,
             'POST' as method,
             '/grandroc/query' as action
         ),
@@ -413,10 +413,12 @@ with (security_invoker) as
             'on_error' as name,
             'select * from grandroc.head union all select body::text from grandroc.occupant_html' as value
         )),
-        xmlelement(name label, 'Nom', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (occupant).occupant) as value))),
-        xmlelement(name label, 'Tél', xmlelement(name input, xmlattributes('params[1]' as name, 'tel' as type, coalesce(params->>1, (occupant).tel) as value))),
-        xmlelement(name label, 'email', xmlelement(name input, xmlattributes('params[2]' as name, 'email' as type, 'required' as required, coalesce(params->>2, (occupant).email) as value))),
-        xmlelement(name input, xmlattributes('params[3]' as name, 'hidden' as type, (occupant).occupant as value)),
+        xmlelement(name fieldset, xmlattributes('grid' as class),
+            xmlelement(name label, 'Nom', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (occupant).occupant) as value))),
+            xmlelement(name label, 'Tél', xmlelement(name input, xmlattributes('params[1]' as name, 'tel' as type, coalesce(params->>1, (occupant).tel) as value))),
+            xmlelement(name label, 'email', xmlelement(name input, xmlattributes('params[2]' as name, 'email' as type, 'required' as required, coalesce(params->>2, (occupant).email) as value))),
+            xmlelement(name input, xmlattributes('params[3]' as name, 'hidden' as type, (occupant).occupant as value))
+        ),
         xmlelement(name input, xmlattributes('submit' as type, action as value))
     ))
     from httpg, (table add union all table edit)
@@ -430,8 +432,8 @@ with (security_invoker) as
     ),
     add (sql, action, place) as (
         select $$
-            insert into grandroc.place (place, taxe_sejour, cleaning_price, cgv)
-            values ($1, nullif($2, '')::amount, nullif($3, '')::amount, $4)
+            insert into grandroc.place (place, taxe_sejour, cleaning_price, electricity_cost_unit, dog_price_unit, cgv)
+            values ($1, nullif($2, '')::amount, nullif($3, '')::amount, nullif($4, '')::amount, nullif($5, '')::amount, $6)
             returning 303 status,
             jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
@@ -441,8 +443,13 @@ with (security_invoker) as
     edit (sql, action, place) as (
         select $$
             update grandroc.place
-                set place = $1, taxe_sejour = nullif($2, '')::amount, cleaning_price = nullif($3, '')::amount, cgv = $4
-            where place = $5
+                set place = $1,
+                taxe_sejour = nullif($2, '')::amount,
+                cleaning_price = nullif($3, '')::amount,
+                electricity_cost_unit = nullif($4, '')::amount,
+                dog_price_unit = nullif($5, '')::amount,
+                cgv = $6
+            where place = $7
             returning 303 status,
             jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
@@ -452,7 +459,6 @@ with (security_invoker) as
         order by place
     )
     select xmlelement(name article, xmlattributes('card' as class), xmlelement(name form, xmlattributes(
-            'grid' as class,
             'POST' as method,
             '/grandroc/query' as action
         ),
@@ -466,11 +472,15 @@ with (security_invoker) as
             'on_error' as name,
             'select * from grandroc.head union all select body::text from grandroc.place_html' as value
         )),
-        xmlelement(name label, 'Logement', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (place).place) as value))),
-        xmlelement(name label, 'Taxe de séjour', xmlelement(name input, xmlattributes('params[1]' as name, 'number' as type, 'required' as required, coalesce((params->>1), (place).taxe_sejour::text) as value))),
-        xmlelement(name label, 'Prix ménage', xmlelement(name input, xmlattributes('params[2]' as name, 'number' as type, 'required' as required, coalesce(params->>2, (place).cleaning_price::text) as value))),
-        xmlelement(name label, 'CGV', xmlelement(name textarea, xmlattributes('params[3]' as name, 5 as rows, 'required' as required), coalesce(params->>3, (place).cgv, ''))),
-        xmlelement(name input, xmlattributes('params[4]' as name, 'hidden' as type, (place).place as value)),
+        xmlelement(name fieldset, xmlattributes('grid' as class),
+            xmlelement(name label, 'Logement', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (place).place) as value))),
+            xmlelement(name label, 'Taxe de séjour', xmlelement(name input, xmlattributes('params[1]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce((params->>1), (place).taxe_sejour::text) as value))),
+            xmlelement(name label, 'Prix ménage', xmlelement(name input, xmlattributes('params[2]' as name, 'any' as step, 'number' as type, 'required' as required, coalesce(params->>2, (place).cleaning_price::text) as value))),
+            xmlelement(name label, 'Prix électricité', xmlelement(name input, xmlattributes('params[3]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce(params->>3, (place).electricity_cost_unit::text) as value))),
+            xmlelement(name label, 'Prix chien', xmlelement(name input, xmlattributes('params[4]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce(params->>4, (place).dog_price_unit::text) as value))),
+            xmlelement(name label, 'CGV', xmlelement(name textarea, xmlattributes('params[5]' as name, 5 as rows, 'required' as required), coalesce(params->>5, (place).cgv, ''))),
+            xmlelement(name input, xmlattributes('params[6]' as name, 'hidden' as type, (place).place as value))
+        ),
         xmlelement(name input, xmlattributes('submit' as type, action as value)
     )))
     from httpg, (table add union all table edit)
@@ -478,8 +488,9 @@ with (security_invoker) as
 
 create or replace view booking_html (body)
 with (security_invoker) as
-with httpg (when_) as (
-    select to_date(nullif(current_setting('httpg.query', true), '')::jsonb->'qs'->>'when', 'MM-YY')
+with httpg (when_, booking_id) as (
+    select to_date(nullif(current_setting('httpg.query', true), '')::jsonb->'qs'->>'when', 'MM-YY'),
+    (nullif(current_setting('httpg.query', true), '')::jsonb->'qs'->>'booking_id')::uuid
 ),
 day (d) as (
     select d::date from httpg, generate_series(
@@ -519,6 +530,12 @@ calendar (html) as (
                         'params[0]', booking_id
                     )) as href
                 ), format('%s in %s', occupant ,place)),
+                xmlelement(name a, xmlattributes(
+                    url('/grandroc/query', jsonb_build_object(
+                        'sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html',
+                        'booking_id', booking_id
+                    )) as href
+                ), xmlelement(name button, 'Edit')),
                 xmlelement(name form, xmlattributes(
                     'POST' as method,
                     '/grandroc/query' as action,
@@ -553,6 +570,10 @@ calendar (html) as (
     from day
     left join booking on period @> d
     group by d
+),
+current_booking (b) as (
+    select booking from httpg, booking where booking.booking_id = httpg.booking_id
+    union all select null::booking from httpg where httpg.booking_id is null
 )
 select xmlelement(name form, xmlattributes(
         'grid' as class,
@@ -583,40 +604,52 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name datalist, xmlattributes('occupants' as id),
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(occupant as value)) order by occupant) from occupant), '')
     ),
-    xmlelement(name input, xmlattributes('hidden' as type, 'params[0]' as name, null as value)),
+    xmlelement(name input, xmlattributes('hidden' as type, 'params[0]' as name, (b).booking_id as value)),
     xmlelement(name select, xmlattributes('params[1]' as name, 'required' as required),
-        coalesce((select xmlagg(xmlelement(name option, xmlattributes(place as value), place) order by place) from place), '')
+        coalesce((select xmlagg(xmlelement(name option, xmlattributes(
+            place as value,
+            case when (b).place = place then 'selected' end as selected
+        ), place) order by place) from current_booking, place), '')
     ),
-    xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder)),
-    xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb adultes' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants > 4 ans' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb enfant < 4 ans' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'nb chevaux' as placeholder)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'nb chiens' as placeholder)),
-    xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name))),
-    xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name))),
-    xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name))),
-    xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, 'Prix repas' as placeholder, 'any' as step)),
-    xmlelement(name label, 'Demi-pension?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'demi' as value))),
-    xmlelement(name label, 'Pension Complete?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'complete' as value))),
-    xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[10]' as name, 'from' as placeholder)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, 'to' as placeholder)),
-    xmlelement(name input, xmlattributes('submit' as type))
+    xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder, (b).occupant as value)),
+    xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb adultes' as placeholder, (b).nb_adults as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[10]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step, (b).price as value)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, 'from' as placeholder, lower((b).period) as value)),
+    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[12]' as name, 'to' as placeholder, (upper((b).period) - interval '1 day')::date as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants > 4 ans' as placeholder, (b).nb_children as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb enfant < 4 ans' as placeholder, (b).nb_babies as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'nb chevaux' as placeholder, (b).nb_horses as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'nb chiens' as placeholder, (b).nb_dogs as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, 'nb emplacements' as placeholder, (b).nb_emplacements as value)),
+    xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'Prix repas' as placeholder, 'any' as step, (b).food_price_unit as value)),
+    xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name, case when (b).with_draps then 'checked' end as checked))),
+    xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name, case when (b).with_serviette then 'checked' end as checked))),
+    xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name, case when (b).with_cleaning then 'checked' end as checked))),
+    xmlelement(name fieldset,
+        xmlelement(name label, 'Demi-pension?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'demi' as value,
+            case when (b).food_price_unit > 0 and not (b).is_pension_complete then 'checked' end as checked
+        ))),
+        xmlelement(name label, 'Pension Complete?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'complete' as value,
+            case when (b).food_price_unit > 0 and (b).is_pension_complete then 'checked' end as checked
+        )))
+    ),
+    xmlelement(name input, xmlattributes('submit' as type, case when (b).booking_id is not null then 'Edit' else 'Add' end as value))
 )
-union all select xmlelement(name nav,
+from current_booking
+union all select '<hr/>'
+union all select xmlelement(name nav, xmlattributes('calnav' as id),
     xmlelement(name a, xmlattributes(
         url.url('/grandroc/query', jsonb_build_object(
             'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
             'when', to_char(coalesce(when_, now()::date) - interval '1 month', 'MM-YY')
-        )) as href
+        )) || '#calnav' as href
     ), 'prev'),
     xmltext(to_char(coalesce(when_, now()::date), 'Mon/YY')),
     xmlelement(name a, xmlattributes(
         url.url('/grandroc/query', jsonb_build_object(
             'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
             'when', to_char(coalesce(when_, now()::date) + interval '1 month', 'MM-YY')
-        )) as href
+        )) || '#calnav' as href
     ), 'next')
 )
 from httpg
@@ -1022,7 +1055,7 @@ xmlelement(name html, xmlattributes(
             xmlelement(name strong, 
               xmltext(format('du %s au %s',
                 to_char(lower(period), 'DD/MM/YYYY'),
-                to_char(upper(period), 'DD/MM/YYYY')
+                to_char(upper(period) - interval '1 day', 'DD/MM/YYYY')
           )))), 
           xmlelement(name p, 
             xmlelement(name strong, 
@@ -1120,7 +1153,7 @@ xmlelement(name html, xmlattributes(
             ), 
               xmltext(round(total_horses, 2)::text))
           ) end, 
-          case when nb_dogs > 0 then xmlelement(name tr, 
+          case when total_dogs > 0 then xmlelement(name tr, 
             xmlelement(name td, 
               xmltext('Chiens')), 
             xmlelement(name td, xmlattributes(
