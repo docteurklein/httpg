@@ -476,8 +476,8 @@ with (security_invoker) as
             xmlelement(name label, 'Logement', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (place).place) as value))),
             xmlelement(name label, 'Taxe de séjour', xmlelement(name input, xmlattributes('params[1]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce((params->>1), (place).taxe_sejour::text) as value))),
             xmlelement(name label, 'Prix ménage', xmlelement(name input, xmlattributes('params[2]' as name, 'any' as step, 'number' as type, 'required' as required, coalesce(params->>2, (place).cleaning_price::text) as value))),
-            xmlelement(name label, 'Prix électricité', xmlelement(name input, xmlattributes('params[3]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce(params->>3, (place).electricity_cost_unit::text) as value))),
-            xmlelement(name label, 'Prix chien', xmlelement(name input, xmlattributes('params[4]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce(params->>4, (place).dog_price_unit::text) as value))),
+            xmlelement(name label, 'Prix électricité', xmlelement(name input, xmlattributes('params[3]' as name, 'number' as type, 'any' as step, coalesce(params->>3, (place).electricity_cost_unit::text) as value))),
+            xmlelement(name label, 'Prix chien', xmlelement(name input, xmlattributes('params[4]' as name, 'number' as type, 'any' as step, coalesce(params->>4, (place).dog_price_unit::text) as value))),
             xmlelement(name label, 'CGV', xmlelement(name textarea, xmlattributes('params[5]' as name, 5 as rows, 'required' as required), coalesce(params->>5, (place).cgv, ''))),
             xmlelement(name input, xmlattributes('params[6]' as name, 'hidden' as type, (place).place as value))
         ),
@@ -605,23 +605,23 @@ select xmlelement(name form, xmlattributes(
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(occupant as value)) order by occupant) from occupant), '')
     ),
     xmlelement(name input, xmlattributes('hidden' as type, 'params[0]' as name, (b).booking_id as value)),
-    xmlelement(name select, xmlattributes('params[1]' as name, 'required' as required),
+    xmlelement(name label, 'Logement', xmlelement(name select, xmlattributes('params[1]' as name, 'required' as required),
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(
             place as value,
             case when (b).place = place then 'selected' end as selected
         ), place) order by place) from current_booking, place), '')
-    ),
-    xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, 'occupant' as placeholder, (b).occupant as value)),
-    xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, 'nb adultes' as placeholder, (b).nb_adults as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[10]' as name, 'Prix forfait' as placeholder, 'required' as required, 'any' as step, (b).price as value)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, 'from' as placeholder, lower((b).period) as value)),
-    xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[12]' as name, 'to' as placeholder, (upper((b).period) - interval '1 day')::date as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, 'nb enfants > 4 ans' as placeholder, (b).nb_children as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, 'nb enfant < 4 ans' as placeholder, (b).nb_babies as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, 'nb chevaux' as placeholder, (b).nb_horses as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, 'nb chiens' as placeholder, (b).nb_dogs as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, 'nb emplacements' as placeholder, (b).nb_emplacements as value)),
-    xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'Prix repas' as placeholder, 'any' as step, (b).food_price_unit as value)),
+    )),
+    xmlelement(name label, 'Occupant', xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, (b).occupant as value))),
+    xmlelement(name label, 'Nb adultes', xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, (b).nb_adults as value))),
+    xmlelement(name label, 'Prix forfait', xmlelement(name input, xmlattributes('number' as type, 'params[10]' as name, 'required' as required, 'any' as step, (b).price as value))),
+    xmlelement(name label, 'De', xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, lower((b).period) as value))),
+    xmlelement(name label, 'à', xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[12]' as name, (upper((b).period) - interval '1 day')::date as value))),
+    xmlelement(name label, 'Nb enfants', xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, (b).nb_children as value))),
+    xmlelement(name label, 'nb bébés', xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, (b).nb_babies as value))),
+    xmlelement(name label, 'Nb chevaux', xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, (b).nb_horses as value))),
+    xmlelement(name label, 'Nb chiens', xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, (b).nb_dogs as value))),
+    xmlelement(name label, 'Nb emplacements', xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, (b).nb_emplacements as value))),
+    xmlelement(name label, 'Prix repas', xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'any' as step, (b).food_price_unit as value))),
     xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name, case when (b).with_draps then 'checked' end as checked))),
     xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name, case when (b).with_serviette then 'checked' end as checked))),
     xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name, case when (b).with_cleaning then 'checked' end as checked))),
@@ -666,15 +666,15 @@ with httpg (error) as (
 booking_calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec, total, acompte) as (
     with calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec) as (
         select booking_id, price,
-            case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price else 0 end,
+            case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price * least(2, days(period)) else 0 end,
             nb_adults * taxe_sejour * days(period),
-            case when with_serviette then (nb_adults + nb_children + nb_babies) * 4 end,
-            case when with_draps then (nb_adults + nb_children + nb_babies) * 8 end,
+            case when with_serviette then (nb_adults + nb_children + nb_babies) * 4 else 0 end,
+            case when with_draps then (nb_adults + nb_children + nb_babies) * 8 else 0 end,
             case when food_price_unit > 0 then (nb_adults + nb_children) * food_price_unit else 0 end,
             case when nb_horses > 0 then days(period) * nb_horses * 5 else 0 end,
             case when nb_dogs > 0 and dog_price_unit is not null then nb_dogs * dog_price_unit else 0 end,
-            case when is_early and is_late then 70 when is_early then 50 when is_late then 50 end,
-            case when electricity_cost_unit is not null then electricity_cost_unit * nb_emplacements * days(period) end
+            case when is_early and is_late then 70 when is_early then 50 when is_late then 50 else 0 end,
+            case when electricity_cost_unit is not null then electricity_cost_unit * nb_emplacements * days(period) else 0 end
         from booking
         join place using (place)
     ),
@@ -1107,7 +1107,7 @@ xmlelement(name html, xmlattributes(
         xmlelement(name tbody, 
           xmlelement(name tr, 
             xmlelement(name td, 
-              xmltext('Location du Grand Gîte')), 
+              xmltext(format('Location du %s', place))), 
             xmlelement(name td, xmlattributes(
               'center' as "class"
             ), 
@@ -1121,7 +1121,7 @@ xmlelement(name html, xmlattributes(
             ), 
               xmltext(booking_calc.price::text))
             ), 
-          case when with_cleaning then xmlelement(name tr, 
+          case when total_cleaning > 0 then xmlelement(name tr, 
             xmlelement(name td, 
               xmltext('Forfait ménage')), 
             xmlelement(name td, xmlattributes(
@@ -1131,13 +1131,13 @@ xmlelement(name html, xmlattributes(
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
-              xmltext(place.cleaning_price::text)),
+              xmltext(round(total_cleaning, 2)::text)),
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
-              xmltext(place.cleaning_price::text)) 
+              xmltext(round(total_cleaning, 2)::text))
           ) end, 
-          case when nb_horses > 0 then xmlelement(name tr, 
+          case when total_horses > 0 then xmlelement(name tr, 
             xmlelement(name td, 
               xmltext('Pension cheval')), 
             xmlelement(name td, xmlattributes(
@@ -1184,7 +1184,7 @@ xmlelement(name html, xmlattributes(
               'right' as "class"
             ), 
               xmltext(total_taxe_sejour::text))), 
-          case when food_price_unit > 0 then xmlelement(name tr, 
+          case when total_food > 0 then xmlelement(name tr, 
             xmlelement(name td, 
               xmltext(case when is_pension_complete then 'Pension complète' else 'Demi-pension' end)), 
             xmlelement(name td, xmlattributes(
