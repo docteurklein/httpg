@@ -10,22 +10,22 @@ pub enum HttpgError {
     #[snafu(transparent)]
     BytesRejection {
         source: axum::extract::rejection::BytesRejection,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Io {
         source: std::io::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     SendError {
         source: Box<tokio::sync::broadcast::error::SendError<tokio_postgres::Notification>>,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Conf {
         source: conf::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Postgres {
@@ -40,102 +40,102 @@ pub enum HttpgError {
     #[snafu(transparent)]
     Deadpool {
         source: PoolError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     DeadpoolConfig {
         source: CreatePoolError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     BiscuitToken {
         source: error::Token,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     BiscuitFormat {
         source: error::Format,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Serde {
         source: serde_json::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Httpg {
         source: http::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     HeaderName {
         source: header::InvalidHeaderName,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     HeaderValue {
         source: header::InvalidHeaderValue,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     HttpCode {
         source: http::status::InvalidStatusCode,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Multipart {
         source: multipart::MultipartError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Email {
         source: lettre::error::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     EmailAddress {
         source: address::AddressError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Smtp {
         source: transport::smtp::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     HttpClient {
         source: reqwest::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Hex {
         source: hex::FromHexError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     WebPush {
         source: web_push::WebPushError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     Uri {
         source: http::uri::InvalidUri,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     QueryString {
         source: serde_qs::Error,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     CookieParseError {
         source: cookie::ParseError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
     ToStrError {
         source: http::header::ToStrError,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     WebPushPrivateKey,
     #[snafu(display("refused query: {query}\nReason: {reason:?}"))]
@@ -155,14 +155,14 @@ pub enum HttpgError {
     #[snafu(display("{msg}"))]
     Anyhow {
         msg: String,
-        backtrace: snafu::Backtrace,
+        backtrace: Option<snafu::Backtrace>,
     },
     Unknown,
 }
 
 impl HttpgError {
     pub fn anyhow(msg: impl Into<String>) -> Self {
-        Self::Anyhow { msg: msg.into(), backtrace: snafu::Backtrace::capture() }
+        Self::Anyhow { msg: msg.into(), backtrace: Some(snafu::Backtrace::capture()) }
     }
 }
 

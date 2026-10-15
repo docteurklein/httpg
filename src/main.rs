@@ -416,7 +416,7 @@ async fn web_push(
 
         let client = HyperWebPushClient::new();
 
-        let private_key = File::open(webpush_private_key_file.as_ref().ok_or(HttpgError::WebPushPrivateKey)?)?;
+        let private_key = File::open(webpush_private_key_file.as_ref().ok_or_else(|| HttpgError::WebPushPrivateKey)?)?;
 
         let n = rows.err_into::<HttpgError>().try_fold(0, async |acc, row| {
             let subscription_info = SubscriptionInfo::new(
