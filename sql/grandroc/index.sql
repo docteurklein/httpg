@@ -228,13 +228,14 @@ with (security_invoker) as
     select '<!DOCTYPE html>'
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/cpres/index.css' as href))::text
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
+    -- union all select xmlelement(name link, xmlattributes('stylesheet' as rel, 'https://unpkg.com/charts.css/dist/charts.min.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
-        document.querySelectorAll('.booking').forEach(b => {
-            b.addEventListener('mouseenter', (e) => {
+        document.querySelectorAll('.booking').forEach(n => {
+            n.addEventListener('mouseenter', (e) => {
                 document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.add('active'));
             });
-            b.addEventListener('mouseleave', (e) => {
+            n.addEventListener('mouseleave', (e) => {
                 document.querySelectorAll(`[data-booking]`).forEach(n => n.classList.remove('active'));
             });
         });
@@ -282,6 +283,11 @@ with (security_invoker) as
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
             )) as href
         ), 'Logements'),
+        xmlelement(name a, xmlattributes(
+            url.url('/grandroc/query', jsonb_build_object(
+                'sql', 'select * from grandroc.head union all select body::text from grandroc.stat'
+            )) as href
+        ), 'Stats'),
         xmlelement(name a, xmlattributes(
             url.url('/grandroc/logout', jsonb_build_object(
                 'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
@@ -1433,11 +1439,49 @@ where name = body->>'name'
 and password = crypt(body->>'password', salt);
 end;
 
+
+-- drop view if exists stat;
+create or replace view stat (body)
+with (security_invoker) as
+with top_place (nb, place) as (
+    select count(booking), place
+    from booking
+    group by place
+),
+top_date (nb, date) as (
+    select count(booking), to_char(lower(period), 'YY/MM')
+    from booking
+    where lower(period) between (now() - interval '6 months')::date and (now() + interval '6 months')::date
+    group by 2
+)
+select xmlelement(name div, xmlattributes('chart' as class),
+    xmlelement(name table, xmlattributes('charts-css column' as class),
+        xmlagg(xmlelement(name tr,
+            xmlelement(name td, xmlattributes(
+                format('--size: %s', nb) as style,
+                 place as title
+            ), nb)
+        ))
+    )
+)
+from top_place
+union all select xmlelement(name div, xmlattributes('chart' as class),
+    xmlelement(name table, xmlattributes('charts-css column' as class),
+        xmlagg(xmlelement(name tr,
+            xmlelement(name td, xmlattributes(
+                format('--size: %s', nb) as style,
+                 date as title
+            ), nb)
+        ))
+    )
+)
+from top_date
+;
+
 grant execute on function login() to anon;
-
 grant grandroc to anon;
-
 grant usage on schema grandroc, url to anon, grandroc;
+grant select on table stat to anon, grandroc;
 grant select on table head to anon, grandroc;
 grant select, insert, update, delete on table booking to grandroc;
 grant select, insert, update, delete on table occupant to grandroc;
