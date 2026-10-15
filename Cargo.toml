@@ -68,7 +68,13 @@ web-push = { version = "^0", features = ["hyper-client"] }
 http = "^1"
 snafu = { version = "^0", features = ["backtrace"] }
 http-body-util = "^0"
-http-body = "1.0.1"
+http-body = "^1"
+hotpath = { version = "^0", features = ["tokio"] }
+
+[features]
+hotpath = ["hotpath/hotpath"]
+hotpath-alloc = ["hotpath/hotpath-alloc"]
+hotpath-prometheus = ["hotpath/hotpath-prometheus"]
 
 # [dev-dependencies]
 # http-body-util = "^0"

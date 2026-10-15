@@ -90,6 +90,7 @@ struct AppState {
 }
 
 #[tokio::main]
+#[hotpath::main]
 async fn main() -> Result<(), HttpgError> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
@@ -473,6 +474,7 @@ async fn web_push(
 }
 
 #[debug_handler]
+#[hotpath::measure]
 async fn stream_query(
     State(AppState {read_pool, write_pool, config: HttpgConfig {anon_role, ..}, ..}): State<AppState>,
     biscuit: Option<extract::biscuit::Biscuit>,
