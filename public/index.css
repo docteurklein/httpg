@@ -1,33 +1,141 @@
-#sqlprompt textarea {
-  field-sizing: content;
-  width: 100%;
-  height: 10vh;
+:root {
+  color-scheme: dark light;
+  --color-surface: #1c1b22;
+  --color-on-surface: white;
+  --color-destructive: red;
+  --color-bg-input: #2b2a33;
+  --color-input: white;
+  --color-bg-button: green;
+  --color-button: white;
+  --color-link: #72ff72;
+  line-height: 1.5;
+  font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  interpolate-size: allow-keywords;
 }
 
-.svg-container {
-  height: 100vh;
-  overflow: auto;
-
-  & svg {
-    height: 100vh;
+@media only screen and (prefers-color-scheme: light) {
+  :root {
+    --color-surface: white;
+    --color-on-surface: black;
+    --color-bg-input: cornsilk;
+    --color-input: black;
+    --color-link: green;
   }
 }
 
-#container {
-  display: grid;
-  grid-template-columns: auto auto auto; // repeat(auto-fill, minmax(230px, 1fr));
-  grid-gap: 20px;
+* {
+  box-sizing: border-box;
 }
 
-article {
-  display: grid;
-  grid-template-rows: max-content 200px 1fr;
+html {
+  scrollbar-gutter: stable;
 }
 
-article {
-  outline: grey solid;
-  padding-left: 2em;
+@view-transition {
+  navigation: auto;
 }
-.link form, .link a {
-  display: inline;
+
+::view-transition-group(root) {
+  animation-duration: 1s;
+}
+
+:user-invalid {
+  outline: 1px solid red;
+}
+
+.grid {
+  --min: 40ch;
+  --gap: 1rem;
+
+  display: grid;
+  gap: var(--gap);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--min)), 1fr));
+
+  &.media {
+    --min: 10ch;
+  }
+}
+
+.card {
+  box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
+  border-radius: 0.5rem;
+  padding: 1rem;
+  margin: 1rem;
+
+  & img,
+  & object {
+    width: 100%;
+    aspect-ratio: 3/2;
+    object-fit: cover;
+  }
+
+  & img.marker-icon {
+    width: 25px;
+    height: 41px;
+  }
+}
+
+input.destructive {
+  background-color: transparent;
+  outline: 2px solid var(--color-destructive);
+  color: var(--color-destructive);
+}
+
+button,
+input[type="submit"] {
+  transition: transform 0.2s;
+
+  &:active {
+    transform: scale(0.95);
+  }
+}
+
+body {
+  background-color: var(--color-surface);
+  color: var(--color-on-surface);
+}
+
+a {
+  color: var(--color-link);
+}
+
+.error {
+  background-color: indianred;
+  &:empty {
+    display: none;
+  }
+}
+
+.flashes {
+  max-height: 20vh;
+  overflow: scroll;
+  margin-bottom: 1em;
+
+  & .red {
+    background-color: indianred;
+  }
+
+  & .green {
+    background-color: green;
+    color: white;
+  }
+
+  & .blue {
+    background-color: lightblue;
+    color: black;
+  }
+
+  & .yellow {
+    background-color: yellow;
+    color: black;
+  }
+
+  &:empty {
+    display: none;
+  }
+}
+
+:target {
+  background-color: yellow;
+  color: black;
 }

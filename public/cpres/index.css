@@ -1,3 +1,5 @@
+@import "/index.css";
+
 ul.cloud {
   list-style: none;
   padding-left: 0;
@@ -10,68 +12,6 @@ ul.cloud {
   & li {
     margin-left: 5px;
   }
-}
-
-
-button,
-input[type="submit"] {
-  transition: transform 0.2s;
-
-  &:active {
-    transform: scale(0.95);
-  }
-}
-
-:root {
-  color-scheme: dark light;
-  --color-surface: #1c1b22;
-  --color-on-surface: white;
-  --color-destructive: red;
-  --color-bg-input: #2b2a33;
-  --color-input: white;
-  --color-bg-button: green;
-  --color-button: white;
-  --color-link: #72ff72;
-
-  line-height: 1.5;
-  font-family: system-ui, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, Helvetica, Arial, "Helvetica Neue", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-
-  interpolate-size: allow-keywords;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-html {
-  scrollbar-gutter: stable;
-}
-
-@view-transition {
-  navigation: auto;
-}
-
-::view-transition-group(root) {
-  animation-duration: 1s;
-}
-
-@media only screen and (prefers-color-scheme: light) {
-  :root {
-    --color-surface: white;
-    --color-on-surface: black;
-    --color-bg-input: cornsilk;
-    --color-input: black;
-    --color-link: green;
-  }
-}
-
-body {
-  background-color: var(--color-surface);
-  color: var(--color-on-surface);
-}
-
-a {
-  color: var(--color-link);
 }
 
 nav ul {
@@ -112,7 +52,7 @@ form input.inline-name {
   }
 }
 
-.inline>* {
+.inline > * {
   display: inline;
   padding-right: 0.5rem;
 }
@@ -151,19 +91,6 @@ input.price {
   width: unset;
 }
 
-.grid {
-  --min: 40ch;
-  --gap: 1rem;
-
-  display: grid;
-  gap: var(--gap);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--min)), 1fr));
-
-  &.media {
-    --min: 10ch;
-  }
-}
-
 .searches ul {
   max-height: 20vh;
   overflow-y: scroll;
@@ -193,25 +120,6 @@ input[is="cpres-map"] {
   }
 }
 
-.card {
-  box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
-  border-radius: 0.5rem;
-  padding: 1rem;
-  margin: 1rem;
-
-  & img,
-  & object {
-    width: 100%;
-    aspect-ratio: 3/2;
-    object-fit: cover;
-  }
-
-  & img.marker-icon {
-    width: 25px;
-    height: 41px;
-  }
-}
-
 img.marker-icon {
   display: none;
 
@@ -220,50 +128,12 @@ img.marker-icon {
   }
 }
 
-input.destructive {
-  background-color: transparent;
-  outline: 2px solid var(--color-destructive);
-  color: var(--color-destructive);
-}
-
 a.whatsapp {
   font-size: 35px;
   color: green;
   padding-left: 10px;
 }
 
-.error {
-  background-color: indianred;
-}
-
-.flashes {
-  max-height: 20vh;
-  overflow: scroll;
-  margin-bottom: 1em;
-
-  & .red {
-    background-color: indianred;
-  }
-
-  & .green {
-    background-color: green;
-    color: white;
-  }
-
-  & .blue {
-    background-color: lightblue;
-    color: black;
-  }
-
-  & .yellow {
-    background-color: yellow;
-    color: black;
-  }
-
-  &:empty {
-    display: none;
-  }
-}
 
 .onhover {
   display: none;
@@ -291,14 +161,6 @@ a.whatsapp {
   }
 }
 
-.error:empty {
-  display: none;
-}
-
-:target {
-  background-color: yellow;
-  color: black;
-}
 
 .messages {
   max-height: 30vh;

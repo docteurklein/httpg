@@ -226,9 +226,8 @@ with (security_invoker) as
         select nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
     )
     select '<!DOCTYPE html>'
-    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/cpres/index.css' as href))::text
+    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/index.css' as href))::text
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
-    -- union all select xmlelement(name link, xmlattributes('stylesheet' as rel, 'https://unpkg.com/charts.css/dist/charts.min.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
         document.querySelectorAll('.booking').forEach(n => {
@@ -492,11 +491,17 @@ with (security_invoker) as
     from httpg, (table add union all table edit)
 ;
 
+drop view if exists booking_html;
 create or replace view booking_html (body)
 with (security_invoker) as
-with httpg (when_, booking_id) as (
-    select to_date(nullif(current_setting('httpg.query', true), '')::jsonb->'qs'->>'when', 'MM-YY'),
-    (nullif(current_setting('httpg.query', true), '')::jsonb->'qs'->>'booking_id')::uuid
+with httpg (when_, booking_id, place) as (
+    with query (query) as (
+        select nullif(current_setting('httpg.query', true), '')::jsonb
+    )
+    select to_date(query->'qs'->>'when', 'MM-YY'),
+    (query->'qs'->>'booking_id')::uuid,
+    query->'qs'->>'place'
+    from query
 ),
 day (d) as (
     select d::date from httpg, generate_series(
@@ -523,23 +528,23 @@ calendar (html) as (
         xmlelement(name time, xmlattributes(d::date as timestamp),
             to_char(d, 'dy dd/mm')
         ),
-        coalesce(xmlagg(case when place is not null then
+        coalesce(xmlagg(case when booking.place is not null then
             xmlelement(name section, xmlattributes(
                 format('booking %s',  case when lower(period)::date <> d then 'line' end) as class,
                 
                 format('--color: %s;', color) as style,
-                booking_id as "data-booking"
+                booking.booking_id as "data-booking"
             ),
                 xmlelement(name a, xmlattributes(
                     url('/grandroc/query', jsonb_build_object(
                         'sql', 'select body::text from grandroc.contract_html where booking_id = $1::uuid',
-                        'params[0]', booking_id
+                        'params[0]', booking.booking_id
                     )) as href
-                ), format('%s in %s', occupant ,place)),
+                ), format('%s in %s', occupant, booking.place)),
                 xmlelement(name a, xmlattributes(
                     url('/grandroc/query', jsonb_build_object(
                         'sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html',
-                        'booking_id', booking_id
+                        'booking_id', booking.booking_id
                     )) as href
                 ), xmlelement(name button, 'Edit')),
                 xmlelement(name form, xmlattributes(
@@ -560,7 +565,7 @@ calendar (html) as (
                     xmlelement(name input, xmlattributes(
                         'hidden' as type,
                         'params[]' as name,
-                        booking_id as value
+                        booking.booking_id as value
                     )),
                     xmlelement(name input, xmlattributes(
                         'submit' as type,
@@ -571,10 +576,11 @@ calendar (html) as (
                 )
             )
             end
-        order by lower(period) asc, days(period) desc, place)
+        order by lower(period) asc, days(period) desc, booking.place)
     ), '')
-    from day
+    from httpg, day
     left join booking on period @> d
+    where case when httpg.place is not null then booking.place = httpg.place else true end
     group by d
 ),
 current_booking (b) as (
@@ -1449,29 +1455,42 @@ with top_place (nb, place) as (
     group by place
 ),
 top_date (nb, date) as (
-    select count(booking), to_char(lower(period), 'YY/MM')
-    from booking
-    where lower(period) between (now() - interval '6 months')::date and (now() + interval '6 months')::date
+    select count(booking), date_trunc('month', d)::date
+    from generate_series((now() - interval '6 months'), (now() + interval '6 months'), '1 day') d
+    left join booking on lower(period) = d::date
     group by 2
+    order by 2
 )
 select xmlelement(name div, xmlattributes('chart' as class),
-    xmlelement(name table, xmlattributes('charts-css column' as class),
+    xmlelement(name table,
+        xmlelement(name caption, 'Top places'),
         xmlagg(xmlelement(name tr,
-            xmlelement(name td, xmlattributes(
-                format('--size: %s', nb) as style,
-                 place as title
-            ), nb)
+            xmlelement(name th, xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
+                    'place', place
+                )) as href
+            ), place)),
+            xmlelement(name td, xmlelement(name div, xmlattributes(
+                format('width: %spx', nb) as style
+            ), nb))
         ))
     )
 )
 from top_place
 union all select xmlelement(name div, xmlattributes('chart' as class),
-    xmlelement(name table, xmlattributes('charts-css column' as class),
+    xmlelement(name table,
+        xmlelement(name caption, 'Top Dates'),
         xmlagg(xmlelement(name tr,
-            xmlelement(name td, xmlattributes(
-                format('--size: %s', nb) as style,
-                 date as title
-            ), nb)
+            xmlelement(name th, xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
+                    'when', to_char(date::date, 'MM-YY')
+                )) as href
+            ), to_char(date::date, 'Mon/YY'))),
+            xmlelement(name td, xmlelement(name div, xmlattributes(
+                format('width: %spx', nb) as style
+            ), nb))
         ))
     )
 )

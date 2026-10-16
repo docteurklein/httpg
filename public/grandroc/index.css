@@ -6,15 +6,14 @@ nav {
 }
 
 .chart {
-    & tbody {
-        max-height: 20vh;
-    }
-    max-width: 100vw;
-    margin-bottom: 1vh;
-}
+  width: 100%;
+  & th {
+    width: 1%;
+  }
 
-:user-invalid {
-  outline: 1px solid red;
+  & td div {
+    background-color: red;
+  }
 }
 
 fieldset {
@@ -75,18 +74,18 @@ header.grid {
   --min: 40vw;
 }
 
-td {
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum';
-  text-align: right;
-}
-
 .inline {
   display: inline;
 }
 
 input:not([type='checkbox'], [type='submit'], [type='radio']), textarea, select {
   width: 100%;
+}
+
+td {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum';
+  text-align: right;
 }
 
 td,
