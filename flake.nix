@@ -179,51 +179,6 @@
           '';
         };
 
-        # packages.pypsutil = pkgs.python3.pkgs.buildPythonPackage (pyproject-nix.lib.renderers.buildPythonPackage ({
-        #   project = pyproject-nix.lib.project.loadPyproject {
-        #     projectRoot = (pkgs.fetchFromGitHub {
-        #         owner = "cptpcrd";
-        #         repo = "pypsutil";
-        #         rev = "master";
-        #         sha256 = "sha256-8ZjNe7xfpcuKlADJyztkpODRpJkVcoHk18VuIhWwwMA=";
-        #       });
-        #   };
-        #   python = pkgs.python3;
-        #   pythonPackages = pkgs.python3Packages;
-        # }) // {
-        #   pname = "pypsutil";
-        #   version = "master";
-        # });
-
-        # packages.pgtracer = pkgs.python3.pkgs.buildPythonApplication (pyproject-nix.lib.renderers.buildPythonPackage ({
-        #   project = pyproject-nix.lib.project.loadPyproject {
-        #     projectRoot = (pkgs.fetchFromGitHub {
-        #         owner = "Aiven-Open";
-        #         repo = "pgtracer";
-        #         rev = "master";
-        #         sha256 = "sha256-ftENAaretZZ9Ujjx2RW7GPMZwvZgzLa4tDDyGYyGUaU=";
-        #       });
-        #   };
-        #   python = pkgs.python3;
-        #   pythonPackages = pkgs.python3Packages // {
-        #     pypsutil = self'.packages.pypsutil;
-        #   };
-        # }) // {
-        #   pname = "pgtracer";
-        #   version = "master";
-        #   propagatedBuildInputs = [
-        #     pkgs.bcc
-        #     pkgs.libunwind
-        #     pkgs.python3Packages.bcc
-        #   ];
-        #   patches = [
-        #     ./unwind_version.patch
-        #   ];
-        #   postPatch = ''
-        #     substituteInPlace src/pgtracer/ebpf/unwind.py --subst-var-by unwind_path "${lib.getLib pkgs.libunwind}/lib/libunwind-x86_64.so"
-        #   '';
-        # });
-
         packages.default = self'.packages.httpg-release;
 
         packages.oci = n2c.nix2container.buildImage {
