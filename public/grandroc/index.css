@@ -12,7 +12,8 @@ nav {
   }
 
   & td div {
-    background-color: red;
+    width: calc((var(--size) / var(--max) * 100) * 1%);
+    background-color: oklch( 50.0% 0.2 calc((var(--size) / var(--max) * 360deg)));
   }
 }
 
@@ -32,7 +33,7 @@ fieldset {
     padding-left: 5px;
   }
 
-  &:has(.booking:hover) .booking {
+  &:has(.booking.active) .booking {
     opacity: .2;
   }
 
@@ -58,10 +59,6 @@ fieldset {
 
     & a {
       all: revert;
-    }
-
-    &.line * {
-      /* visibility: hidden; */
     }
   }
 }

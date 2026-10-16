@@ -231,11 +231,8 @@ with (security_invoker) as
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
         document.querySelectorAll('.booking').forEach(n => {
-            n.addEventListener('mouseenter', (e) => {
-                document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.add('active'));
-            });
-            n.addEventListener('mouseleave', (e) => {
-                document.querySelectorAll(`[data-booking]`).forEach(n => n.classList.remove('active'));
+            n.addEventListener('click', (e) => {
+                document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.toggle('active'));
             });
         });
     $$::text::xml)::text
@@ -576,7 +573,7 @@ calendar (html) as (
                 )
             )
             end
-        order by lower(period) asc, days(period) desc, booking.place)
+        order by period asc, days(period) desc, booking.place)
     ), '')
     from httpg, day
     left join booking on period @> d
@@ -1387,31 +1384,31 @@ join place using (place)
 ;
 
 -- truncate table occupant cascade;
--- insert into occupant (occupant) values ('georges');
+insert into occupant (occupant) values ('georges')
+on conflict (occupant) do nothing;
 
-
--- truncate table booking;
--- insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_babies, nb_horses, food_price_unit, with_draps, with_serviette)
--- select
---     (array_sample(array['grand gite'], 1))[1],
---     (array_sample(array['georges'], 1))[1],
---     900,
---     daterange(i::date, (i + format('%s days', random(2, 8))::interval)::date, '[)'),
---     true,
---     4,
---     2,
---     1,
---     2,
---     20,
---     true,
---     true
--- from (
---     select generate_series(now(), now() + interval '1 year', '3 days')
---     union all 
---     select generate_series(now(), now() + interval '1 year', '5 days')
---     union all 
---     select generate_series(now(), now() + interval '1 year', '8 days')
--- ) i (i);
+truncate table booking;
+insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_babies, nb_horses, food_price_unit, with_draps, with_serviette)
+select
+    (select place from place order by random() limit 1),
+    (select occupant from occupant order by random() limit 1),
+    900,
+    daterange(i::date, (i + format('%s days', random(2, 8))::interval)::date, '[)'),
+    true,
+    4,
+    2,
+    1,
+    2,
+    20,
+    true,
+    true
+from (
+    select generate_series(now() - interval '3 weeks', now() + interval '1 week', '3 days')
+    union all 
+    select generate_series(now() + interval '3 weeks', now() + interval '6 weeks', '5 days')
+    union all 
+    select generate_series(now() + interval '8 weeks', now() + interval '5 months', '8 days')
+) i (i);
 
 
 create table if not exists admin (
@@ -1449,13 +1446,13 @@ end;
 -- drop view if exists stat;
 create or replace view stat (body)
 with (security_invoker) as
-with top_place (nb, place) as (
-    select count(booking), place
+with top_place (nb, place, max) as (
+    select count(booking), place, max(count(booking)) over ()
     from booking
     group by place
 ),
-top_date (nb, date) as (
-    select count(booking), date_trunc('month', d)::date
+top_date (nb, date, max) as (
+    select count(booking), date_trunc('month', d)::date, max(count(booking)) over ()
     from generate_series((now() - interval '6 months'), (now() + interval '6 months'), '1 day') d
     left join booking on lower(period) = d::date
     group by 2
@@ -1472,7 +1469,7 @@ select xmlelement(name div, xmlattributes('chart' as class),
                 )) as href
             ), place)),
             xmlelement(name td, xmlelement(name div, xmlattributes(
-                format('width: %spx', nb) as style
+                format('--size: %s; --max: %s', nb, max) as style
             ), nb))
         ))
     )
@@ -1489,7 +1486,7 @@ union all select xmlelement(name div, xmlattributes('chart' as class),
                 )) as href
             ), to_char(date::date, 'Mon/YY'))),
             xmlelement(name td, xmlelement(name div, xmlattributes(
-                format('width: %spx', nb) as style
+                format('--size: %s; --max: %s', nb, max) as style
             ), nb))
         ))
     )
