@@ -169,7 +169,6 @@ async fn main() -> Result<(), HttpgError> {
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
             .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
-            // .layer(axum::middleware::from_fn(compress_stream::compress_stream))
             .layer(CompressionLayer::new().zstd(false).br(true))
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::new()
@@ -567,7 +566,11 @@ async fn post_query(
 ) -> Result<impl IntoResponse, HttpgError>
 {
     if query.sql.is_none() {
-        return Ok(StatusCode::NO_CONTENT.into_response());
+        return Ok(response::HttpResult {
+            query,
+            rows: CancelStream::from_vec(vec![], None),
+            lsn: None,
+        }.into_response());
     }
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())

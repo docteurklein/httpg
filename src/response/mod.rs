@@ -9,8 +9,6 @@ use tokio_postgres::{Row, RowStream};
 
 use crate::{HttpgError, extract::query::Query, postgres::QueryGuard};
 
-pub mod compress_stream;
-
 pub struct HttpResult {
     pub query: Query,
     pub rows: CancelStream,
