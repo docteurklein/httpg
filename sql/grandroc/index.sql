@@ -1478,6 +1478,17 @@ union all select xmlelement(name div, xmlattributes('chart' as class),
 from top_date
 ;
 
+create or replace procedure test(inout status int default null)
+language plpgsql
+as $$
+begin
+    perform 1;
+    commit;
+    select 300 into status;
+end;
+$$;
+
+grant execute on procedure test(int) to anon;
 grant execute on function login() to anon;
 grant grandroc to anon;
 grant usage on schema grandroc, url to anon, grandroc;

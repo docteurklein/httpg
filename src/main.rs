@@ -143,7 +143,12 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/logout", get(logout).post(logout))
         .route("/query", get(stream_query).post(post_query))
         .route("/{path}/query", get(stream_query).post(post_query))
+        .route("/query/{cursor}", post(post_query))
         .route("/{path}/query/{cursor}", post(post_query))
+        .route("/call", post(call_query))
+        .route("/call/{cursor}", post(call_query))
+        .route("/{path}/call", post(call_query))
+        .route("/{path}/call/{cursor}", post(call_query))
         .route("/email", post(email))
         .route("/{path}/email", post(email))
         // .route("/http", get(http).post(http))
@@ -232,7 +237,7 @@ async fn login(
     ;
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role, "local")).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -281,10 +286,10 @@ async fn logout(
     ))
 }
 
-fn pre(biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String) -> String {
+fn pre(biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, local: &str) -> String {
 
     let mut s = vec![
-        format!("set local role to {anon_role}"),
+        format!("set {local} role to {anon_role}"),
     ];
 
     s.push(biscuit.to_owned().map(|b| b.0.join(";")).unwrap_or_default());
@@ -310,7 +315,7 @@ async fn email(
         finished: false,
     };
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role, "local")).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -406,7 +411,7 @@ async fn web_push(
         finished: false,
     };
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role, "local")).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -504,7 +509,7 @@ async fn stream_query(
     };
 
     tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-    tx.batch_execute(&pre(&biscuit, &anon_role)).await?;
+    tx.batch_execute(&pre(&biscuit, &anon_role, "local")).await?;
 
     let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
         (param.tosql_sync(), param.to_owned().into())
@@ -512,11 +517,11 @@ async fn stream_query(
 
     let rows = match &query.sql {
         Some(sql) => if query.body.contains_key("stream") {
-            CancelStream::new(tx.query_typed_raw(sql, sql_params).await?, guard)
+            CancelStream::new(tx.query_typed_raw(sql, sql_params).await?, Some(guard))
         } else {
-            CancelStream::from_vec(tx.query_typed(sql, &sql_params).await?, guard)
+            CancelStream::from_vec(tx.query_typed(sql, &sql_params).await?, Some(guard))
         },
-        None => CancelStream::from_vec(vec![], guard),
+        None => CancelStream::from_vec(vec![], Some(guard)),
     };
 
     Ok(response::HttpResult {
@@ -578,7 +583,7 @@ async fn post_query(
             finished: false,
         };
         tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-        tx.batch_execute(&pre(&biscuit, anon_role)).await?;
+        tx.batch_execute(&pre(&biscuit, anon_role, "local")).await?;
 
         let result = tx.query_typed(query.sql.as_ref().ok_or(HttpgError::anyhow("no sql passed"))?, &sql_params).await;
 
@@ -600,7 +605,7 @@ async fn post_query(
 
                 return Ok(response::HttpResult {
                     query,
-                    rows: CancelStream::from_vec(rows, guard),
+                    rows: CancelStream::from_vec(rows, Some(guard)),
                     lsn,
                 }.into_response());
             },
@@ -630,7 +635,7 @@ async fn post_query(
                             finished: false,
                         };
                         tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
-                        tx.batch_execute(&pre(&biscuit, anon_role)).await?;
+                        tx.batch_execute(&pre(&biscuit, anon_role, "local")).await?;
 
                         tx.query_typed_raw(
                             "select set_config('httpg.errors', $1, true)",
@@ -646,7 +651,118 @@ async fn post_query(
                             StatusCode::BAD_REQUEST,
                             response::HttpResult {
                                 query,
-                                rows: CancelStream::new(rows, guard),
+                                rows: CancelStream::new(rows, Some(guard)),
+                                lsn: None,
+                            }
+                        ).into_response());
+                    }
+                    _ => {
+                        return Ok((
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            error.to_string(),
+                        ).into_response());
+                    }
+                }
+            }
+        }
+    }?
+}
+
+async fn call_query(
+    State(AppState {ref read_pool, ref write_pool, config: HttpgConfig {ref anon_role, ..}, ..}): State<AppState>,
+    biscuit: Option<extract::biscuit::Biscuit>,
+    paths: Option<Path<HashMap<String, String>>>,
+    query: extract::query::Query,
+) -> Result<impl IntoResponse, HttpgError>
+{
+    if query.sql.is_none() {
+        return Ok(response::HttpResult {
+            query,
+            rows: CancelStream::from_vec(vec![], None),
+            lsn: None,
+        }.into_response());
+    }
+    let sql_params: Vec<(_, Type)> = query.params.iter().map(|param| {
+        (param.tosql_sync(), param.to_owned().into())
+    }).collect();
+
+    let mut retry: u8 = 0;
+    loop {
+        let conn = write_pool.get().await?;
+
+        let guard = QueryGuard {
+            cancel_token: conn.cancel_token(),
+            finished: false,
+        };
+        conn.query_typed_raw("select set_config('httpg.query', $1, false)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+        conn.batch_execute(&pre(&biscuit, anon_role, "")).await?;
+
+        let result = conn.query_typed(query.sql.as_ref().ok_or(HttpgError::anyhow("no sql passed"))?, &sql_params).await;
+
+        match result {
+            Ok(rows) => {
+                let rows = match paths {
+                    Some(paths) => match paths.get("cursor") {
+                        Some(cursor) => {
+                            let rows = conn.query_typed(&format!("fetch all from {cursor}"), sql_params.as_slice()).await?;
+                            conn.execute(&format!("close {cursor}"), &[]).await?;
+                            rows
+                        },
+                        None => rows,
+                    },
+                    None => rows,
+                };
+                let lsn = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?.try_get(0).ok();
+
+                return Ok(response::HttpResult {
+                    query,
+                    rows: CancelStream::from_vec(rows, Some(guard)),
+                    lsn,
+                }.into_response());
+            },
+            Err(e) => {
+                let error = &e.as_db_error().map(|e| e.message().to_string()).unwrap_or(e.to_string());
+                tracing::warn!(error);
+                
+                retry = retry.checked_add(1).ok_or(HttpgError::anyhow("Retry overflow"))?;
+                if retry > 5 {
+                    break Err(e);
+                }
+                if matches!(e.code(),
+                    Some(&tokio_postgres::error::SqlState::T_R_SERIALIZATION_FAILURE)
+                    | Some(&tokio_postgres::error::SqlState::T_R_DEADLOCK_DETECTED))
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(retry.into())).await;
+                    continue;
+                }
+
+                match &query.on_error {
+                    Some(on_error) => {
+                        let mut conn = read_pool.get().await?;
+                        let tx = conn.build_transaction().read_only(true).isolation_level(IsolationLevel::RepeatableRead).start().await?;
+
+                        let guard = QueryGuard {
+                            cancel_token: tx.cancel_token(),
+                            finished: false,
+                        };
+                        tx.query_typed_raw("select set_config('httpg.query', $1, true)", [(serde_json::to_string(&query)?, Type::TEXT)]).await?;
+                        tx.batch_execute(&pre(&biscuit, anon_role, "local")).await?;
+
+                        tx.query_typed_raw(
+                            "select set_config('httpg.errors', $1, true)",
+                            vec![(serde_json::to_string(&json!({"error": &error}))?, Type::TEXT)]
+                        ).await?;
+
+                        let rows = tx.query_typed_raw(on_error.as_ref(), sql_params).await?;
+
+                        let mut query = query.clone();
+                        query.redirect = None;
+
+                        return Ok((
+                            StatusCode::BAD_REQUEST,
+                            response::HttpResult {
+                                query,
+                                rows: CancelStream::new(rows, Some(guard)),
                                 lsn: None,
                             }
                         ).into_response());

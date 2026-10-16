@@ -1,6 +1,6 @@
 use std::{collections::HashMap, pin::Pin, task::{Context, Poll}};
 
-use axum::{body::Body, http::{HeaderName, HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
+use axum::{body::Body, http::{HeaderValue, StatusCode, header::{CACHE_CONTROL, CONTENT_TYPE}}, response::{IntoResponse, Redirect, Response}};
 use bytes::{BufMut, BytesMut};
 use futures::{Stream, StreamExt, stream};
 use http::HeaderMap;
@@ -19,12 +19,12 @@ pub struct HttpResult {
 
 pub struct CancelStream {
     inner: Pin<Box<dyn Stream::<Item = Result<Row, tokio_postgres::Error>> + Send>>,
-    guard: QueryGuard,
+    guard: Option<QueryGuard>,
     errored: bool,
 }
 
 impl CancelStream {
-    pub(crate) fn new(rows: RowStream, guard: QueryGuard) -> Self {
+    pub(crate) fn new(rows: RowStream, guard: Option<QueryGuard>) -> Self {
         Self {
             inner: Box::pin(rows),
             guard,
@@ -32,7 +32,7 @@ impl CancelStream {
         }
     }
 
-    pub fn from_vec(vec: Vec<Row>, guard: QueryGuard) -> Self
+    pub fn from_vec(vec: Vec<Row>, guard: Option<QueryGuard>) -> Self
     {
         Self {
             inner: Box::pin(stream::iter(vec.into_iter().map(Ok).collect::<Vec::<_>>())),
@@ -107,7 +107,9 @@ impl Stream for CancelStream {
                 Poll::Ready(Some(Ok(res)))
             },
             Poll::Ready(None) => {
-                self.guard.finished = true;
+                if let Some(ref mut g) = self.guard {
+                    g.finished = true;
+                };
                 Poll::Ready(None)
             },
             Poll::Pending => Poll::Pending,
@@ -171,7 +173,7 @@ impl IntoResponse for HttpResult {
 
         builder
             .body(Body::from_stream(stream.map(|r| r.map(|r| r.body.unwrap_or_default()))))
-            .unwrap_or(StatusCode::BAD_REQUEST.into_response())
+            .unwrap_or_else(|e| {(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()})
     }
 }
 
@@ -225,7 +227,7 @@ mod tests {
             finished: false,
         };
 
-        let rows = CancelStream::new(rows, guard);
+        let rows = CancelStream::new(rows, Some(guard));
         let res = response::HttpResult {
             query: query.clone(),
             rows,
