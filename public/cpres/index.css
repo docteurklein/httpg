@@ -57,36 +57,6 @@ form input.inline-name {
   padding-right: 0.5rem;
 }
 
-label {
-  margin-bottom: 0.4rem;
-  display: block;
-}
-
-input,
-textarea,
-button,
-select {
-  padding: 0.4rem;
-  /* margin-bottom: 1rem; */
-  /* width: 100%; */
-  border: none;
-  box-shadow: 0 0 0.1rem hsl(0 0% 0% / 35%);
-  border-radius: 0.2rem;
-  background-color: var(--color-bg-input);
-  color: var(--color-input);
-}
-
-input[type="radio"] {
-  width: unset;
-}
-
-input[type="submit"],
-button {
-  /* display: block; */
-  background-color: var(--color-bg-button);
-  color: var(--color-button);
-}
-
 input.price {
   width: unset;
 }

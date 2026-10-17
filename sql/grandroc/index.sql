@@ -66,146 +66,7 @@ create table if not exists booking (
     is_early bool not null default false,
     is_late bool not null default false,
     at date default now(),
-    color text not null default (array_sample(array[
-        'antiquewhite',
-        'aqua',
-        'aquamarine',
-        'azure',
-        'beige',
-        'bisque',
-        'black',
-        'blanchedalmond',
-        'blue',
-        'blueviolet',
-        'brown',
-        'burlywood',
-        'cadetblue',
-        'chartreuse',
-        'chocolate',
-        'coral',
-        'cornflowerblue',
-        'cornsilk',
-        'crimson',
-        'cyan',
-        'darkblue',
-        'darkcyan',
-        'darkgoldenrod',
-        'darkgray',
-        'darkgreen',
-        'darkkhaki',
-        'darkmagenta',
-        'darkolivegreen',
-        'darkorange',
-        'darkorchid',
-        'darkred',
-        'darksalmon',
-        'darkseagreen',
-        'darkslateblue',
-        'darkslategray',
-        'darkturquoise',
-        'darkviolet',
-        'deeppink',
-        'deepskyblue',
-        'dimgray',
-        'dodgerblue',
-        'firebrick',
-        'floralwhite',
-        'forestgreen',
-        'fuchsia',
-        'gainsboro',
-        'ghostwhite',
-        'gold',
-        'goldenrod',
-        'gray',
-        'green',
-        'greenyellow',
-        'honeydew',
-        'hotpink',
-        'indianred',
-        'indigo',
-        'ivory',
-        'khaki',
-        'lavender',
-        'lavenderblush',
-        'lawngreen',
-        'lemonchiffon',
-        'lightblue',
-        'lightcoral',
-        'lightcyan',
-        'lightgoldenrodyellow',
-        'lightgray',
-        'lightgreen',
-        'lightpink',
-        'lightsalmon',
-        'lightseagreen',
-        'lightskyblue',
-        'lightslategray',
-        'lightsteelblue',
-        'lightyellow',
-        'lime',
-        'limegreen',
-        'linen',
-        'magenta',
-        'maroon',
-        'mediumaquamarine',
-        'mediumblue',
-        'mediumorchid',
-        'mediumpurple',
-        'mediumseagreen',
-        'mediumslateblue',
-        'mediumspringgreen',
-        'mediumturquoise',
-        'mediumvioletred',
-        'midnightblue',
-        'mintcream',
-        'mistyrose',
-        'moccasin',
-        'navajowhite',
-        'navy',
-        'oldlace',
-        'olive',
-        'olivedrab',
-        'orange',
-        'orangered',
-        'orchid',
-        'palegoldenrod',
-        'palegreen',
-        'paleturquoise',
-        'palevioletred',
-        'papayawhip',
-        'peachpuff',
-        'peru',
-        'pink',
-        'plum',
-        'powderblue',
-        'purple',
-        'rebeccapurple',
-        'red',
-        'rosybrown',
-        'royalblue',
-        'saddlebrown',
-        'salmon',
-        'sandybrown',
-        'seagreen',
-        'seashell',
-        'sienna',
-        'silver',
-        'skyblue',
-        'slateblue',
-        'slategray',
-        'snow',
-        'springgreen',
-        'steelblue',
-        'tan',
-        'teal',
-        'thistle',
-        'tomato',
-        'turquoise',
-        'violet',
-        'wheat',
-        'yellow',
-        'yellowgreen'
-    ], 1))[1],
+    cue int not null default random(0, 180),
     exclude using gist (
         place with =,
         period with &&
@@ -507,14 +368,6 @@ day (d) as (
         '1 day'
     ) d
 ),
--- booking_pos as (
---     select *, row_number() over (partition by d, lower(period) order by lower(period) asc range between current row and '1 day' following) pos1
--- ),
--- booking_pos2 as (
---     select *, pos1 pos
---     from
---     booking_pos
--- ),
 calendar (html) as (
     select xmlelement(name div, xmlattributes(
         'day' as class,
@@ -529,7 +382,7 @@ calendar (html) as (
             xmlelement(name section, xmlattributes(
                 format('booking %s',  case when lower(period)::date <> d then 'line' end) as class,
                 
-                format('--color: %s;', color) as style,
+                format('--cue: %s;', cue) as style,
                 booking.booking_id as "data-booking"
             ),
                 xmlelement(name a, xmlattributes(
@@ -672,7 +525,22 @@ with httpg (error) as (
   select
     nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
 ),
-booking_calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec, total, acompte) as (
+line (booking_id, line) as (
+    select booking_id, row(
+        'Ménage', case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price * least(2, days(period)) else 0 end,
+        'Taxe de séjour', nb_adults * taxe_sejour * days(period),
+        'Serviettes', case when with_serviette then (nb_adults + coalesce(nb_children, 0)) * 4 else 0 end,
+        'Draps', case when with_draps then (nb_adults + coalesce(nb_children, 0)) * 8 else 0 end,
+        case when is_pension_complete then 'Pension Complete' else 'Demi pension' end, case when food_price_unit > 0 then (nb_adults + coalesce(nb_children, 0)) * food_price_unit else 0 end,
+        'Chevaux', case when nb_horses > 0 then days(period) * nb_horses * 5 else 0 end,
+        'Chiens', case when nb_dogs > 0 and dog_price_unit is not null then nb_dogs * dog_price_unit else 0 end,
+        'Départ ou arrivée tardive', case when is_early and is_late then 70 when is_early then 50 when is_late then 50 else 0 end,
+        'Electricité', case when electricity_cost_unit is not null then electricity_cost_unit * nb_emplacements * days(period) else 0 end
+    )
+    from booking
+    join place using (place)
+),
+total (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec, total, acompte) as (
     with calc (booking_id, price, total_cleaning, total_taxe_sejour, total_serviette, total_drap, total_food, total_horses, total_dogs, total_early_late, total_elec) as (
         select booking_id, price,
             case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price * least(2, days(period)) else 0 end,
@@ -711,293 +579,7 @@ xmlelement(name html, xmlattributes(
     )), 
     xmlelement(name title, 
       xmltext(format('Contrat de location – %s du Grand Roc', place))), 
-    xmlelement(name style, 
-      xmltext('
-  @page {
-    size: A4;
-    margin: 15mm;
-  }
-
-    pre {
-        margin: 0;
-    }
-
-    pre.cgv {
-      text-wrap: wrap;
-      break-before: page;
-    }
-
-  * {
-    box-sizing: border-box;
-  }
-
-  body {
-    margin: 0;
-    font-family: Arial, Helvetica, sans-serif;
-    color: #30372f;
-    background: #f4f3ee;
-    font-size: 11px;
-    line-height: 1.5;
-  }
-
-  .page {
-    width: 210mm;
-    min-height: 297mm;
-    margin: 0 auto;
-    padding: 0 15mm;
-    background: #ffffff;
-  }
-
-  .header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    border-bottom: 3px solid #89977a;
-  }
-
-  .brand {
-    color: #536447;
-    font-size: 25px;
-    font-weight: bold;
-    letter-spacing: 2px;
-  }
-
-  .brand-subtitle {
-    color: #777b70;
-    font-size: 10px;
-    margin-top: 0;
-  }
-
-  .contract-title {
-    text-align: right;
-  }
-
-  .contract-title h1 {
-    font-size: 18px;
-    margin: 0;
-    color: #30372f;
-  }
-
-  .contract-title p {
-    margin: 0 0 0;
-    color: #777b70;
-  }
-
-  .eyebrow {
-    text-transform: uppercase;
-    letter-spacing: 1.3px;
-    color: #68775b;
-    font-weight: bold;
-    font-size: 10px;
-    margin-bottom: 0;
-  }
-
-  .intro {
-    margin-bottom: 0;
-  }
-
-  .intro p {
-    margin: 0 0;
-  }
-
-  .info-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin-bottom: 0;
-  }
-
-  .panel {
-    background: #f5f5f0;
-    border-left: 4px solid #89977a;
-    padding: 12px 14px;
-    border-radius: 3px;
-  }
-
-  .panel h2 {
-    font-size: 11px;
-    margin: 0;
-    color: #536447;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-  }
-
-  .panel p {
-    margin: 0;
-  }
-
-  .client-name {
-    font-size: 14px;
-    font-weight: bold;
-    margin-bottom: 0;
-  }
-
-  .section-title {
-    font-size: 13px;
-    color: #536447;
-    border-bottom: 1px solid #d9ded3;
-    padding-bottom: 6px;
-    margin: 0;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    margin: 0;
-  }
-
-  thead {
-    background: #536447;
-    color: #ffffff;
-  }
-
-  th {
-    padding: 9px 8px;
-    text-align: left;
-    font-size: 10px;
-    font-weight: bold;
-  }
-
-  td {
-    padding: 8px;
-    border-bottom: 1px solid #e6e8e2;
-    vertical-align: top;
-  }
-
-  tbody tr:nth-child(even) {
-    background: #f8f8f5;
-  }
-
-  .center {
-    text-align: center;
-  }
-
-  .right {
-    text-align: right;
-    white-space: nowrap;
-  }
-
-  .payment {
-    width: 62%;
-    margin-left: auto;
-    background: #f5f5f0;
-    padding: 0 15px;
-    border-radius: 3px;
-  }
-
-  .payment-row {
-    display: flex;
-    justify-content: space-between;
-    gap: 15px;
-    padding: 5px 0;
-    border-bottom: 1px solid #dfe2d9;
-  }
-
-  .payment-row:last-child {
-    border-bottom: none;
-  }
-
-  .payment-total {
-    color: #536447;
-    font-size: 15px;
-    font-weight: bold;
-    border-bottom: 2px solid #89977a;
-  }
-
-  .deposit {
-    margin: 5px 0;
-    padding: 10px 13px;
-    border: 1px solid #d8c9a7;
-    background: #fbf8ef;
-    border-radius: 3px;
-
-    & p {
-        margin: 0;
-    }
-  }
-
-  .deposit strong {
-    color: #66552f;
-  }
-
-  .practical {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 12px;
-    margin: 0;
-  }
-
-  .practical div {
-    padding: 10px 12px;
-    border: 1px solid #e1e4dc;
-    border-radius: 3px;
-  }
-
-  .practical strong {
-    color: #536447;
-    display: block;
-    margin-bottom: 0;
-  }
-
-  .conditions {
-    font-size: 10px;
-    color: #555b52;
-  }
-
-  .conditions p {
-    margin: 0;
-  }
-
-  .signatures {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 20px;
-    margin-top: 0;
-  }
-
-  .signature-box {
-    border: 1px solid #dfe2d9;
-    & p {
-        margin: 0;
-    }
-    min-height: 75px;
-  }
-
-  .signature-box strong {
-    color: #536447;
-  }
-
-  .signature-space {
-    height: 35px;
-  }
-
-  .footer {
-    border-top: 1px solid #d9ded3;
-    margin-top: 20px;
-    padding-top: 8px;
-    text-align: center;
-    font-size: 9px;
-    color: #777b70;
-  }
-
-  @media print {
-    body {
-      background: #ffffff;
-    }
-
-    .page {
-      width: auto;
-      min-height: auto;
-      margin: 0;
-      padding: 0;
-    }
-
-    .panel, .payment, .deposit, .practical div {
-      print-color-adjust: exact;
-      -webkit-print-color-adjust: exact;
-    }
-  }
-'))), 
+    xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/contract.css' as href))),
   xmlelement(name body, 
     xmlelement(name main, xmlattributes(
       'page' as "class"
@@ -1128,7 +710,7 @@ xmlelement(name html, xmlattributes(
             xmlelement(name td, xmlattributes(
               'right' as "class"
             ), 
-              xmltext(booking_calc.price::text))
+              xmltext(total.price::text))
             ), 
           case when total_cleaning > 0 then xmlelement(name tr, 
             xmlelement(name td, 
@@ -1377,7 +959,7 @@ xmlelement(name html, xmlattributes(
     )
 )
 ::text, booking_id
-from booking_calc
+from total
 join booking using (booking_id)
 join occupant using (occupant)
 join place using (place)
@@ -1460,7 +1042,7 @@ top_date (nb, date, max) as (
 )
 select xmlelement(name div, xmlattributes('chart' as class),
     xmlelement(name table,
-        xmlelement(name caption, 'Top places'),
+        xmlelement(name caption, xmlelement(name h3, 'Top places')),
         xmlagg(xmlelement(name tr,
             xmlelement(name th, xmlelement(name a, xmlattributes(
                 url.url('/grandroc/query', jsonb_build_object(
@@ -1475,9 +1057,10 @@ select xmlelement(name div, xmlattributes('chart' as class),
     )
 )
 from top_place
+union all select xmlelement(name hr)
 union all select xmlelement(name div, xmlattributes('chart' as class),
     xmlelement(name table,
-        xmlelement(name caption, 'Top Dates'),
+        xmlelement(name caption, xmlelement(name h3, 'Top Dates')),
         xmlagg(xmlelement(name tr,
             xmlelement(name th, xmlelement(name a, xmlattributes(
                 url.url('/grandroc/query', jsonb_build_object(

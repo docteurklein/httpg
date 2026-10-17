@@ -12,8 +12,12 @@ nav {
   }
 
   & td div {
+    padding-right: 1ch;
     width: calc((var(--size) / var(--max) * 100) * 1%);
-    background-color: oklch( 50.0% 0.2 calc((var(--size) / var(--max) * 360deg)));
+
+    --bg-color: oklch(50.0% 0.2 calc((var(--size) / var(--max)) * 180deg));
+    color: contrast-color(var(--bg-color));
+    background-color: var(--bg-color);
   }
 }
 
@@ -33,13 +37,14 @@ fieldset {
     padding-left: 5px;
   }
 
-  &:has(.booking.active) .booking {
+  &:has(.booking.active, .booking:hover) .booking {
     opacity: .2;
   }
 
   & .booking {
-    background-color: oklch(from var(--color) l c h / 0.2);
-    border-bottom: 5px solid var(--color);
+    --bg-color: oklch(50.0% 0.2 calc(var(--cue) * 1deg) / 0.2);
+    background-color: var(--bg-color);
+    border-bottom: 5px solid var(--bg-color);
     margin-bottom: 5px;
     transition: opacity 0.5s;
 
