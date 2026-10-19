@@ -33,22 +33,21 @@ $$;
 create table if not exists place (
     place text primary key,
     taxe_sejour amount not null,
-    cleaning_price amount not null,
     electricity_cost_unit amount,
     dog_price_unit amount,
     cgv text not null
 );
 
-insert into place (place, taxe_sejour, cleaning_price, dog_price_unit, cgv) values
-('grand gite', 1.25, 20, 0, 'bla bla'),
-('camping', 1.25, 0, 3.50, 'bla bla')
+insert into place (place, taxe_sejour, dog_price_unit, cgv) values
+('grand gite', 1.25, 0, 'bla bla'),
+('camping', 1.25, 3.50, 'bla bla')
 on conflict (place) do nothing;
 
 -- drop table if exists booking cascade;
 create table if not exists booking (
     booking_id uuid primary key default uuidv7(),
-    place text not null references place (place) on delete cascade,
-    occupant text not null references occupant (occupant) on delete cascade,
+    place text not null references place (place) on update cascade on delete cascade,
+    occupant text not null references occupant (occupant) on update cascade on delete cascade,
     period daterange not null,
     status booking_status not null default 'in progress',
     nb_adults int,
@@ -61,6 +60,7 @@ create table if not exists booking (
     with_serviette bool default false,
     with_cleaning bool default false,
     food_price_unit amount,
+    cleaning_price amount,
     is_pension_complete bool default false,
     price amount not null,
     is_early bool not null default false,
@@ -77,7 +77,7 @@ create or replace function days(period daterange) returns int
 language sql
 immutable strict parallel safe -- leakproof
 begin atomic
-    select (date_trunc('day', upper(period))::date - date_trunc('day', lower(period))::date);
+    select (date_trunc('day', upper(period))::date - date_trunc('day', lower(period))::date) - 1;
 end;
 
 -- drop view if exists head;
@@ -91,6 +91,12 @@ with (security_invoker) as
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
+        document.querySelectorAll('.from').forEach(n => {
+            n.addEventListener('change', e => {
+                let to = document.querySelector('.to');
+                to.value = to.value || n.value;
+            });
+        });
         document.querySelectorAll('.booking').forEach(n => {
             n.addEventListener('click', (e) => {
                 document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.toggle('active'));
@@ -172,6 +178,7 @@ create or replace procedure book(
     nb_dogs int,
     nb_emplacements int,
     food_price_unit amount,
+    cleaning_price amount,
     price amount,
     from_ date,
     to_ date,
@@ -188,7 +195,7 @@ begin atomic
         on conflict (occupant) do nothing
         returning occupant
     )
-    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, with_cleaning, food_price_unit, is_pension_complete, price, is_early, is_late, period)
+    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, cleaning_price, food_price_unit, is_pension_complete, price, is_early, is_late, period)
     select
         coalesce(booking_id, uuidv7()),
         place,
@@ -201,7 +208,7 @@ begin atomic
         nb_emplacements,
         body->>'with_draps' = 'on',
         body->>'with_serviette' = 'on',
-        body->>'with_cleaning' = 'on',
+        cleaning_price,
         food_price_unit,
         body->>'pension' = 'complete',
         price,
@@ -220,7 +227,7 @@ begin atomic
         nb_emplacements = excluded.nb_emplacements,
         with_draps = excluded.with_draps,
         with_serviette = excluded.with_serviette,
-        with_cleaning = excluded.with_cleaning,
+        cleaning_price = excluded.cleaning_price,
         food_price_unit = excluded.food_price_unit,
         is_pension_complete = excluded.is_pension_complete,
         price = excluded.price,
@@ -235,8 +242,8 @@ begin atomic
 end;
 
 
--- drop view if exists occupant_html;
-create or replace view occupant_html (body)
+drop view if exists occupant_html;
+create or replace view occupant_html (body, occupant)
 with (security_invoker) as
     with httpg (params) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb->'body'->'params'
@@ -274,7 +281,7 @@ with (security_invoker) as
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'on_error' as name,
-            'select * from grandroc.head union all select body::text from grandroc.occupant_html' as value
+            'select * from grandroc.head union all select body::text from grandroc.occupant_html where case when $1 is not null then occupant = $1 else true end' as value
         )),
         xmlelement(name fieldset, xmlattributes('grid' as class),
             xmlelement(name label, 'Nom', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (occupant).occupant) as value))),
@@ -283,20 +290,20 @@ with (security_invoker) as
             xmlelement(name input, xmlattributes('params[3]' as name, 'hidden' as type, (occupant).occupant as value))
         ),
         xmlelement(name input, xmlattributes('submit' as type, action as value))
-    ))
+    )), (occupant).occupant
     from httpg, (table add union all table edit)
 ;
 
--- drop view if exists place_html;
-create or replace view place_html (body)
+drop view if exists place_html;
+create or replace view place_html (body, place)
 with (security_invoker) as
     with httpg (params) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb->'body'->'params'
     ),
     add (sql, action, place) as (
         select $$
-            insert into grandroc.place (place, taxe_sejour, cleaning_price, electricity_cost_unit, dog_price_unit, cgv)
-            values ($1, nullif($2, '')::amount, nullif($3, '')::amount, nullif($4, '')::amount, nullif($5, '')::amount, $6)
+            insert into grandroc.place (place, taxe_sejour, electricity_cost_unit, dog_price_unit, cgv)
+            values ($1, nullif($2, '')::amount, nullif($3, '')::amount, nullif($4, '')::amount, $5)
             returning 303 status,
             jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
@@ -308,11 +315,10 @@ with (security_invoker) as
             update grandroc.place
                 set place = $1,
                 taxe_sejour = nullif($2, '')::amount,
-                cleaning_price = nullif($3, '')::amount,
-                electricity_cost_unit = nullif($4, '')::amount,
-                dog_price_unit = nullif($5, '')::amount,
-                cgv = $6
-            where place = $7
+                electricity_cost_unit = nullif($3, '')::amount,
+                dog_price_unit = nullif($4, '')::amount,
+                cgv = $5
+            where place = $6
             returning 303 status,
             jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
@@ -333,23 +339,22 @@ with (security_invoker) as
         xmlelement(name input, xmlattributes(
             'hidden' as type,
             'on_error' as name,
-            'select * from grandroc.head union all select body::text from grandroc.place_html' as value
+            'select * from grandroc.head union all select body::text from grandroc.place_html where case when $1 is not null then place = $1 else true end' as value
         )),
         xmlelement(name fieldset, xmlattributes('grid' as class),
             xmlelement(name label, 'Logement', xmlelement(name input, xmlattributes('params[0]' as name, 'text' as type, 'required' as required, coalesce(params->>0, (place).place) as value))),
             xmlelement(name label, 'Taxe de séjour', xmlelement(name input, xmlattributes('params[1]' as name, 'number' as type, 'any' as step, 'required' as required, coalesce((params->>1), (place).taxe_sejour::text) as value))),
-            xmlelement(name label, 'Prix ménage', xmlelement(name input, xmlattributes('params[2]' as name, 'any' as step, 'number' as type, 'required' as required, coalesce(params->>2, (place).cleaning_price::text) as value))),
-            xmlelement(name label, 'Prix électricité', xmlelement(name input, xmlattributes('params[3]' as name, 'number' as type, 'any' as step, coalesce(params->>3, (place).electricity_cost_unit::text) as value))),
-            xmlelement(name label, 'Prix chien', xmlelement(name input, xmlattributes('params[4]' as name, 'number' as type, 'any' as step, coalesce(params->>4, (place).dog_price_unit::text) as value))),
-            xmlelement(name label, 'CGV', xmlelement(name textarea, xmlattributes('params[5]' as name, 5 as rows, 'required' as required), coalesce(params->>5, (place).cgv, ''))),
-            xmlelement(name input, xmlattributes('params[6]' as name, 'hidden' as type, (place).place as value))
+            xmlelement(name label, 'Prix électricité', xmlelement(name input, xmlattributes('params[2]' as name, 'number' as type, 'any' as step, coalesce(params->>3, (place).electricity_cost_unit::text) as value))),
+            xmlelement(name label, 'Prix chien', xmlelement(name input, xmlattributes('params[3]' as name, 'number' as type, 'any' as step, coalesce(params->>4, (place).dog_price_unit::text) as value))),
+            xmlelement(name label, 'CGV', xmlelement(name textarea, xmlattributes('params[4]' as name, 5 as rows, 'required' as required), coalesce(params->>5, (place).cgv, ''))),
+            xmlelement(name input, xmlattributes('params[5]' as name, 'hidden' as type, (place).place as value))
         ),
         xmlelement(name input, xmlattributes('submit' as type, action as value)
-    )))
+    ))), (place).place
     from httpg, (table add union all table edit)
 ;
 
-drop view if exists booking_html;
+-- drop view if exists booking_html;
 create or replace view booking_html (body)
 with (security_invoker) as
 with httpg (when_, booking_id, place) as (
@@ -451,17 +456,23 @@ select xmlelement(name form, xmlattributes(
                 place => $2,
                 occupant => $3,
                 nb_adults => $4::int,
-                nb_children => nullif($5, '')::int,
-                nb_babies => nullif($6, '')::int,
-                nb_horses => nullif($7, '')::int,
-                nb_dogs => nullif($8, '')::int,
-                nb_emplacements => nullif($9, '')::int,
+                nb_children => coalesce(nullif($5, '')::int, 0),
+                nb_babies => coalesce(nullif($6, '')::int, 0),
+                nb_horses => coalesce(nullif($7, '')::int, 0),
+                nb_dogs => coalesce(nullif($8, '')::int, 0),
+                nb_emplacements => coalesce(nullif($9, '')::int, 0),
                 food_price_unit => nullif($10, '')::grandroc.amount,
                 price => nullif($11, '')::grandroc.amount,
-                from_ => $12::date,
-                to_ => $13::date
+                cleaning_price => nullif($12, '')::grandroc.amount,
+                from_ => $13::date,
+                to_ => $14::date
             )
         $$ as value
+    )),
+    xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'on_error' as name,
+        'select * from grandroc.head union all select body::text from grandroc.booking_html' as value
     )),
     xmlelement(name datalist, xmlattributes('occupants' as id),
         coalesce((select xmlagg(xmlelement(name option, xmlattributes(occupant as value)) order by occupant) from occupant), '')
@@ -476,14 +487,15 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name label, 'Occupant', xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, (b).occupant as value))),
     xmlelement(name label, 'Nb adultes', xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, (b).nb_adults as value))),
     xmlelement(name label, 'Prix forfait', xmlelement(name input, xmlattributes('number' as type, 'params[10]' as name, 'required' as required, 'any' as step, (b).price as value))),
-    xmlelement(name label, 'De', xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[11]' as name, lower((b).period) as value))),
-    xmlelement(name label, 'à', xmlelement(name input, xmlattributes('required' as required, 'date' as type, 'params[12]' as name, (upper((b).period) - interval '1 day')::date as value))),
+    xmlelement(name label, 'De', xmlelement(name input, xmlattributes('required' as required, 'from' as class, 'date' as type, 'params[12]' as name, lower((b).period) as value))),
+    xmlelement(name label, 'à', xmlelement(name input, xmlattributes('required' as required, 'to' as class, 'date' as type, 'params[13]' as name, (upper((b).period) - interval '1 day')::date as value))),
     xmlelement(name label, 'Nb enfants', xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, (b).nb_children as value))),
     xmlelement(name label, 'nb bébés', xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, (b).nb_babies as value))),
     xmlelement(name label, 'Nb chevaux', xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, (b).nb_horses as value))),
     xmlelement(name label, 'Nb chiens', xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, (b).nb_dogs as value))),
     xmlelement(name label, 'Nb emplacements', xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, (b).nb_emplacements as value))),
     xmlelement(name label, 'Prix repas', xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'any' as step, (b).food_price_unit as value))),
+    xmlelement(name label, 'Prix Ménage', xmlelement(name input, xmlattributes('number' as type, 'params[11]' as name, 'any' as step, (b).cleaning_price as value))),
     xmlelement(name label, 'Draps?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_draps' as name, case when (b).with_draps then 'checked' end as checked))),
     xmlelement(name label, 'Serviettes?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_serviette' as name, case when (b).with_serviette then 'checked' end as checked))),
     xmlelement(name label, 'Ménage?', xmlelement(name input, xmlattributes('checkbox' as type, 'with_cleaning' as name, case when (b).with_cleaning then 'checked' end as checked))),
@@ -519,96 +531,74 @@ union all select xmlelement(name div, xmlattributes('calendar' as class), xmlagg
 from calendar
 ;
 
-do $$
-begin
-if not exists (select from pg_type where typname = 'line' and typnamespace = to_regnamespace('grandroc')) then
-    create type line as (
-        label text,
-        qty int,
-        pu amount,
-        total amount
-    );
-end if;
-end;
-$$;
-
-
 create or replace view contract_html (body, booking_id)
 with (security_invoker) as
 with httpg (error) as (
   select
     nullif(current_setting('httpg.errors', true), '')::jsonb->>'error'
 ),
-line (booking_id, line) as (
-    select booking_id, unnest(array[
+line (booking_id, label, qty, pu, total) as (
+    select booking_id, line.*, qty * pu
+    from booking
+    join place using (place),
+    unnest(array[
         row(
             place,
             1,
-            null,
             price
         ),
         row(
-            'Ménage',
+            'Ménage'::text,
             1,
-            cleaning_price,
-            case when with_cleaning or (dog_price_unit is null and nb_dogs > 0) then cleaning_price * least(2, days(period)) end
+            cleaning_price
         ),
         row(
-            'Taxe de séjour',
+            'Taxe de séjour'::text,
             nb_adults * days(period),
-            taxe_sejour,
-            nb_adults * taxe_sejour * days(period)
+            taxe_sejour
         ),
         row(
-            'Serviettes',
+            'Serviettes'::text,
+            case when with_serviette then nb_adults + nb_children end,
+            4::amount
+        ),
+        row(
+            'Draps'::text,
             nb_adults + nb_children,
-            4,
-            case when with_serviette then (nb_adults + nb_children) * 4 end
-        ),
-        row(
-            'Draps',nb_adults + nb_children,
-            8,
-            case when with_draps then (nb_adults + nb_children) * 8 end
+            8::amount
         ),
         row(
             case when is_pension_complete then 'Pension Complete' else 'Demi pension' end,
-            nb_adults + nb_children,
-            food_price_unit,
-            (nb_adults + nb_children) * food_price_unit
+            nb_adults + nb_children * days(period),
+            food_price_unit
         ),
         row(
-            'Chevaux',
-            nb_horses,
-            5,
-            days(period) * nb_horses * 5
+            'Chevaux'::text,
+            nb_horses * days(period),
+            5::amount
         ),
         row(
-            'Chiens',
+            'Chiens'::text,
             nb_dogs,
-            dog_price_unit,
-            nb_dogs * dog_price_unit
+            dog_price_unit
         ),
         row(
-            'Départ ou arrivée tardive',
-            null,
-            null,
+            'Départ ou arrivée tardive'::text,
+            1,
             case when is_early and is_late then 70
                 when is_early then 50
                 when is_late then 50
-            end
+            end::amount
         ),
         row(
-            'Electricité',
+            'Electricité'::text,
             nb_emplacements * days(period),
-            electricity_cost_unit,
-            electricity_cost_unit * nb_emplacements * days(period)
+            electricity_cost_unit
         )
-    ]::line[])
-    from booking
-    join place using (place)
+    ]) line (label text, qty int, pu amount)
 ),
-total (booking_id, total, acompte) as (
-    select booking_id, sum((line).total), round(round(0.3 * sum((line).total), 0), 2) acompte
+grand_total (booking_id, grand_total, acompte) as (
+    select booking_id, sum(total), round(0.3 * sum(total), 0)
     from line
     group by booking_id
 )
@@ -628,7 +618,7 @@ xmlelement(name html, xmlattributes(
     xmlelement(name title, 
       xmltext(format('Contrat de location – %s du Grand Roc', place))), 
     xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/contract.css' as href))),
-  xmlelement(name body, 
+  xmlelement(name body, xmlattributes(true as contenteditable),
     xmlelement(name main, xmlattributes(
       'page' as "class"
     ), 
@@ -707,7 +697,7 @@ xmlelement(name html, xmlattributes(
           case when nb_children > 0 then xmlelement(name p, 
             xmlelement(name strong, 
               xmltext('Enfants: ')), 
-            xmltext((coalesce(nb_children, 0) + coalesce(nb_babies, 0))::text)) end, 
+            xmltext((nb_children + nb_babies)::text)) end, 
           xmlelement(name p, 
             xmlelement(name strong, 
               xmltext('Date du contrat: ')), 
@@ -745,20 +735,20 @@ xmlelement(name html, xmlattributes(
         )), 
         xmlelement(name tbody, 
           (select xmlagg(xmlelement(name tr, 
-            xmlelement(name td, (line).label), 
+            xmlelement(name td, label), 
             xmlelement(name td, xmlattributes(
               'center' as "class"
-            ), coalesce((line).qty::text, '-')), 
+            ), qty::text), 
             xmlelement(name td, xmlattributes(
               'right' as "class"
-            ), coalesce((line).pu::text, '-')),
+            ), pu::text),
             xmlelement(name td, xmlattributes(
               'right' as "class"
-            ), (line).total)
+            ), total)
           ))
           from line
           where booking_id = booking.booking_id
-          and (line).total > 0
+          and total > 0
         )
       )),
       xmlelement(name section, xmlattributes(
@@ -770,21 +760,21 @@ xmlelement(name html, xmlattributes(
           xmlelement(name span, 
             xmltext('Total du séjour')), 
           xmlelement(name span, 
-            xmltext(total::text))),
+            xmltext(grand_total::text))),
         xmlelement(name div, xmlattributes(
           'payment-row' as "class"
         ), 
           xmlelement(name span, 
             xmltext('Acompte de 30 %')), 
           xmlelement(name strong, 
-            xmltext(acompte::text))), 
+            xmltext(round(acompte, 2)::text))), 
         xmlelement(name div, xmlattributes(
           'payment-row' as "class"
         ), 
           xmlelement(name span, 
             xmltext('Solde restant à régler')), 
           xmlelement(name strong, 
-            xmltext((total - acompte)::text))), 
+            xmltext((grand_total - acompte)::text))), 
         xmlelement(name div, xmlattributes(
           'payment-row' as "class"
         ), 
@@ -841,14 +831,8 @@ xmlelement(name html, xmlattributes(
             xmltext('Le locataire')), 
           xmlelement(name p, 
             xmltext('Signature suivie de la mention "Lu et approuvé" :'))
-          ), 
-        xmlelement(name div, xmlattributes(
-          'signature-box' as "class"
+          ) 
         ), 
-          xmlelement(name strong, 
-            xmltext('Le Grand Roc')), 
-          xmlelement(name p, 
-            xmltext('Signature: ')))), 
       xmlelement(name footer, xmlattributes(
         'footer' as "class"
       ), 
@@ -862,40 +846,40 @@ xmlelement(name html, xmlattributes(
     )
 )
 ::text, booking_id
-from total
+from grand_total
 join booking using (booking_id)
 join occupant using (occupant)
 join place using (place)
 ;
 
 -- truncate table occupant cascade;
-insert into occupant (occupant) values ('georges')
-on conflict (occupant) do nothing;
+-- insert into occupant (occupant) values ('georges')
+-- on conflict (occupant) do nothing;
 
 -- truncate table booking;
-insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_babies, nb_horses, food_price_unit, with_draps, with_serviette, is_early)
-select
-    (select place from place order by random() limit 1),
-    (select occupant from occupant order by random() limit 1),
-    900,
-    daterange(i::date, (i + format('%s days', random(2, 8))::interval)::date, '[)'),
-    true,
-    4,
-    2,
-    1,
-    2,
-    20,
-    true,
-    true,
-    true
-from (
-    select generate_series(now() - interval '3 weeks', now() + interval '1 week', '3 days')
-    union all 
-    select generate_series(now() + interval '3 weeks', now() + interval '6 weeks', '5 days')
-    union all 
-    select generate_series(now() + interval '8 weeks', now() + interval '5 months', '8 days')
-) i (i);
-
+-- insert into booking (place, occupant, price, period, with_cleaning, nb_adults, nb_children, nb_babies, nb_horses, food_price_unit, with_draps, with_serviette, is_early, is_late)
+-- select
+--     (select place from place order by random() limit 1),
+--     (select occupant from occupant order by random() limit 1),
+--     900,
+--     daterange(i::date, (i + format('%s days', random(2, 8))::interval)::date, '[)'),
+--     true,
+--     4,
+--     2,
+--     1,
+--     2,
+--     20,
+--     true,
+--     true,
+--     true,
+--     false
+-- from (
+--     select generate_series(now() - interval '3 weeks', now() + interval '1 week', '3 days')
+--     union all 
+--     select generate_series(now() + interval '3 weeks', now() + interval '6 weeks', '5 days')
+--     union all 
+--     select generate_series(now() + interval '8 weeks', now() + interval '5 months', '8 days')
+-- ) i (i);
 
 create table if not exists admin (
   name text primary key,
@@ -981,17 +965,6 @@ union all select xmlelement(name div, xmlattributes('chart' as class),
 from top_date
 ;
 
-create or replace procedure test(inout status int default null)
-language plpgsql
-as $$
-begin
-    perform 1;
-    commit;
-    select 300 into status;
-end;
-$$;
-
-grant execute on procedure test(int) to anon;
 grant execute on function login() to anon;
 grant grandroc to anon;
 grant usage on schema grandroc, url to anon, grandroc;
