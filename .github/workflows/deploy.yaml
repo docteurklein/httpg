@@ -65,7 +65,7 @@ jobs:
 
       - id: image_name
         run: |
-          echo "image_name=docker.io/$(nix --accept-flake-config eval .#oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
+          echo "image_name=docker.io/$(nix --accept-flake-config eval .#httpg-oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
 
       - run: |
           sudo rm /etc/containers/registries.conf
@@ -74,7 +74,7 @@ jobs:
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      - run: nix --accept-flake-config run .#oci.copyToRegistry
+      - run: nix --accept-flake-config run .#httpg-oci.copyToRegistry
           
       - id: 'deploy'
         uses: 'google-github-actions/deploy-cloudrun@v3'

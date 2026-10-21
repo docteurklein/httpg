@@ -181,7 +181,7 @@
 
         packages.default = self'.packages.httpg-release;
 
-        packages.oci = n2c.nix2container.buildImage {
+        packages.httpg-oci = n2c.nix2container.buildImage {
           name = "docteurklein/httpg";
           config = {
             entrypoint = ["${self'.packages.httpg-release}/bin/httpg"];
@@ -196,7 +196,47 @@
             pathsToLink = ["/public" "/" "/etc"];
           };
         };
-        
+
+        packages.httpg-nginx-oci = n2c.nix2container.buildImage {
+          name = "docteurklein/httpg-nginx";
+          fromImage = n2c.nix2container.pullImage {
+            imageName = "nginx";
+            imageDigest = "sha256:0e99fef52612699fd524e2a5111e8c6397cf29f24ae1b48d3902b8d65b14bbbf";
+            sha256 = "sha256-jT0E1vI2U/6NJE29P5JuUQX4xH9vtvQlX3IQXx+hPJg=";
+          };
+          config = {
+            entrypoint = ["/docker-entrypoint.sh"];
+            Cmd = [
+                "nginx"
+                "-g"
+                "daemon off;"
+            ];
+          };
+          copyToRoot = [
+            (pkgs.writeTextDir "etc/nginx/conf.d/default.conf" ''  
+              proxy_cache_path /nginx-cache keys_zone=web:10m max_size=10g inactive=60m;
+              server {
+                  listen 8080;
+                  server_name _;
+                  gzip on;
+
+                  proxy_cache web;
+                  proxy_cache_use_stale error timeout updating http_500 http_502 http_503;
+                  proxy_cache_lock on;
+                  proxy_cache_revalidate on;
+
+                  add_header X-Cache-Status $upstream_cache_status always;
+
+                  location / {
+                      proxy_pass http://127.0.0.1:3000;
+                      proxy_cache_bypass $cookie_session $http_authorization;
+                      proxy_no_cache $cookie_session $http_authorization;
+                  }
+              }
+            '')
+          ];
+        };
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             comrak
@@ -231,7 +271,7 @@
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
           HTTPG_PG_USER = "httpg";
-          HTTPG_PG_PASSWORD = "pg-password";
+          HTTPG_PG_PASSWORD_FILE = "pg-password";
           HTTPG_PG_DBNAME = "httpg";
           HTTPG_PG_READ_HOST = "10.250.2.2";
           HTTPG_PG_READ_PORT = "6432";
@@ -253,6 +293,50 @@
           nixpkgs = inputs.nixpkgs;
 
           config = {
+
+            containers.nginx = {
+              ephemeral = true;
+              autoStart = true;
+
+              privateNetwork = true;
+              hostBridge = "br0";
+              localAddress = "10.250.3.2/16";
+              
+              config = ({ pkgs, ... }: {
+                boot.isNspawnContainer = true;
+        
+                system.stateVersion = "25.11";
+
+                networking.firewall.allowedTCPPorts = [ 8080 ];
+                networking.useDHCP = false;
+
+                services.nginx = {
+                  enable = true;
+                  httpConfig = ''
+                    proxy_cache_path /tmp keys_zone=web:10m max_size=10g inactive=60m;
+                    server {
+                        listen 8080;
+                        server_name _;
+                        gzip on;
+
+                        proxy_cache web;
+                        proxy_cache_use_stale error timeout updating http_500 http_502 http_503;
+                        proxy_cache_lock on;
+                        proxy_cache_revalidate on;
+
+                        add_header X-Cache-Status $upstream_cache_status always;
+
+                        location / {
+                            proxy_pass http://10.250.0.2:3000;
+                            proxy_cache_bypass $cookie_session $http_authorization;
+                            proxy_no_cache $cookie_session $http_authorization;
+                        }
+                    }
+                  '';
+                };
+              });
+            };
+
             containers.httpg = {
               ephemeral = true;
               autoStart = true;
@@ -298,7 +382,7 @@
                 };
 
                 systemd.services.httpg = {
-                  enable = false;
+                  enable = true;
                   wantedBy = [ "default.target" ];
                   serviceConfig = {
                     Type = "simple";
@@ -314,12 +398,12 @@
                       "HTTPG_SMTP_USER=florian.klein@free.fr"
                       "HTTPG_SMTP_RELAY=smtp://127.0.0.1:1025?tls=opportunistic"
                       "HTTPG_PUBLIC_DIR=${builtins.getEnv "PWD"}/public"
-                      "PG_USER=httpg"
-                      "PG_PASSWORD=${builtins.getEnv "PWD"}/pg-password"
-                      "PG_DBNAME=httpg"
-                      "PG_READ_HOST=10.250.2.2"
-                      "PG_READ_PORT=6432"
-                      "PG_WRITE_HOST=10.250.1.2"
+                      "HTTPG_PG_USER=httpg"
+                      "HTTPG_PG_PASSWORD_FILE=${builtins.getEnv "PWD"}/pg-password"
+                      "HTTPG_PG_DBNAME=httpg"
+                      "HTTPG_PG_READ_HOST=10.250.2.2"
+                      "HTTPG_PG_READ_PORT=6432"
+                      "HTTPG_PG_WRITE_HOST=10.250.1.2"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
                       "RUST_BACKTRACE=1"
