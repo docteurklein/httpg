@@ -102,6 +102,7 @@ begin
         when 'cpres' then return query select * from login_cpres();
         when 'gieze' then return query select * from gieze.login();
         when 'grandroc' then return query select * from grandroc.login();
+        when 'jmeu' then return query select * from jmeu.login();
     end case;
 end;
 $$;

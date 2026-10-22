@@ -1,0 +1,15 @@
+nav {
+  display: flex;
+  justify-content: center;
+  gap: 1em;
+  margin-bottom: 1rem;
+}
+
+.animals {
+  max-height: 70vh;
+  overflow-y: auto;
+
+  & label {
+    display: block;
+  }
+}

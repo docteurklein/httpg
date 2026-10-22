@@ -1,5 +1,10 @@
 \set ON_ERROR_STOP on
 
+do $$ begin
+    create role jmeu noinherit;
+    exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
+end $$;
+
 -- drop schema if exists grandroc cascade;
 create schema if not exists grandroc;
 
@@ -943,7 +948,7 @@ create table if not exists admin (
   salt text not null
 );
 
-create extension if not exists pgcrypto;
+create extension if not exists pgcrypto schema public;
 
 with salt (salt) as (
     select gen_salt('sha512crypt')
