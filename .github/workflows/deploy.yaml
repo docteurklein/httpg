@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@main
         with:
           use-flakehub: false
@@ -41,7 +41,6 @@ jobs:
       #     nix --accept-flake-config build .#httpg-test
 
   deploy:
-    # needs: [test]
     environment: production
     runs-on: ubuntu-latest
     permissions:
@@ -58,34 +57,33 @@ jobs:
       - uses: 'google-github-actions/setup-gcloud@v3'
         with:
           project_id: 'gieze-421708'
-      - uses: DeterminateSystems/nix-installer-action@main
+      - uses: cachix/install-nix-action@v31
       - uses: DeterminateSystems/magic-nix-cache-action@main
         with:
           use-flakehub: false
 
-      - id: image_name
-        run: |
-          echo "image_name=docker.io/$(nix --accept-flake-config eval .#httpg-oci.imageRefUnsafe --raw)" | tee -a "$GITHUB_OUTPUT"
-
       - run: |
           sudo rm /etc/containers/registries.conf
       - run: |
-          nix --accept-flake-config run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
+          nix run nixpkgs#skopeo -- login docker.io -u docteurklein -p "$DOCKER_PASSWORD"
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      - run: nix --accept-flake-config run .#httpg-oci.copyToRegistry
+      - run: nix run .#httpg-oci.copyToRegistry
+      - run: nix run .#httpg-nginx-oci.copyToRegistry
           
-      - id: 'deploy'
-        uses: 'google-github-actions/deploy-cloudrun@v3'
-        with:
-          project_id: 'gieze-421708'
-          region: europe-west1
-          service: 'httpg'
-          image: ${{ steps.image_name.outputs.image_name }}
+      # - id: 'deploy'
+      #   run: |
+      #     gcloud run --project gieze-421708 services --region europe-west1 \
+      #     update httpg \
+      #       --container httpg --image "docker.io/$(nix eval .#httpg-oci.imageRefUnsafe --raw)" \
+      #       --container httpg-nginx --image "docker.io/$(nix eval .#httpg-nginx-oci.imageRefUnsafe --raw)"
 
-      - name: 'deploy url'
-        run: 'echo "${{ steps.deploy.outputs.url }}"'
+      - id: 'deploy'
+        run 'nix run .#deploy'
+        # run: |
+        #   gcloud run --project gieze-421708 services --region europe-west1 \
+        #   replace "$(nix build --no-link --print-out-paths .#gcloud.run.service.httpg)"
   
   migrate:
     needs: [test]
