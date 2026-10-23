@@ -260,6 +260,8 @@
           ];
           PSQLRC = "./.psqlrc";
           PGHOST = "10.250.1.2";
+          PGUSER = "postgres";
+          PGDATABASE = "httpg";
           HTTPG_PRIVATE_KEY_FILE = "private-key-file";
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
@@ -310,15 +312,19 @@
               template = {
                 metadata = {
                   annotations = {
-                    "run.googleapis.com/container-dependencies" = "{nginx = [httpg]}";
+                    # "run.googleapis.com/container-dependencies" = "{nginx = [httpg]}";
                   };
                 };
                 spec = {
                   containers = [
                     {
-                      # image = "docker.io/docteurklein/httpg:1wrimxmflhqwlhk7hyz891nvm463g327";
+                      # image = "mirror.gcr.io/docteurklein/httpg@sha256:59b0702b0401c2954055617888278dfe56b9318dcd9379d007c86c12d098c203";
+                      # image = "docker.io/docteurklein/httpg@sha256:882003131b68841f673efff31a1cdc16a1f9cf122721554500709392ee463b64";
                       image = "docker.io/${self'.packages.httpg-oci.imageRefUnsafe}";
                       name = "httpg";
+                      ports = [
+                        {name = "h2c"; containerPort = "3000";}
+                      ];
                       env = [
                         {name = "HTTPG_ANON_ROLE"; value = "anon";}
                         {name = "HTTPG_INDEX_SQL"; value = "table cpres.head union all table cpres.\"findings\"";}
@@ -372,31 +378,31 @@
                         }
                       ];
                     }
-                    {
-                      # image = "docker.io/docteurklein/httpg-nginx@sha256:b506eeaa431d78305f8f755bec9aac313439b67fdef4770c5bd3e8e234b2146b";
-                      image = "docker.io/${self'.packages.httpg-nginx-oci.imageRefUnsafe}";
-                      name = "nginx";
-                      ports = [
-                        {name = "http1"; containerPort = "8080";}
-                      ];
-                      resources = {
-                        limits = {
-                          cpu = "500m";
-                          memory = "256Mi";
-                        };
-                      };
-                      startupProbe = {
-                        timeoutSeconds = "240";
-                        periodSeconds = "240";
-                        failureThreshold = "1";
-                        tcpSocket = {
-                          port = "8080";
-                        };
-                      };
-                      volumeMounts = [
-                        {mountPath = "/nginx-cache"; name = "gcs";}
-                      ];
-                    }
+                    # {
+                    #   # image = "docker.io/docteurklein/httpg-nginx@sha256:b506eeaa431d78305f8f755bec9aac313439b67fdef4770c5bd3e8e234b2146b";
+                    #   image = "docker.io/${self'.packages.httpg-nginx-oci.imageRefUnsafe}";
+                    #   name = "nginx";
+                    #   ports = [
+                    #     {name = "http1"; containerPort = "8080";}
+                    #   ];
+                    #   resources = {
+                    #     limits = {
+                    #       cpu = "500m";
+                    #       memory = "256Mi";
+                    #     };
+                    #   };
+                    #   startupProbe = {
+                    #     timeoutSeconds = "240";
+                    #     periodSeconds = "240";
+                    #     failureThreshold = "1";
+                    #     tcpSocket = {
+                    #       port = "8080";
+                    #     };
+                    #   };
+                    #   volumeMounts = [
+                    #     {mountPath = "/nginx-cache"; name = "gcs";}
+                    #   ];
+                    # }
                   ];
                   volumes = [
                     {
@@ -466,6 +472,8 @@
         in {
           type = "app";
           program = pkgs.lib.getExe (pkgs.writeShellScriptBin "httpg" ''
+            # nix run .#httpg-oci.copyToRegistry
+            # nix run .#httpg-nginx-oci.copyToRegistry
             ${gcloud} run --project gieze-421708 services --region europe-west1 \
               replace "${yaml}"
           '');

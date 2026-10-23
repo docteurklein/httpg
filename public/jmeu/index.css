@@ -13,3 +13,20 @@ nav {
     display: block;
   }
 }
+
+.treatment.grid, .animal.grid {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+fieldset {
+    & input:not([type=checkbox], [type=radio]), textarea, select {
+        width: 100%;
+    }
+}
+
+.animal {
+    & time {
+        display: block;
+    }
+}

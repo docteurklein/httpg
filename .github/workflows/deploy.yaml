@@ -80,7 +80,7 @@ jobs:
       #       --container httpg-nginx --image "docker.io/$(nix eval .#httpg-nginx-oci.imageRefUnsafe --raw)"
 
       - id: 'deploy'
-        run 'nix run .#deploy'
+        run: 'nix run .#deploy'
         # run: |
         #   gcloud run --project gieze-421708 services --region europe-west1 \
         #   replace "$(nix build --no-link --print-out-paths .#gcloud.run.service.httpg)"
