@@ -24,7 +24,7 @@ use lettre::{
 };
 use serde_json::json;
 use tokio::sync::{broadcast::Sender};
-use tower::builder::ServiceBuilder;
+use tower::{builder::ServiceBuilder, util::option_layer};
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer, compression::CompressionLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
 use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
@@ -69,6 +69,8 @@ struct HttpgConfig {
     listen: bool,
     #[conf(long, env, default_value="3000")]
     port: u16,
+    #[conf(long, env)]
+    cache_dir: Option<String>,
     #[conf(flatten)]
     tls: Option<TlsConfig>,
     #[conf(long, env, default_value="public")]
@@ -171,16 +173,18 @@ async fn main() -> Result<(), HttpgError> {
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
-            .layer(HandleErrorLayer::new(handle_error))
-            .layer(ServerCacheLayer::new(CACacheManager::new("/httpg-cache".into(), true)))
-            .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
-            .layer(CompressionLayer::new().zstd(false).br(true))
-            .layer(TraceLayer::new_for_http())
-            .layer(CorsLayer::new()
-                .allow_origin(Any)
-                .expose_headers(Any)
-            )
+        .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
+        .layer(CompressionLayer::new().zstd(false).br(true))
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::new()
+            .allow_origin(Any)
+            .expose_headers(Any)
         )
+        .option_layer(httpg_config.cache_dir.map(|cache_dir| {
+            ServiceBuilder::new()
+                .layer(HandleErrorLayer::new(handle_error))
+                .layer(ServerCacheLayer::new(CACacheManager::new(cache_dir.into(), true)))
+        })))
     ;
 
     let addr = SocketAddr::from((
