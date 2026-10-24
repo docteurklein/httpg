@@ -32,7 +32,7 @@
             mold clang pkg-config openssl.dev
           ];
           buildInputs = with pkgs; [
-            pkg-config openssl.dev
+            openssl
           ];
           env = {
             RUSTFLAGS = "-C link-arg=-fuse-ld=mold";
@@ -185,15 +185,20 @@
           name = "docteurklein/httpg";
           config = {
             entrypoint = ["${self'.packages.httpg-release}/bin/httpg"];
+            user = "1000";
           };
           copyToRoot = pkgs.buildEnv {
             name = "assets";
             paths = with pkgs.dockerTools; [
-              ./.
+              (pkgs.lib.fileset.toSource {
+                root = ./.;
+                fileset = ./public;
+              })
               binSh
+              pkgs.coreutils
               caCertificates
             ];
-            pathsToLink = ["/public" "/" "/etc"];
+            pathsToLink = ["/public" "/" "/" "/etc"];
           };
         };
 
@@ -349,7 +354,7 @@
                         readOnly = false;
                         volumeAttributes = {
                           bucketName = "httpg-nginx";
-                          # mountOptions = "uid=101,gid=101";
+                          mountOptions = "uid=1000,gid=1000";
                         };
                       };
                     }
