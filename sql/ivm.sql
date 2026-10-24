@@ -1,5 +1,3 @@
-create extension if not exists hstore schema public;
-
 set "ivm.slot_name" to :'slot_name';
 
 select * from pg_create_logical_replication_slot(:'slot_name', 'wal2json')

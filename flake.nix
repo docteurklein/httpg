@@ -141,42 +141,56 @@
           '';
         };
 
-        packages.pg_wait_tracer = pkgs.stdenv.mkDerivation {
-          pname = "pg_wait_tracer";
-          version = "master";
+        # packages.pg_wait_tracer = pkgs.stdenv.mkDerivation {
+        #   pname = "pg_wait_tracer";
+        #   version = "master";
+
+        #   src = pkgs.fetchFromGitHub {
+        #     owner = "DmitryNFomin";
+        #     repo = "pg_wait_tracer";
+        #     rev = "master";
+        #     sha256 = "sha256-ysVWeevQQJHPkPKzGTejkx+MSC/Z5F8d4y5cn/q3f5Y=";
+        #     name = "pg_wait_tracer";
+        #   };
+
+        #   buildInputs = with pkgs; [
+        #     gcc clang llvm cmake
+        #     postgresql_19.pg_config
+        #     libbpf bpftools libelf libcap zlib lz4
+        #     llvmPackages.clang-unwrapped
+        #     llvmPackages.bintools-unwrapped
+        #     git
+        #     cacert
+        #     pkg-config
+        #   ];
+
+        #   hardeningDisable = [ "zerocallusedregs" "stackprotector" ];
+
+
+        #   preBuild = ''
+        #     echo 'echo yes' > scripts/detect_libbpf_usdt.sh
+        #   '';
+
+        #   dontConfigure = true;
+
+        #   installPhase = ''
+        #     mkdir -p $out/bin
+        #     cp -rv {pg_wait_tracer,pgwt-server} $out/bin
+        #   '';
+        # };
+
+        packages.pgmt = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "pgmt";
+          version = "v0.6.5-dev2";
 
           src = pkgs.fetchFromGitHub {
-            owner = "DmitryNFomin";
-            repo = "pg_wait_tracer";
-            rev = "master";
-            sha256 = "sha256-ysVWeevQQJHPkPKzGTejkx+MSC/Z5F8d4y5cn/q3f5Y=";
-            name = "pg_wait_tracer";
+            owner = "gdpotter";
+            repo = "pgmt";
+            tag = "a800bd3fb5e4a2f7b50a333b38116eff692adb65";
+            hash = "sha256-UQQ8gwsUYp2NofKIbpINCuoRXznakYIrClAe5oAx4Y6=";
           };
-
-          buildInputs = with pkgs; [
-            gcc clang llvm cmake
-            postgresql_19.pg_config
-            libbpf bpftools libelf libcap zlib lz4
-            llvmPackages.clang-unwrapped
-            llvmPackages.bintools-unwrapped
-            git
-            cacert
-            pkg-config
-          ];
-
-          hardeningDisable = [ "zerocallusedregs" "stackprotector" ];
-
-
-          preBuild = ''
-            echo 'echo yes' > scripts/detect_libbpf_usdt.sh
-          '';
-
-          dontConfigure = true;
-
-          installPhase = ''
-            mkdir -p $out/bin
-            cp -rv {pg_wait_tracer,pgwt-server} $out/bin
-          '';
+          cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
+          doCheck = false;
         };
 
         packages.default = self'.packages.httpg-release;
@@ -289,24 +303,25 @@
                         {name = "h2c"; containerPort = "3000";}
                       ];
                       env = [
+                        {name = "HTTPG_CACHE_DIR"; value = "/httpg-cache";}
                         {name = "HTTPG_ANON_ROLE"; value = "anon";}
                         {name = "HTTPG_INDEX_SQL"; value = "table cpres.head union all table cpres.\"findings\"";}
                         {name = "HTTPG_LOGIN_QUERY"; value = "select public.login($1)";}
                         {name = "HTTPG_SMTP_USER"; value = "sideral.underground@gmail.com";}
-                        {name = "PG_CHANNELBINDING"; value = "require";}
                         {name = "HTTPG_PG_DBNAME"; value = "neondb";}
                         {name = "HTTPG_PG_PASSWORD_FILE"; value = "/secrets/pg_password/pg_password";}
                         {name = "HTTPG_PG_READ_HOST"; value = "ep-divine-unit-as9eonvl-pooler.c-4.eu-central-1.aws.neon.tech";}
                         {name = "HTTPG_PG_SSLMODE"; value = "require";}
                         {name = "HTTPG_PG_USER"; value = "httpg";}
                         {name = "HTTPG_PG_WRITE_HOST"; value = "ep-withered-thunder-as96ubou-pooler.c-4.eu-central-1.aws.neon.tech";}
-                        {name = "RUST_LOG"; value = "tokio_postgres=debug,httpg=debug";}
                         {name = "HTTPG_PRIVATE_KEY_FILE"; value = "/secrets/private-key-file";}
                         {name = "HTTPG_SMTP_PASSWORD_FILE"; value = "/secrets/smtp_password/smtp_password";}
                         {name = "HTTPG_SMTP_RELAY"; value = "smtp://smtp.gmail.com?tls=required";}
                         {name = "HTTPG_SMTP_SENDER"; value = "sideral.underground@gmail.com";}
                         {name = "HTTPG_WEBPUSH_PRIVATE_KEY_FILE"; value = "/secrets/webpush.pem/webpush-pem";}
                         {name = "PG_HOST"; value = "ep-divine-unit-as9eonvl.c-4.eu-central-1.aws.neon.tech";}
+                        {name = "PG_CHANNELBINDING"; value = "require";}
+                        {name = "RUST_LOG"; value = "tokio_postgres=debug,httpg=debug";}
                       ];
                       resources = {
                          limits = {

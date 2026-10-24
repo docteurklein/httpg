@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 set local search_path to gieze, public;
 
 truncate client cascade;

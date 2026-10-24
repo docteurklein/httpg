@@ -1,11 +1,9 @@
-\set ON_ERROR_STOP on
+-- require: url/url.sql
 
 do $$ begin
     create role jmeu noinherit;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
-
-create extension if not exists pgcrypto schema public;
 
 drop schema if exists jmeu cascade;
 create schema if not exists jmeu;
@@ -17,22 +15,6 @@ create table tenant (
     password text not null,
     salt text not null
 );
-
-with salt (salt) as (
-    select gen_salt('sha512crypt')
-)
-insert into tenant (tenant_id, name, password, salt)
-select '01a163a9-dc7b-7d9c-9ef6-febdafae6ccb', 'jmeu', crypt(:'password', salt), salt
-from salt
-on conflict (name) do nothing;
-
-with salt (salt) as (
-    select gen_salt('sha512crypt')
-)
-insert into tenant (name, password, salt)
-select 'other', crypt(:'password', salt), salt
-from salt
-on conflict (name) do nothing;
 
 create table animal (
     tenant_id uuid not null references tenant (tenant_id) default nullif(current_setting('jmeu.tenant_id', true), '')::uuid,

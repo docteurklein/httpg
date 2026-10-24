@@ -1,6 +1,33 @@
-\set ON_ERROR_STOP on
+-- require: cpres/ddl.sql
+-- require: url/url.sql
 
 set local search_path to cpres, url, pg_catalog, public;
+
+create or replace function _(id_ text, lang_ text = null)
+returns text
+immutable parallel safe -- leakproof
+security definer
+set search_path to cpres, pg_catalog
+language sql
+begin atomic
+    with t (text) as (
+        select text
+        from translation
+        where (id, lang) = (id_, coalesce(
+            lang_,
+            current_setting('httpg.query', true)::jsonb->'qs'->>'lang',
+            substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-?\w*,?.*')
+        ))
+        limit 1
+    )
+    select coalesce(
+        (select text from t),
+        id_
+    );
+end;
+
+grant execute on function _ to anon, person, httpg;
+
 
 create or replace function compare_search() returns trigger
 volatile strict parallel safe -- leakproof
@@ -46,8 +73,6 @@ where good_id = _good_id;
 end;
 
 grant execute on procedure give to person;
-
-\ir proc/want.sql
 
 create or replace procedure unwant(_good_id uuid)
 language sql
@@ -123,7 +148,7 @@ begin atomic
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'login_challenge')::uuid
         returning person_id
     )
-    select 'set local role to person'
+    select 'set local role to person'::text
     from "user"
     union all select format('set local "cpres.person_id" to %L', person_id)
     from "user";
@@ -173,7 +198,7 @@ begin atomic
         )) as url
         from login_person
     )
-    select 'florian.klein@free.fr', email, '[cpres]: Nouveau lien d''authentification',
+    select 'florian.klein@free.fr'::text, email, '[cpres]: Nouveau lien d''authentification'::text,
         format($$
             Bonjour %s,
 

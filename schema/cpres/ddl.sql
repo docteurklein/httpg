@@ -1,4 +1,5 @@
-\set ON_ERROR_STOP on
+-- require: extensions.sql
+create schema if not exists cpres;
 
 set local search_path to cpres, pg_catalog, public;
 
@@ -8,22 +9,6 @@ set neon.allow_unstable_extensions='true';
 -- drop extension if not exists rag_bge_small_en_v15 cascade; 
 -- drop extension if not exists rag_jina_reranker_v1_tiny_en cascade; 
 
-select current_setting('neon.project_id', true) is not null as is_neon
-\gset
-
-create extension if not exists vector with schema public cascade;
-create extension if not exists fuzzystrmatch with schema public cascade;
-create extension if not exists postgis with schema public cascade;
-create extension if not exists pgrouting with schema public cascade;
-\if :is_neon
-create extension if not exists rag cascade;
-create extension if not exists rag_bge_small_en_v15 cascade;
-create extension if not exists rag_jina_reranker_v1_tiny_en cascade;
-\else
-create extension if not exists http schema public;
-\endif
-
-create schema cpres;
 
 create function cpres.embed_passage(content text)
 returns vector
@@ -31,11 +16,7 @@ strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
-    \if :is_neon
-    select rag_bge_small_en_v15.embedding_for_passage(content);
-    \else
     select array_fill(0.1, array[384])::vector(384);
-    \endif
 end;
 
 create function cpres.embed_query(query text)
@@ -44,11 +25,8 @@ strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
-    \if :is_neon
-    select rag_bge_small_en_v15.embedding_for_query(query);
-    \else
     select array_fill(0.1, array[384])::vector(384);
-    \endif
+    -- select ''; -- rag_bge_small_en_v15.embedding_for_query(query);
 end;
 
 create function cpres.rerank_distance(query text, content text)
@@ -57,11 +35,7 @@ strict immutable parallel safe -- leakproof
 security definer
 language sql
 begin atomic
-    \if :is_neon
-    select rag_jina_reranker_v1_tiny_en.rerank_distance(query, content);
-    \else
     select case when content ilike '%'||query||'%' then -1 else 1 end;
-    \endif
 end;
 
 -- revoke all on schema pg_catalog, public from person;
@@ -70,10 +44,10 @@ end;
 
 
 
-grant usage on schema cpres, url, pg_catalog to anon;
-grant usage on schema cpres, url, pg_catalog to person;
--- alter role httpg set search_path to cpres, url, pg_catalog, public;
--- alter role person set search_path to cpres, url, pg_catalog, public;
+grant usage on schema cpres, pg_catalog to anon;
+grant usage on schema cpres, pg_catalog to person;
+-- alter role httpg set search_path to cpres, pg_catalog, public;
+-- alter role person set search_path to cpres, pg_catalog, public;
 
 revoke usage on language plpgsql from public, httpg, person;
 revoke usage on language sql from public, httpg, person;
@@ -81,11 +55,6 @@ revoke usage on language sql from public, httpg, person;
 grant usage, create on schema cpres to person;
 -- grant usage on schema pg_catalog, rag_bge_small_en_v15 to person;
 -- grant execute on all functions in schema pg_catalog to person;
-
-create extension if not exists cube schema public;
-create extension if not exists earthdistance schema public;
-create extension if not exists moddatetime schema public;
-create extension if not exists vector schema public;
 
 -- create or replace function current_person_id() returns uuid
 -- volatile strict parallel safe -- leakproof
@@ -169,13 +138,7 @@ create table good (
     good_id uuid primary key default uuidv7(),
     title text not null check (trim(title) <> ''),
     description text not null,
-    passage text not null generated always as (title || ': ' || description)
-        \if :is_neon
-         stored
-        \else
-        virtual
-        \endif
-    ,
+    passage text not null generated always as (title || ': ' || description) stored,
     embedding vector(384) not null generated always as (embed_passage(title || ': ' || description)) stored,
     tags text[] not null default '{}',
     location point not null,

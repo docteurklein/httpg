@@ -1,5 +1,4 @@
-\set ON_ERROR_STOP on
-
+-- require: cpres/ddl.sql
 set local search_path to cpres, url, pg_catalog, public;
 
 create or replace procedure want(_good_id uuid, level interest_level, price_ text)

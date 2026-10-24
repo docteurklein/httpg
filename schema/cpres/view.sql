@@ -1,36 +1,12 @@
-\set ON_ERROR_STOP on
-
+-- require: cpres/ddl.sql
+-- require: cpres/gis.sql
+-- require: url/url.sql
 set  search_path to cpres, url, pg_catalog, public;
 
 grant execute on all routines in schema cpres to anon, person;
 grant execute on all routines in schema public to anon, person;
 grant execute on function url.url to anon, person, httpg;
 grant execute on function url.encode to anon, person, httpg;
-
-create or replace function _(id_ text, lang_ text = null)
-returns text
-immutable parallel safe -- leakproof
-security definer
-set search_path to cpres, pg_catalog
-language sql
-begin atomic
-    with t (text) as (
-        select text
-        from translation
-        where (id, lang) = (id_, coalesce(
-            lang_,
-            current_setting('httpg.query', true)::jsonb->'qs'->>'lang',
-            substring(current_setting('httpg.query', true)::jsonb->>'accept_language' from '^(\w+)-?\w*,?.*')
-        ))
-        limit 1
-    )
-    select coalesce(
-        (select text from t),
-        id_
-    );
-end;
-
-grant execute on function _ to anon, person, httpg;
 
 create or replace function max_interest_price(good good) returns xml
 language sql
@@ -1272,7 +1248,7 @@ union all (
     with m (color, m) as (
         select m.key, xmltext(_(m.value)) from q, jsonb_each_text(q->'qs'->'flash') m
         union all (
-            select 'yellow', xmlelement(name a, xmlattributes(
+            select 'yellow'::text, xmlelement(name a, xmlattributes(
                 (url('/cpres/query', jsonb_build_object(
                     'sql', 'select * from cpres.head union all table cpres."receiving activity"'
                 )) || '#' || good.title) as href
@@ -1290,7 +1266,7 @@ union all (
             with error (error) as (
                 select nullif(current_setting('httpg.errors', true), '')::jsonb
             )
-            select 'red', _(error->>'error')::xml
+            select 'red'::text, _(error->>'error')::xml
             from error
             where error is not null
         )

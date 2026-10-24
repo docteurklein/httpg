@@ -1,0 +1,9 @@
+databases:
+  dev_url: postgres:///httpg
+  shadow:
+    auto: false
+    url: postgres:///httpg_shadow
+directories:
+  schema_dir: schema
+  migrations_dir: migrations
+  baselines_dir: schema_baselines

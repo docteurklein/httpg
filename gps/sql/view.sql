@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 set  search_path to gps, url, pg_catalog, public;
 
 -- alter role anon set search_path to gps, url, pg_catalog, public;

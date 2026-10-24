@@ -17,17 +17,17 @@ jobs:
         with:
           use-flakehub: false
 
-      - name: 'deploy stateless sql'
+      - name: 'migrate dev'
         run: |
-          psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 --single-transaction -c 'drop schema if exists cpres cascade' -f sql/cpres.sql
+          nix run .#pgmt -- migrate apply --target-url "$PG_DEV_URI"
         env:
           PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
 
-      - name: 'grant person to neondb_owner'
-        run: |
-          psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 -c 'grant person to neondb_owner'
-        env:
-          PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
+      # - name: 'grant person to neondb_owner'
+      #   run: |
+      #     psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 -c 'grant person to neondb_owner'
+      #   env:
+      #     PG_DEV_URI: ${{ secrets.PG_DEV_URI }}
       - name: 'test sql'
         run: |
           psql "$PG_DEV_URI" -v ON_ERROR_STOP=1 $(find tests/sql -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
@@ -38,7 +38,7 @@ jobs:
       #   run: |
       #     nix develop .
       #     nix run .#up
-      #     nix --accept-flake-config build .#httpg-test
+      #     nix build .#httpg-test
 
   deploy:
     environment: production
@@ -83,14 +83,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: 'migrate'
+      - name: 'migrate prod'
         run: |
-          psql "$PG_URI" -v ON_ERROR_STOP=1 $(find migration/cpres -name '*.sql' -printf ' -f %h/%f\n' | sort -V | xargs)
-        env:
-          PG_URI: ${{ secrets.PG_URI }}
-      - name: 'deploy stateless sql'
-        run: |
-          psql "$PG_URI" --single-transaction -f sql/url.sql -f sql/proc.sql -f sql/view.sql -f sql/translation.sql
-        env:
-          PG_URI: ${{ secrets.PG_URI }}
+          nix run .#pgmt -- migrate apply --target-url "$PG_URI"
 

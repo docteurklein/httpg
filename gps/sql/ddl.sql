@@ -1,17 +1,7 @@
-\set ON_ERROR_STOP on
-
 set local search_path to gps, pg_catalog, public;
 
 set neon.allow_unstable_extensions='true';
 
-select current_setting('neon.project_id', true) is not null as is_neon
-\gset
-
-create extension if not exists postgis with schema public cascade;
-create extension if not exists h3 with schema public cascade;
-create extension if not exists h3_postgis with schema public cascade;
-create extension if not exists pgcrypto schema public;
--- 
 create schema if not exists gps;
 
 grant usage on schema gps, url, pg_catalog to httpg;

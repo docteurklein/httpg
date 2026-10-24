@@ -1,3 +1,4 @@
+-- require: url/url.sql
 create schema if not exists blog;
 
 set search_path to blog, url, public;
@@ -149,7 +150,7 @@ c (attname, conname) as (
 all_ (target, msg) as (
     table c
     union all
-    select null, error
+    select null::name, error
     from httpg
     where error is not null
 )
@@ -293,7 +294,7 @@ end;
 
 grant execute on function search to anon;
 -- drop materialized view if exists ts_stat cascade;
-create materialized view if not exists ts_stat (word, nentry, ratio)
+create view ts_stat (word, nentry, ratio)
 as
     select word, nentry, nentry::numeric / max(nentry) over ()
     from ts_stat('select fts from blog.post')
@@ -302,7 +303,7 @@ as
 grant select on table ts_stat to anon;
 
 -- drop view if exists head cascade;
-create or replace view head (html) as select null; -- to allow resolution of self-depending 'head'::regclass
+-- create or replace view head (html) as select null; -- to allow resolution of self-depending 'head'::regclass
 create or replace view head (html)
 with (security_invoker)
 as
@@ -396,11 +397,11 @@ union all (
             xmlelement(name input, xmlattributes(
                 'hidden' as type,
                 'sql' as name,
-                format($$
-                select * from %s
+                $$
+                select * from blog.head
                 union all
-                select * from %s($1)
-                $$, 'head'::regclass, 'blog.search') as value
+                select * from blog.search($1)
+                $$ as value
             )),
             xmlelement(name input, xmlattributes(
                 'search' as type,
@@ -562,11 +563,10 @@ feed (xml) as (
 )
 select jsonb_build_object('content-type', 'application/atom+xml'), null
 union all
-select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
+select null::text, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all
 select null, xmlserialize(document xml as text indent)
 from feed
 ;
-
 
 grant select on table atom_comment to anon;

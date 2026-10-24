@@ -1,5 +1,4 @@
-\set ON_ERROR_STOP on
-
+-- require: cpres/ddl.sql
 set local search_path to cpres, pg_catalog;
 
 truncate person, good, person_detail cascade;

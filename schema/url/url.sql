@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 create schema if not exists url;
 
 -- drop function if exists url.encode cascade;

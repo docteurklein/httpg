@@ -1,9 +1,12 @@
-\set ON_ERROR_STOP on
-
+-- require: extensions.sql
+create schema if not exists cpres;
 set search_path to cpres, url, pg_catalog, public;
 
+
+create table if not exists osm_auvergne (osm_type jsonb, tags jsonb);
+
 -- drop materialized view if exists auvergne_boundary cascade;
-create materialized view if not exists auvergne_boundary (geom, id) as
+create  view  auvergne_boundary (geom, id) as
     select st_boundary(ST_Union(ST_Multi(geog::geometry))), 'auvergne'
     from osm_auvergne
     where osm_type = 'relation'
@@ -14,7 +17,7 @@ create materialized view if not exists auvergne_boundary (geom, id) as
 grant select on table auvergne_boundary to person, anon;
 
 -- drop materialized view if exists auvergne_highway cascade;
-create materialized view if not exists auvergne_highway (osm_id, geog, speed) as
+create  view auvergne_highway (osm_id, geog, speed) as
     select osm_id, geog, coalesce(
         nullif(json_value(tags, '$.maxspeed' returning numeric null on error), 0),
         case tags->>'highway'
@@ -71,9 +74,9 @@ create materialized view if not exists auvergne_highway (osm_id, geog, speed) as
     and geometrytype(geog) = 'LINESTRING'
 ;
 
-create unique index if not exists auvergne_highway_pkey on auvergne_highway (osm_id);
+-- create unique index if not exists auvergne_highway_pkey on auvergne_highway (osm_id);
 -- create index if not exists auvergne_highway_geom on auvergne_highway using gist ((geog::geometry));
-create index if not exists auvergne_highway_geog on auvergne_highway using gist (geog);
+-- create index if not exists auvergne_highway_geog on auvergne_highway using gist (geog);
 
 grant select on table auvergne_highway to person, anon;
 
@@ -82,9 +85,9 @@ grant select on table auvergne_highway to person, anon;
 -- select current_setting('neon.project_id', true) is not null as is_neon
 -- \gset
 
-drop materialized view if exists auvergne_network_edge cascade;
-\timing on
-create materialized view if not exists auvergne_network_edge (osm_id, id, geog, startpoint, endpoint, duration) as
+-- drop materialized view if exists auvergne_network_edge cascade;
+-- \timing on
+create  view  auvergne_network_edge (osm_id, id, geog, startpoint, endpoint, duration) as
 with crossing as (
     select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry point
     from auvergne_highway e1
@@ -121,13 +124,13 @@ from (
 where st_startpoint(geog::geometry) <> st_endpoint(geog::geometry)
 ;
 
-create unique index if not exists auvergne_network_edge_pkey on auvergne_network_edge (id);
-create index if not exists auvergne_network_edge_geog on auvergne_network_edge using gist (geog);
+-- create unique index if not exists auvergne_network_edge_pkey on auvergne_network_edge (id);
+-- create index if not exists auvergne_network_edge_geog on auvergne_network_edge using gist (geog);
 
 -- vacuum analyze auvergne_network_edge;
 
-drop materialized view if exists auvergne_network_node cascade;
-create materialized view if not exists auvergne_network_node (id, geom) as
+-- drop materialized view if exists auvergne_network_node cascade;
+create  view  auvergne_network_node (id, geom) as
 with node (geom) as (
     select unnest(array[startpoint, endpoint])
     from auvergne_network_edge
@@ -138,13 +141,13 @@ group by geom;
 
 grant select on table auvergne_network_node to person, anon;
 
-create unique index if not exists auvergne_network_node_pkey on auvergne_network_node (id);
-create index if not exists auvergne_network_node_geom on auvergne_network_node using gist (geom);
+-- create unique index if not exists auvergne_network_node_pkey on auvergne_network_node (id);
+-- create index if not exists auvergne_network_node_geom on auvergne_network_node using gist (geom);
 
 -- vacuum analyze auvergne_network_node;
 
-drop materialized view if exists auvergne_network cascade;
-create materialized view if not exists auvergne_network (osm_id, id, geog, source, target, cost, reverse_cost) as
+-- drop materialized view if exists auvergne_network cascade;
+create  view auvergne_network (osm_id, id, geog, source, target, cost, reverse_cost) as
 select osm_id, edge.id, edge.geog, source.id, target.id, edge.duration, edge.duration r
     -- st_x(source.geom),
     -- st_y(source.geom),
@@ -157,9 +160,9 @@ join auvergne_network_node target on edge.endpoint = target.geom
 
 grant select on table auvergne_network to person, anon;
 
-create index if not exists auvergne_network_geog on auvergne_network using gist (geog);
-create index if not exists auvergne_network_source on auvergne_network (source);
-create index if not exists auvergne_network_target on auvergne_network (target);
-create unique index if not exists auvergne_network_pkey on auvergne_network (id);
+-- create index if not exists auvergne_network_geog on auvergne_network using gist (geog);
+-- create index if not exists auvergne_network_source on auvergne_network (source);
+-- create index if not exists auvergne_network_target on auvergne_network (target);
+-- create unique index if not exists auvergne_network_pkey on auvergne_network (id);
 
 -- vacuum analyze auvergne_network;

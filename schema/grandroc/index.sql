@@ -1,4 +1,4 @@
-\set ON_ERROR_STOP on
+-- require: url/url.sql
 
 do $$ begin
     create role jmeu noinherit;
@@ -9,7 +9,6 @@ end $$;
 create schema if not exists grandroc;
 
 set local search_path to grandroc, url, pg_catalog, public;
-create extension if not exists btree_gist;
 
 do $$
 begin
@@ -948,16 +947,6 @@ create table if not exists admin (
   salt text not null
 );
 
-create extension if not exists pgcrypto schema public;
-
-with salt (salt) as (
-    select gen_salt('sha512crypt')
-)
-insert into admin (name, password, salt)
-select 'admin', crypt(:'password', salt), salt
-from salt
-on conflict (name) do nothing;
-
 create or replace function login() returns setof text
 volatile strict parallel safe -- leakproof
 language sql
@@ -967,7 +956,7 @@ begin atomic
 with httpg (body) as (
   select current_setting('httpg.query', true)::jsonb->'body'
 )
-select 'set local role to grandroc'
+select 'set local role to grandroc'::text
 from admin, httpg
 where name = body->>'name'
 and password = crypt(body->>'password', salt);

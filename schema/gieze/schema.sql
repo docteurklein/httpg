@@ -1,5 +1,3 @@
-\set ON_ERROR_STOP on
-
 do $$ begin
 create role gieze_admin;
 exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;

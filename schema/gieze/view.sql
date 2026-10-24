@@ -1,12 +1,10 @@
-\set ON_ERROR_STOP on
-
+-- require: gieze/schema.sql
+-- require: url/url.sql
 set local search_path to gieze, url, pg_catalog, public;
 
 grant usage on schema gieze to anon, gieze_admin;
 grant usage on schema url to anon, gieze_admin;
 grant execute on all functions in schema url to anon, gieze_admin;
-
-create extension if not exists pgcrypto with schema public cascade;
 
 create or replace view future_invoice_line(client, month, bl, shipped_at, product, quantity, unit_price_ht, total_price_ht, tva_rate, total_tva, total_price_ttc) as
 select
@@ -290,7 +288,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
       from (
         values (bl.bl, null, 1, 'Add')
         union all
-        select bl, product, quantity, 'Edit' from bl_line l where l.bl = bl.bl
+        select bl, product, quantity, 'Edit'::text from bl_line l where l.bl = bl.bl
       ) _ (bl, product, quantity, action)
     )
   ) order by bl.bl desc), '')
@@ -478,7 +476,7 @@ select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class)
 from (
   values (null, null, null, null, 'Add')
   union all
-  select client, billing_address, shipping_address, phone, 'Edit'
+  select client, billing_address, shipping_address, phone, 'Edit'::text
   from client
 ) _ (client, billing_address, shipping_address, phone, button)
 ;
@@ -549,7 +547,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
 from (
   values (null, null::numeric, null::numeric, 'Add')
   union all
-  select product, unit_price_ht, tva_rate, 'Edit'
+  select product, unit_price_ht, tva_rate, 'Edit'::text
   from product
 ) _ (product, unit_price_ht, tva_rate, button)
 ;
@@ -658,7 +656,7 @@ begin atomic
 with httpg (body) as (
   select current_setting('httpg.query', true)::jsonb->'body'
 )
-select 'set local role to gieze_admin'
+select 'set local role to gieze_admin'::text
 from admin, httpg
 where name = body->>'name'
 and password = crypt(body->>'password', salt);
