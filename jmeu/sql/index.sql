@@ -469,7 +469,8 @@ select xmlelement(name div,
         ), number),
         xmlelement(name time, to_char(at, 'DD/MM/YY')),
         xmlelement(name div, name),
-        xmlelement(name div, posology)
+        xmlelement(name div, posology),
+        xmlelement(name pre, coalesce(comment, ''))
     )), '')
 )
 from treat_group
@@ -504,6 +505,7 @@ select xmlelement(name div, xmlattributes('card animal' as class),
             (
                 select xmlagg(xmlelement(name div, xmlattributes('card' as class),
                     xmlelement(name h4, name),
+                    xmlelement(name div, posology),
                     xmlelement(name time, to_char(at, 'DD/MM/YY')),
                     xmlelement(name pre, coalesce(comment, ''))
                 ) order by at desc)

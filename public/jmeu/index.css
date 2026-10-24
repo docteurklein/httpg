@@ -1,8 +1,13 @@
 nav {
-  display: flex;
   justify-content: center;
-  gap: 1em;
-  margin-bottom: 1rem;
+  & > * {
+    padding-right: 1em;
+  }
+}
+
+header {
+  display: flex;
+  gap: 1rem;
 }
 
 .animals {

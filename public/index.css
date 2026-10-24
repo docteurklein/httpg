@@ -1,3 +1,36 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+*:not(dialog, input[type=checkbox], input[type=radio], label) {
+  margin: 0;
+}
+
+body {
+  line-height: 1.5;
+}
+
+img, picture, video, canvas, svg {
+  display: block;
+  max-width: 100%;
+}
+
+input, button, textarea, select {
+  font: inherit;
+}
+
+p, h1, h2, h3, h4, h5, h6 {
+  overflow-wrap: break-word;
+}
+
+p {
+  text-wrap: pretty;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  text-wrap: balance;
+}
+
 :root {
   color-scheme: dark light;
   --color-surface: #1c1b22;
@@ -21,10 +54,6 @@
     --color-input: black;
     --color-link: green;
   }
-}
-
-* {
-  box-sizing: border-box;
 }
 
 html {
@@ -60,7 +89,7 @@ html {
   box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
   border-radius: 0.5rem;
   padding: 1rem;
-  margin: 1rem;
+  margin: 1rem !important;
 
   & img,
   & object {
@@ -76,7 +105,7 @@ html {
 }
 
 label {
-  margin-bottom: 0.4rem;
+  margin: 0.4rem;
   /* display: block; */
 }
 

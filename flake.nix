@@ -318,9 +318,7 @@
                 spec = {
                   containers = [
                     {
-                      # image = "mirror.gcr.io/docteurklein/httpg@sha256:59b0702b0401c2954055617888278dfe56b9318dcd9379d007c86c12d098c203";
-                      # image = "docker.io/docteurklein/httpg@sha256:882003131b68841f673efff31a1cdc16a1f9cf122721554500709392ee463b64";
-                      image = "docker.io/${self'.packages.httpg-oci.imageRefUnsafe}";
+                      image = "europe-docker.pkg.dev/artifact-registry-docker-cache/virtual-docker/${self'.packages.httpg-oci.imageRefUnsafe}";
                       name = "httpg";
                       ports = [
                         {name = "h2c"; containerPort = "3000";}
@@ -379,8 +377,7 @@
                       ];
                     }
                     # {
-                    #   # image = "docker.io/docteurklein/httpg-nginx@sha256:b506eeaa431d78305f8f755bec9aac313439b67fdef4770c5bd3e8e234b2146b";
-                    #   image = "docker.io/${self'.packages.httpg-nginx-oci.imageRefUnsafe}";
+                    #   image = "europe-docker.pkg.dev/artifact-registry-docker-cache/virtual-docker/${self'.packages.httpg-nginx-oci.imageRefUnsafe}";
                     #   name = "nginx";
                     #   ports = [
                     #     {name = "http1"; containerPort = "8080";}
