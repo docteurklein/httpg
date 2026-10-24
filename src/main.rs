@@ -6,9 +6,9 @@ mod postgres;
 
 use http::Uri;
 use axum::{
-    Router, extract::{DefaultBodyLimit, Path, State}, http::{
+    BoxError, Router, error_handling::HandleErrorLayer, extract::{DefaultBodyLimit, Path, State}, http::{
         StatusCode, header::SET_COOKIE,
-    }, response::{IntoResponse, NoContent, Redirect, Sse, sse::Event}, routing::{get, post}
+    }, response::{IntoResponse, NoContent, Redirect, Response, Sse, sse::Event}, routing::{get, post}
 };
 use axum_extra::extract::cookie::Cookie;
 use axum_server::tls_rustls::RustlsConfig;
@@ -17,6 +17,8 @@ use conf::Conf;
 
 use cookie::time::{Duration, OffsetDateTime};
 use futures::{StreamExt, TryStreamExt};
+use http_cache::CACacheManager;
+use http_cache_tower_server::ServerCacheLayer;
 use lettre::{
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType, transport::smtp::authentication::{Credentials}
 };
@@ -164,10 +166,13 @@ async fn main() -> Result<(), HttpgError> {
             .route("/{path}/listen/{channel}", get(listen_query))
         ;
     }
+
     let app = app
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
+            .layer(HandleErrorLayer::new(handle_error))
+            .layer(ServerCacheLayer::new(CACacheManager::new("/httpg-cache".into(), true)))
             .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
             .layer(CompressionLayer::new().zstd(false).br(true))
             .layer(TraceLayer::new_for_http())
@@ -205,6 +210,10 @@ async fn main() -> Result<(), HttpgError> {
         },
     };
     Ok(())
+}
+
+async fn handle_error(err: BoxError) -> Response {
+    (StatusCode::INTERNAL_SERVER_ERROR, format!("Internal error: {}", err)).into_response()
 }
 
 #[debug_handler]

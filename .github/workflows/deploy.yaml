@@ -69,21 +69,8 @@ jobs:
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
-      - run: nix run .#httpg-oci.copyToRegistry
-      - run: nix run .#httpg-nginx-oci.copyToRegistry
-          
-      # - id: 'deploy'
-      #   run: |
-      #     gcloud run --project gieze-421708 services --region europe-west1 \
-      #     update httpg \
-      #       --container httpg --image "docker.io/$(nix eval .#httpg-oci.imageRefUnsafe --raw)" \
-      #       --container httpg-nginx --image "docker.io/$(nix eval .#httpg-nginx-oci.imageRefUnsafe --raw)"
-
       - id: 'deploy'
         run: 'nix run .#deploy'
-        # run: |
-        #   gcloud run --project gieze-421708 services --region europe-west1 \
-        #   replace "$(nix build --no-link --print-out-paths .#gcloud.run.service.httpg)"
   
   migrate:
     needs: [test]

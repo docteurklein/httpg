@@ -197,46 +197,6 @@
           };
         };
 
-        packages.httpg-nginx-oci = n2c.nix2container.buildImage {
-          name = "docteurklein/httpg-nginx";
-          fromImage = n2c.nix2container.pullImage {
-            imageName = "nginx";
-            imageDigest = "sha256:0e99fef52612699fd524e2a5111e8c6397cf29f24ae1b48d3902b8d65b14bbbf";
-            sha256 = "sha256-jT0E1vI2U/6NJE29P5JuUQX4xH9vtvQlX3IQXx+hPJg=";
-          };
-          config = {
-            entrypoint = ["/docker-entrypoint.sh"];
-            Cmd = [
-                "nginx"
-                "-g"
-                "daemon off;"
-            ];
-          };
-          copyToRoot = [
-            (pkgs.writeTextDir "etc/nginx/conf.d/default.conf" ''  
-              proxy_cache_path /nginx-cache keys_zone=web:10m max_size=10g inactive=60m;
-              server {
-                  listen 8080;
-                  server_name _;
-                  gzip on;
-
-                  proxy_cache web;
-                  proxy_cache_use_stale error timeout updating http_500 http_502 http_503;
-                  proxy_cache_lock on;
-                  proxy_cache_revalidate on;
-
-                  add_header X-Cache-Status $upstream_cache_status always;
-
-                  location / {
-                      proxy_pass http://127.0.0.1:3000;
-                      proxy_cache_bypass $cookie_session $http_authorization;
-                      proxy_no_cache $cookie_session $http_authorization;
-                  }
-              }
-            '')
-          ];
-        };
-
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             comrak
@@ -363,43 +323,23 @@
                           name = "secret-volume";
                         }
                         {
-                        mountPath = "/secrets/webpush.pem";
+                          mountPath = "/secrets/webpush.pem";
                           name = "secret-1";
                         }
                         {
-                        mountPath = "/secrets/pg_password";
+                          mountPath = "/secrets/pg_password";
                           name = "secret-2";
                         }
                         {
-                        mountPath = "/secrets/smtp_password";
+                          mountPath = "/secrets/smtp_password";
                           name = "secret-3";
+                        }
+                        {
+                          mountPath = "/httpg-cache";
+                          name = "gcs";
                         }
                       ];
                     }
-                    # {
-                    #   image = "europe-docker.pkg.dev/artifact-registry-docker-cache/virtual-docker/${self'.packages.httpg-nginx-oci.imageRefUnsafe}";
-                    #   name = "nginx";
-                    #   ports = [
-                    #     {name = "http1"; containerPort = "8080";}
-                    #   ];
-                    #   resources = {
-                    #     limits = {
-                    #       cpu = "500m";
-                    #       memory = "256Mi";
-                    #     };
-                    #   };
-                    #   startupProbe = {
-                    #     timeoutSeconds = "240";
-                    #     periodSeconds = "240";
-                    #     failureThreshold = "1";
-                    #     tcpSocket = {
-                    #       port = "8080";
-                    #     };
-                    #   };
-                    #   volumeMounts = [
-                    #     {mountPath = "/nginx-cache"; name = "gcs";}
-                    #   ];
-                    # }
                   ];
                   volumes = [
                     {
@@ -409,7 +349,7 @@
                         readOnly = false;
                         volumeAttributes = {
                           bucketName = "httpg-nginx";
-                          mountOptions = "uid=101,gid=101";
+                          # mountOptions = "uid=101,gid=101";
                         };
                       };
                     }
@@ -469,8 +409,7 @@
         in {
           type = "app";
           program = pkgs.lib.getExe (pkgs.writeShellScriptBin "httpg" ''
-            # nix run .#httpg-oci.copyToRegistry
-            # nix run .#httpg-nginx-oci.copyToRegistry
+            nix run .#httpg-oci.copyToRegistry
             ${gcloud} run --project gieze-421708 services --region europe-west1 \
               replace "${yaml}"
           '');
@@ -482,49 +421,6 @@
           nixpkgs = inputs.nixpkgs;
 
           config = {
-
-            containers.nginx = {
-              ephemeral = true;
-              autoStart = true;
-
-              privateNetwork = true;
-              hostBridge = "br0";
-              localAddress = "10.250.3.2/16";
-              
-              config = ({ pkgs, ... }: {
-                boot.isNspawnContainer = true;
-        
-                system.stateVersion = "25.11";
-
-                networking.firewall.allowedTCPPorts = [ 8080 ];
-                networking.useDHCP = false;
-
-                services.nginx = {
-                  enable = true;
-                  httpConfig = ''
-                    proxy_cache_path /tmp keys_zone=web:10m max_size=10g inactive=60m;
-                    server {
-                        listen 8080;
-                        server_name _;
-                        gzip on;
-
-                        proxy_cache web;
-                        proxy_cache_use_stale error timeout updating http_500 http_502 http_503;
-                        proxy_cache_lock on;
-                        proxy_cache_revalidate on;
-
-                        add_header X-Cache-Status $upstream_cache_status always;
-
-                        location / {
-                            proxy_pass http://10.250.0.2:3000;
-                            proxy_cache_bypass $cookie_session $http_authorization;
-                            proxy_no_cache $cookie_session $http_authorization;
-                        }
-                    }
-                  '';
-                };
-              });
-            };
 
             containers.httpg = {
               ephemeral = true;
