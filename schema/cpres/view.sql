@@ -1248,7 +1248,8 @@ union all (
     with m (color, m) as (
         select m.key, xmltext(_(m.value)) from q, jsonb_each_text(q->'qs'->'flash') m
         union all (
-            select 'yellow'::text, xmlelement(name a, xmlattributes(
+            -- require: extensions.sql
+            select 'yellow', xmlelement(name a, xmlattributes(
                 (url('/cpres/query', jsonb_build_object(
                     'sql', 'select * from cpres.head union all table cpres."receiving activity"'
                 )) || '#' || good.title) as href
@@ -1266,7 +1267,7 @@ union all (
             with error (error) as (
                 select nullif(current_setting('httpg.errors', true), '')::jsonb
             )
-            select 'red'::text, _(error->>'error')::xml
+            select 'red', _(error->>'error')::xml
             from error
             where error is not null
         )

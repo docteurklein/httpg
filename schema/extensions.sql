@@ -3,7 +3,7 @@ create extension if not exists pgcrypto with schema public cascade;
 create extension if not exists vector with schema public cascade;
 create extension if not exists fuzzystrmatch with schema public cascade;
 create extension if not exists postgis with schema public cascade;
-create extension if not exists pgrouting with schema public cascade;
+create extension if not exists postgis_raster with schema public cascade;
 create extension if not exists cube schema public;
 create extension if not exists earthdistance schema public;
 create extension if not exists moddatetime schema public;

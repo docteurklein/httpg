@@ -563,7 +563,7 @@ feed (xml) as (
 )
 select jsonb_build_object('content-type', 'application/atom+xml'), null
 union all
-select null::text, e'<?xml version="1.0" encoding="UTF-8"?>\n'
+select null, e'<?xml version="1.0" encoding="UTF-8"?>\n'
 union all
 select null, xmlserialize(document xml as text indent)
 from feed

@@ -181,13 +181,13 @@
 
         packages.pgmt = pkgs.rustPlatform.buildRustPackage rec {
           pname = "pgmt";
-          version = "v0.6.5-dev2";
+          version = "v0.6.5-dev3";
 
           src = pkgs.fetchFromGitHub {
             owner = "gdpotter";
             repo = "pgmt";
-            tag = "a800bd3fb5e4a2f7b50a333b38116eff692adb65";
-            hash = "sha256-UQQ8gwsUYp2NofKIbpINCuoRXznakYIrClAe5oAx4Y6=";
+            rev = "b4087f66a367e9efb712810790fb7aad17a5604c";
+            hash = "sha256-Xeg+1zmSY8EBOJltx9l/mVryXg/ZATt/iwz3foiahPs=";
           };
           cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
           doCheck = false;

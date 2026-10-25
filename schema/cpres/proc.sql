@@ -148,7 +148,7 @@ begin atomic
         where login_challenge = (current_setting('httpg.query', true)::jsonb->'qs'->>'login_challenge')::uuid
         returning person_id
     )
-    select 'set local role to person'::text
+    select 'set local role to person'
     from "user"
     union all select format('set local "cpres.person_id" to %L', person_id)
     from "user";
@@ -198,7 +198,7 @@ begin atomic
         )) as url
         from login_person
     )
-    select 'florian.klein@free.fr'::text, email, '[cpres]: Nouveau lien d''authentification'::text,
+    select 'florian.klein@free.fr', email, '[cpres]: Nouveau lien d''authentification',
         format($$
             Bonjour %s,
 

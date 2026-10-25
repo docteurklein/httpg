@@ -74,7 +74,7 @@ create table if not exists booking (
     exclude using gist (
         place with =,
         period with &&
-    ) where (status = 'confirmed')
+    )-- where (status = 'confirmed')
 );
 
 create or replace function days(period daterange) returns int
@@ -956,7 +956,7 @@ begin atomic
 with httpg (body) as (
   select current_setting('httpg.query', true)::jsonb->'body'
 )
-select 'set local role to grandroc'::text
+select 'set local role to grandroc'
 from admin, httpg
 where name = body->>'name'
 and password = crypt(body->>'password', salt);

@@ -1,3 +1,5 @@
+-- require: gps/ddl.sql
+-- require: url/url.sql
 set  search_path to gps, url, pg_catalog, public;
 
 -- alter role anon set search_path to gps, url, pg_catalog, public;
@@ -125,9 +127,10 @@ where current_runner_id() is null;
 
 grant select on table head to anon;
 
+create table if not exists gebco (rast raster);
 
-drop materialized view if exists gebco_geo cascade;
-create materialized view if not exists gebco_geo (geom, rast) as
+-- drop materialized view if exists gebco_geo cascade;
+create view gebco_geo (geom, rast) as
 -- select null::geometry, null::raster;
 select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
 from gebco

@@ -4,8 +4,8 @@ set neon.allow_unstable_extensions='true';
 
 create schema if not exists gps;
 
-grant usage on schema gps, url, pg_catalog to httpg;
-grant usage on schema gps, url, pg_catalog to anon;
+grant usage on schema gps, pg_catalog to httpg;
+grant usage on schema gps, pg_catalog to anon;
 
 -- revoke usage on language plpgsql from runner;
 -- revoke usage on language sql from runner;
@@ -59,7 +59,7 @@ create table ping (
     run_id uuid not null references run (run_id),
     at timestamptz not null default now(),
     primary key (run_id, location, at)
-) partition by range (at);
+); -- partition by range (at);
 
 alter table ping enable row level security;
 create policy "owner" on ping for all to anon

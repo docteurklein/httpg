@@ -288,7 +288,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
       from (
         values (bl.bl, null, 1, 'Add')
         union all
-        select bl, product, quantity, 'Edit'::text from bl_line l where l.bl = bl.bl
+        select bl, product, quantity, 'Edit' from bl_line l where l.bl = bl.bl
       ) _ (bl, product, quantity, action)
     )
   ) order by bl.bl desc), '')
@@ -476,7 +476,7 @@ select xmlserialize(document xmlelement(name div, xmlattributes('grid' as class)
 from (
   values (null, null, null, null, 'Add')
   union all
-  select client, billing_address, shipping_address, phone, 'Edit'::text
+  select client, billing_address, shipping_address, phone, 'Edit'
   from client
 ) _ (client, billing_address, shipping_address, phone, button)
 ;
@@ -547,7 +547,7 @@ select xmlelement(name div, xmlattributes('grid' as class),
 from (
   values (null, null::numeric, null::numeric, 'Add')
   union all
-  select product, unit_price_ht, tva_rate, 'Edit'::text
+  select product, unit_price_ht, tva_rate, 'Edit'
   from product
 ) _ (product, unit_price_ht, tva_rate, button)
 ;
@@ -656,7 +656,7 @@ begin atomic
 with httpg (body) as (
   select current_setting('httpg.query', true)::jsonb->'body'
 )
-select 'set local role to gieze_admin'::text
+select 'set local role to gieze_admin'
 from admin, httpg
 where name = body->>'name'
 and password = crypt(body->>'password', salt);
