@@ -181,15 +181,16 @@
 
         packages.pgmt = pkgs.rustPlatform.buildRustPackage rec {
           pname = "pgmt";
-          version = "v0.6.5-dev3";
+          version = "main";
 
           src = pkgs.fetchFromGitHub {
             owner = "gdpotter";
             repo = "pgmt";
-            rev = "b4087f66a367e9efb712810790fb7aad17a5604c";
-            hash = "sha256-Xeg+1zmSY8EBOJltx9l/mVryXg/ZATt/iwz3foiahPs=";
+            rev = "main";
+            hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
           };
           cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
+
           doCheck = false;
         };
 
@@ -259,7 +260,7 @@
           HTTPG_PG_WRITE_HOST = "10.250.1.2";
           PORT = "3000";
           RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
-          RUST_BACKTRACE = "1";
+          RUST_BACKTRACE = "0";
         };
 
         apps.up = {
@@ -615,12 +616,13 @@
                     log_lock_waits = true;
                     log_disconnections = true;
                     log_temp_files = 0;
+                    log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
                     # logging_collector = true;
                     log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
                     log_statement = "all";
-                    # "auto_explain.log_min_duration" = 0;
+                    "auto_explain.log_min_duration" = 0;
                     "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;
@@ -790,12 +792,13 @@
                     log_lock_waits = true;
                     log_disconnections = true;
                     log_temp_files = 0;
+                    log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
                     # logging_collector = true;
                     log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
                     log_statement = "all";
-                    # "auto_explain.log_min_duration" = 0;
+                    "auto_explain.log_min_duration" = 0;
                     "auto_explain.log_nested_statements" = false;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;

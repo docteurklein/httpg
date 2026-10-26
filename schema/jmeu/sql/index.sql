@@ -31,24 +31,6 @@ alter table animal enable row level security;
 create policy "owner" on animal for all to jmeu
 using (tenant_id = current_setting('jmeu.tenant_id', true)::uuid);
 
-with grandmother as (
-    insert into animal (tenant_id, number, lot, birth, sex)
-    select tenant_id, random(), random(1, 4), now() - format('%s years', random(2, 10))::interval, 'Femelle'
-    from tenant, generate_series(1, 3)
-    returning *
-),
-mother as (
-    insert into animal (tenant_id, number, lot, mother, birth, sex)
-    select tenant_id, random(), random(1, 4), number, now() - format('%s months', random(7, 20))::interval, 'Femelle'
-    from grandmother, generate_series(1, 4)
-    returning *
-)
-insert into animal (tenant_id, number, lot, mother, birth, sex)
-select tenant_id, name || random(), random(1, 4), number, now() - format('%s days', random(20, 300))::interval, 'Mâle'
-from generate_series(1, 5), mother
-join tenant using (tenant_id)
-;
-
 create table medication (
     tenant_id uuid not null references tenant (tenant_id) default nullif(current_setting('jmeu.tenant_id', true), '')::uuid,
     medication_id uuid not null default uuidv7(),
@@ -62,10 +44,6 @@ create table medication (
 alter table medication enable row level security;
 create policy "owner" on medication for all to jmeu
 using (tenant_id = current_setting('jmeu.tenant_id', true)::uuid);
-
-insert into medication (tenant_id, name, posology)
-select tenant_id, 'medoc ' || random(2, 200), format('%smL par kg', random(10, 70))
-from tenant, generate_series(1, 3);
 
 create table treatment (
     tenant_id uuid not null references tenant (tenant_id) default nullif(current_setting('jmeu.tenant_id', true), '')::uuid,
@@ -82,12 +60,6 @@ create table treatment (
 alter table treatment enable row level security;
 create policy "owner" on treatment  for all to jmeu
 using (tenant_id = current_setting('jmeu.tenant_id', true)::uuid);
-
-insert into treatment (tenant_id, number, at, ordonnance, medication_id)
-select tenant_id, number, now() - format('%s days', random(20, 300))::interval, 'ordonnance ' || random(20, 800), medication_id
-from animal
-join medication using (tenant_id);
-
 
 create or replace function login() returns setof text
 volatile strict parallel safe -- leakproof
