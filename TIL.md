@@ -7,3 +7,13 @@ it simply blocks.
 It is anyway a good idea to not stream something that has not yet been committed.
 
 c.f: https://github.com/sfackler/rust-postgres/issues/1191#issuecomment-2494096341
+
+```sql
+select * from plan.explain_html((
+  select plans::jsonb->0
+  from plan.query($$
+    explain (analyze, verbose, timing, costs, buffers, format json)
+    select * from grandroc.booking_html
+  $$) _(plans json)
+))
+```

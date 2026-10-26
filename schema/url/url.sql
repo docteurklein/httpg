@@ -9,12 +9,12 @@ immutable strict
 begin atomic
   select string_agg(
     case when octet_length(ch) > 1 or ch !~ '[0-9a-za-z:/@._?#-]+' 
-      then regexp_replace(upper(substring(ch::bytea::text, 3)), '(..)', E'%\\1', 'g')
+      then regexp_replace(encode(convert_to(ch, 'UTF8'), 'hex'), '(..)', E'%\\1', 'g')
       else ch
     end,
     ''
   )
-  from regexp_split_to_table(value, '') ch;
+  from string_to_table(value, null) ch;
 end;
 
 -- drop function if exists url.url cascade;

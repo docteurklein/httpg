@@ -7,3 +7,25 @@ directories:
   schema_dir: schema
   migrations_dir: migrations
   baselines_dir: schema_baselines
+
+modules:
+  url:
+    paths: ['schema/url/**']
+  gieze:
+    paths: ['schema/gieze/**']
+    depends_on: [url]
+  grandroc:
+    paths: ['schema/grandroc/**']
+    depends_on: [url]
+  jmeu:
+    paths: ['schema/jmeu/**']
+    depends_on: [url]
+  gps:
+    paths: ['schema/gps/**']
+    depends_on: [url]
+  cpres:
+    paths: ['schema/cpres/**']
+    depends_on: [url]
+  analyze:
+    paths: ['schema/analyze/**']
+    depends_on: [url]

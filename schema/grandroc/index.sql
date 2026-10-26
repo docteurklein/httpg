@@ -361,7 +361,7 @@ with httpg (when_, booking_id, place, search, params, body) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb
     )
     select to_date(query->'qs'->>'when', 'MM-YY'),
-    (query->'qs'->>'booking_id')::uuid,
+    nullif(query->'qs'->>'booking_id', '')::uuid,
     query->'qs'->>'place',
     query->'qs'->>'search',
     query->'body'->'params',
