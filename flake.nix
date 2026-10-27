@@ -70,28 +70,28 @@
         #   cargoHash = "sha256-wXyt6zhOGOhNunYag3kLt4nDIfT0m7Z+KDTrNIZvizA=";
         # });
 
-        packages.pg_jitter = pkgs.stdenv.mkDerivation {
+        packages.pg_jitter = pkgs.stdenv.mkDerivation rec {
           pname = "pg_jitter";
           version = "0.3.1";
 
           srcs = [
-            # (pkgs.fetchFromGitHub {
-            #   owner = "vladich";
-            #   repo = "pg_jitter";
-            #   rev = version;
-            #   sha256 = "sha256-OYQQOU2/YujBSVUe6AXVbbY8+6ngw8xE5aNzZpZI+28=";
-            #   name = "pg_jitter";
-            # })
-            (builtins.fetchGit {
-              url = /home/florian/work/docteurklein/pg_jitter;
+            (pkgs.fetchFromGitHub {
+              owner = "vladich";
+              repo = "pg_jitter";
+              rev = "d243ed70010ead3db68a10781147ba48402ca200";
+              sha256 = "sha256-mn06cBtFoYNsYU5U2rPgoawrMM9HSATJN6IjDXQFBqA=";
               name = "pg_jitter";
-              rev = "463a6120ab45bc43d6ef73ac09a52e8c28691752";
             })
+            # (builtins.fetchGit {
+            #   url = /home/florian/work/docteurklein/pg_jitter;
+            #   name = "pg_jitter";
+            #   # rev = "master";
+            # })
             (pkgs.fetchFromGitHub {
               owner = "asmjit";
               repo = "asmjit";
               rev = "master";
-              sha256 = "sha256-mBnpoTG2c6RrTjOYSIeIANQKE6Uvd3/dnBGDnw3AfSA=";
+              sha256 = "sha256-IXfwtENNddgUflVP4W6uEQVUQgIpvLoieFucP21hFNE=";
               name = "asmjit";
             })
             (pkgs.fetchFromGitHub {
@@ -572,7 +572,7 @@
                         sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
                       };
                     }))
-                    # pg_ivm
+                    pg_ivm
                     # pg_hint_plan
                     # plv8
                     pgvector
@@ -581,7 +581,7 @@
                     pgrouting
                     h3-pg
                     (plpython3.withPackages (p: []))
-                    # self'.packages.pg_jitter
+                    self'.packages.pg_jitter
                     # self'.packages.pg-trickle
                   ];
 
@@ -653,7 +653,9 @@
                     max_parallel_workers = 6;
                     max_parallel_maintenance_workers = 3;
                     client_connection_check_interval = "2s";
-                    jit = "off";
+                    jit = "on";
+                    jit_above_cost = 200;
+                    jit_inline_above_cost = 2000;
                     jit_provider = "pg_jitter";
                     "pg_jitter.backend" = "sljit";
                     io_method = "io_uring";
@@ -749,7 +751,7 @@
                         sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
                       };
                     }))
-                    # pg_ivm
+                    pg_ivm
                     # pg_hint_plan
                     # plv8
                     pgvector
@@ -758,7 +760,7 @@
                     pgrouting
                     h3-pg
                     (plpython3.withPackages (p: []))
-                    # self'.packages.pg_jitter
+                    self'.packages.pg_jitter
                   ];
 
                   enableTCPIP = true;
@@ -828,7 +830,9 @@
                     max_parallel_workers = 6;
                     max_parallel_maintenance_workers = 3;
                     client_connection_check_interval = "2s";
-                    jit = "off";
+                    jit = "on";
+                    jit_above_cost = 200;
+                    jit_inline_above_cost = 2000;
                     jit_provider = "pg_jitter";
                     "pg_jitter.backend" = "sljit";
                     io_method = "io_uring";

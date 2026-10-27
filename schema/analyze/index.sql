@@ -3,7 +3,6 @@ set local search_path to "plan", url, pg_catalog, public;
 
 create schema "plan";
 
-
 create function exec(sql text, params jsonb = '{}'::jsonb)
 returns setof record
 language plpgsql strict volatile
@@ -123,7 +122,8 @@ union all select null, null, xmlelement(name form, xmlattributes(
     xmlelement(name input, xmlattributes('submit' as type))
 )::text
 from httpg
-union all 
+union all select null, null, xmlelement(name details, xmlelement(name pre, jsonb_pretty(plan - 'Plan')))::text from plan
+union all
 select null, null, xmlelement(name table, xmlattributes('1' as border),
     xmlelement(name thead,
         xmlelement(name tr,
