@@ -71,7 +71,12 @@ node (plan, type, cost, time, loops, planned_rows, actual_rows, row_ratio, filte
 select 200, null::jsonb, '<!DOCTYPE html>'::text
 -- union all select null, null, xmlelement(name pre, jsonb_pretty(current_setting('httpg.query')::jsonb))::text
 union all select null, null, $$
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Dosis">
 <style>
+
+body, textarea, pre {
+    font-family: 'Dosis', serif;
+}
 
 * {
   box-sizing: border-box;
@@ -80,9 +85,30 @@ union all select null, null, $$
     interpolate-size: allow-keywords;
 }
 table {
+    tbody tr:has(details[open]) {
+        background-color: #e1f3d2;
+    }
+    tbody tr:nth-child(odd) {
+        background-color: #eee;
+    }
     width: 100%;
-    th, td {
-        min-width: fit-content;
+    thead {
+        & * {
+            background-color: #cee5ea;
+            opacity: .8;
+        }
+        top: 0px;
+        position: sticky;
+    }
+    th {
+        overflow: hidden;
+        max-width: 3vw;
+    }
+    td {
+        max-width: min-content;
+        &.node {
+            max-width: 66vw;
+        }
         &.num {
             font-variant-numeric: tabular-nums;
             font-feature-settings: 'tnum';
@@ -97,9 +123,11 @@ textarea {
 
 details {
     & pre {
+        max-height: 40vh;
         max-width: 66vw;
-        overflow-y: scroll;
+        overflow: scroll;
         text-wrap: wrap;
+        overflow-wrap: break-word;
     }
     &::details-content {
       transition: opacity 1s;
@@ -201,7 +229,7 @@ select null, null, xmlelement(name table, xmlattributes('1' as border),
         xmlelement(name td, xmlattributes('num' as class), coalesce(wal_bytes::text, '')),
         xmlelement(name td, xmlattributes('num' as class), format('%s (%s hits)', shared_read_blocks, shared_hit_blocks)),
         xmlelement(name td, xmlattributes('num' as class), coalesce(temp_written_blocks::text, '')),
-        xmlelement(name td, xmlelement(name details,
+        xmlelement(name td, xmlattributes('node' as class), xmlelement(name details,
             xmlelement(name summary, repeat('--', depth), type),
             xmlelement(name pre, jsonb_pretty(plan - 'Plans'))
         ))

@@ -60,6 +60,17 @@ html {
   scrollbar-gutter: stable;
 }
 
+nav ul {
+  align-items: center;
+  padding: 0;
+  list-style: none;
+
+  & li {
+    display: inline-block;
+    margin-right: 1ch;
+  }
+}
+
 @view-transition {
   navigation: auto;
 }

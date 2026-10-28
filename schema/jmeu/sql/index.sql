@@ -514,14 +514,6 @@ from animal, httpg
 where case when qs ? 'number' then number = qs->>'number' else true end
 ;
 
-create or replace function httpg_query() returns jsonb
-language sql
-strict stable parallel safe
-begin atomic
-    select nullif(current_setting('httpg.query', true), '')::jsonb;
-end;
-
-
 -- drop view if exists medication_html;
 create or replace view medication_html (body, medication_id)
 with (security_invoker) as
@@ -625,4 +617,4 @@ grant select on table medication_html to jmeu;
 grant execute on procedure admin to jmeu;
 grant execute on function url.url to jmeu;
 grant execute on function url.encode to jmeu;
-grant execute on function httpg_query to jmeu;
+grant execute on function httpg.query to jmeu;

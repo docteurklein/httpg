@@ -183,7 +183,7 @@ entry (post_id, title, xml) as (
             xmlelement(name span, published_at::date),
             xmlelement(name a, xmlattributes(
                 url('/blog/query', jsonb_build_object(
-                    'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+                    'sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1',
                     'params[]', title
                 )) || '#title' as href
             ),
@@ -205,7 +205,7 @@ entry (post_id, title, xml) as (
                     $$
                         insert into blog.comment (comment_id, author, content, post_id) values ($1::uuid, $2, $3, $4::uuid)
                         returning 303 status, jsonb_build_object('Location', url.url('/blog/query', jsonb_build_object(
-                            'sql', 'select * from blog.head union all select body::text from blog.post_html where post_id = $1::uuid',
+                            'sql', 'select * from blog.head union all select null, body::text from blog.post_html where post_id = $1::uuid',
                             'params[0]', post_id,
                             'comment_id', comment_id
                         )) || '#comments') header
@@ -214,7 +214,7 @@ entry (post_id, title, xml) as (
                 xmlelement(name input, xmlattributes(
                     'hidden' as type,
                     'on_error' as name,
-                    'select * from blog.head union all select body::text from blog.post_html where post_id = $4::uuid' as value
+                    'select * from blog.head union all select null, body::text from blog.post_html where post_id = $4::uuid' as value
                 )),
                 (select html::xml from error where target = 'author'),
                 xmlelement(name input, xmlattributes(
@@ -249,7 +249,7 @@ entry (post_id, title, xml) as (
             ),
             xmlelement(name a, xmlattributes(
                 url('/blog/query', jsonb_build_object(
-                    'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+                    'sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1',
                     'params[]', title,
                     'include_unmoderated', null
                 )) || '#comments' as href
@@ -276,12 +276,12 @@ from entry
 grant select on table post_html to anon;
 
 create or replace function search(query text)
-returns setof text
+returns table (header jsonb, body text)
 security invoker
 stable strict parallel safe
 language sql
 begin atomic
-    select body::text
+    select null::jsonb, body::text
     from blog.post
     join blog.post_html using (post_id)
     where post.fts @@ websearch_to_tsquery(post.language, $1)
@@ -303,11 +303,10 @@ as
 grant select on table ts_stat to anon;
 
 -- drop view if exists head cascade;
--- create or replace view head (html) as select null; -- to allow resolution of self-depending 'head'::regclass
-create or replace view head (html)
+create or replace view head (header, html)
 with (security_invoker)
 as
-select $html$<!DOCTYPE html>
+select jsonb_build_object('cache-control', 'public, max-age=3600'), $html$<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8" />
@@ -318,15 +317,32 @@ select $html$<!DOCTYPE html>
         default-src 'self';
         base-uri 'self';
         form-action 'self';
+        font-src
+            'self'
+            fonts.gstatic.com
+        ;
         style-src
             'self'
+            fonts.googleapis.com
             'unsafe-inline'
         ;
     " />
-    <link rel="stylesheet" href="/cpres/index.css?v=4" />
+    <link rel="stylesheet" href="/index.css?v=4" />
     <link rel="alternate" type="application/atom+xml"  title="Atom feed of blog posts"  href="/query?sql=select * from blog.atom" />
     <link rel="alternate" type="application/atom+xml"  title="Atom feed of comments"  href="/query?sql=select * from blog.atom_comment" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Dosis">
     <style>
+        body {
+            line-height: 2;
+            font-family: 'Dosis', serif;
+            font-size: 1.2em;
+        }
+        textarea, pre, code {
+            line-height: initial;
+        }
+        form * {
+            width: 100%;
+        }
         pre:has(code) {
             max-height: 50vh;
             min-width: 100%;
@@ -336,6 +352,20 @@ select $html$<!DOCTYPE html>
             & code {
                 border: 0;
             }
+        }
+
+        ul.cloud {
+          list-style: none;
+          padding-left: 0;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          line-height: 2.5rem;
+
+          & li {
+            margin-left: 5px;
+          }
         }
 
         code {
@@ -356,7 +386,7 @@ select $html$<!DOCTYPE html>
 </head>
 $html$
 union all
-select xmlelement(name nav, xmlelement(name ul,
+select null, xmlelement(name nav, xmlelement(name ul, xmlattributes('display: flex; gap: 1rem;' as style),
     xmlelement(name li, xmlelement(name a, xmlattributes(
         url('/blog/query', jsonb_build_object(
             'sql', 'select * from blog.blog'
@@ -384,7 +414,7 @@ select xmlelement(name nav, xmlelement(name ul,
     ))
 ))::text
 union all
-    select html from error where target is null
+    select null, html from error where target is null
 union all (
     with httpg (qs) as (
         select nullif(current_setting('httpg.query', true), '')::jsonb->'qs'
@@ -454,7 +484,7 @@ union all (
             order by word            
         )
     )
-    select xmlelement(name div, xmlattributes('grid' as class),
+    select null, xmlelement(name div, xmlattributes('grid' as class),
         xmlelement(name div, form.html),
         cloud.html
     )::text
@@ -464,13 +494,13 @@ union all (
 grant select on table head to anon;
 
 -- drop view if exists blog cascade;
-create or replace view blog (html)
+create or replace view blog (header, html)
 with (security_invoker)
 as table head
 union all
-select xmlelement(name a, xmlattributes(
+select null, xmlelement(name a, xmlattributes(
     url('/blog/query', jsonb_build_object(
-        'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+        'sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1',
         'params[]', title
     )) || '#title' as href
 ),
@@ -495,7 +525,7 @@ entry (xml) as (
     select xmlagg(xmlelement(name entry,
         xmlelement(name title, title),
         xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
-            'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+            'sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1',
             'params[]', title
         )) as href)),
         xmlelement(name id, 'urn:uuid:' || post_id),
@@ -540,7 +570,7 @@ entry (xml) as (
     select xmlagg(xmlelement(name entry,
         xmlelement(name title, format('%s commented on %s', author, title)),
         xmlelement(name link, xmlattributes(url(format('%s://%s/query', scheme, host), jsonb_build_object(
-            'sql', 'select * from blog.head union all select body::text from blog.post_html where title = $1',
+            'sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1',
             'params[]', post.title
         )) as href)),
         xmlelement(name id, 'urn:uuid:' || comment_id),
