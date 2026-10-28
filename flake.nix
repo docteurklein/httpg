@@ -82,11 +82,6 @@
               sha256 = "sha256-mn06cBtFoYNsYU5U2rPgoawrMM9HSATJN6IjDXQFBqA=";
               name = "pg_jitter";
             })
-            # (builtins.fetchGit {
-            #   url = /home/florian/work/docteurklein/pg_jitter;
-            #   name = "pg_jitter";
-            #   # rev = "master";
-            # })
             (pkgs.fetchFromGitHub {
               owner = "asmjit";
               repo = "asmjit";
@@ -95,18 +90,25 @@
               name = "asmjit";
             })
             (pkgs.fetchFromGitHub {
-              owner = "ashvardanian";
-              repo = "StringZilla";
-              rev = "v4.6.0";
-              sha256 = "sha256-5WAD5ZpzhdIDv1kUVinc5z91N/tQVScO75kOPC1WWlY=";
-              name = "stringzilla";
-            })
-            (pkgs.fetchFromGitHub {
               owner = "vladich";
               repo = "sljit";
               rev = "master";
               sha256 = "sha256-SBD81k+QNnpry7UoYhjFn64tuizhS2m9vZt5ZBibjwI=";
               name = "sljit";
+            })
+            (pkgs.fetchFromGitHub {
+              owner = "vladich";
+              repo = "mir-patched";
+              rev = "master";
+              sha256 = "sha256-k33ZtKj+1+eKE4hjGmrv+RS1DoJMFG7RliV4JD+S5eI=";
+              name = "mir";
+            })
+            (pkgs.fetchFromGitHub {
+              owner = "ashvardanian";
+              repo = "StringZilla";
+              rev = "v4.6.0";
+              sha256 = "sha256-5WAD5ZpzhdIDv1kUVinc5z91N/tQVScO75kOPC1WWlY=";
+              name = "stringzilla";
             })
           ];
 
@@ -132,6 +134,10 @@
 
             # ${pkgs.bash}/bin/bash build.sh \
             #   asmjit \
+            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
+
+            # ${pkgs.bash}/bin/bash build.sh \
+            #   mir \
             #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
           '';
 
@@ -183,13 +189,41 @@
           pname = "pgmt";
           version = "main";
 
-          src = pkgs.fetchFromGitHub {
-            owner = "gdpotter";
-            repo = "pgmt";
-            rev = "main";
-            hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
-          };
+          src = (builtins.fetchGit {
+            url = /home/florian/work/docteurklein/pgmt;
+            # rev = "master";
+          });
+          # src = pkgs.fetchFromGitHub {
+          #   owner = "gdpotter";
+          #   repo = "pgmt";
+          #   rev = "main";
+          #   hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
+          # };
           cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
+
+          doCheck = false;
+        };
+
+        packages.pgrust = pkgs.rustPlatform.buildRustPackage rec {
+          pname = "pgrust";
+          version = "main";
+
+          src = pkgs.fetchFromGitHub {
+            owner = "malisper";
+            repo = "pgrust";
+            rev = "main";
+            hash = "sha256-k49VLG6O8httsAThjhZfcpcPFu+jz+K9b5zitfdxPdY=";
+          };
+          cargoHash = "sha256-rWDd0bwIso3llw3zittFhnXo9gSVgKtDvh58548ItJE=";
+
+          nativeBuildInputs = with pkgs; [
+            perl
+            pkg-config
+          ];
+          buildInputs = with pkgs; [
+            openssl.dev
+            re2.dev
+          ];
 
           doCheck = false;
         };
@@ -498,6 +532,7 @@
                       "HTTPG_WEBPUSH_PRIVATE_KEY_FILE=${builtins.getEnv "PWD"}/webpush.pem"
                       # "HTTPG_SMTP_PASSWORD_FILE='${builtins.getEnv "PWD"}/smtp-password'"
                       "HTTPG_ANON_ROLE=anon"
+                      "HTTPG_CACHE_DIR=.cache"
                       "HTTPG_INDEX_SQL='select * from cpres.head union all select * from cpres.findings'"
                       "HTTPG_LOGIN_QUERY='select login($1)'"
                       "HTTPG_SMTP_SENDER=florian.klein@free.fr"

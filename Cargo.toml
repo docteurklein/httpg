@@ -37,7 +37,7 @@ strip = "debuginfo"
 [dependencies]
 axum = { version = "^0", features = ["http2", "multipart"] }
 axum-macros = "^0"
-axum-extra = { version = "^0", features = ["typed-header", "cookie", "form", "query"] }
+axum-extra = { version = "^0", features = ["cookie"] }
 tower = "^0"
 tower-http = { version = "^0", features = ["cors", "fs", "compression-gzip", "compression-br", "compression-zstd", "trace"] }
 serde = { version = "^1", features = ["derive"] }
