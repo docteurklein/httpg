@@ -11,6 +11,7 @@ directories:
 modules:
   url:
     paths: ['schema/url/**']
+    depends_on: []
   gieze:
     paths: ['schema/gieze/**']
     depends_on: [url]
@@ -19,9 +20,12 @@ modules:
     depends_on: [url]
   jmeu:
     paths: ['schema/jmeu/**']
-    depends_on: [url]
+    depends_on: [url, httpg]
   gps:
     paths: ['schema/gps/**']
+    depends_on: [url]
+  blog:
+    paths: ['schema/blog/**']
     depends_on: [url]
   cpres:
     paths: ['schema/cpres/**']
@@ -29,3 +33,6 @@ modules:
   analyze:
     paths: ['schema/analyze/**']
     depends_on: [url]
+  httpg:
+    paths: ['schema/httpg/**']
+    depends_on: []

@@ -189,16 +189,16 @@
           pname = "pgmt";
           version = "main";
 
-          src = (builtins.fetchGit {
-            url = /home/florian/work/docteurklein/pgmt;
-            # rev = "master";
-          });
-          # src = pkgs.fetchFromGitHub {
-          #   owner = "gdpotter";
-          #   repo = "pgmt";
-          #   rev = "main";
-          #   hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
-          # };
+          # src = (builtins.fetchGit {
+          #   url = /home/florian/work/docteurklein/pgmt;
+          #   # rev = "master";
+          # });
+          src = pkgs.fetchFromGitHub {
+            owner = "gdpotter";
+            repo = "pgmt";
+            rev = "main";
+            hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
+          };
           cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
 
           doCheck = false;

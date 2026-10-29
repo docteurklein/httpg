@@ -1,0 +1,3915 @@
+-- pgmt:section name="gieze" module="gieze" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "gieze";
+
+-- pgmt:section name="gps" module="gps"
+CREATE SCHEMA IF NOT EXISTS "gps";
+
+-- pgmt:section name="httpg" module="httpg"
+CREATE SCHEMA IF NOT EXISTS "httpg";
+
+-- pgmt:section name="url" module="url" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "url";
+
+-- pgmt:section name="default"
+CREATE EXTENSION IF NOT EXISTS "btree_gist";
+
+CREATE EXTENSION IF NOT EXISTS "cube";
+
+CREATE EXTENSION IF NOT EXISTS "earthdistance";
+
+CREATE EXTENSION IF NOT EXISTS "fuzzystrmatch";
+
+CREATE EXTENSION IF NOT EXISTS "hstore";
+
+CREATE EXTENSION IF NOT EXISTS "moddatetime";
+
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+CREATE EXTENSION IF NOT EXISTS "postgis";
+
+CREATE EXTENSION IF NOT EXISTS "postgis_raster";
+
+CREATE EXTENSION IF NOT EXISTS "vector";
+
+CREATE EXTENSION IF NOT EXISTS "h3";
+
+CREATE EXTENSION IF NOT EXISTS "h3_postgis";
+
+CREATE EXTENSION IF NOT EXISTS "pgrouting";
+
+-- pgmt:section name="cpres" module="cpres" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "cpres";
+
+CREATE TYPE "cpres"."interest_level" AS ENUM ('a little interested', 'interested', 'highly interested');
+
+CREATE TYPE "cpres"."interest_origin" AS ENUM ('automatic', 'manual');
+
+CREATE TYPE "cpres"."interest_state" AS ENUM ('in progress', 'late', 'approved', 'given');
+
+CREATE TABLE "cpres"."good_media" (
+    "good_id" uuid NOT NULL,
+    "content" bytea NOT NULL,
+    "content_hash" bytea GENERATED ALWAYS AS (sha256(content)) STORED NOT NULL,
+    "content_type" text NOT NULL,
+    "name" text NOT NULL,
+    CONSTRAINT "good_media_pkey" PRIMARY KEY ("good_id", "content_hash")
+);
+
+ALTER TABLE "cpres"."good_media" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "cpres"."interest" (
+    "good_id" uuid NOT NULL,
+    "person_id" uuid NOT NULL,
+    "state" "cpres"."interest_state" DEFAULT 'in progress'::cpres.interest_state NOT NULL,
+    "origin" "cpres"."interest_origin" NOT NULL,
+    "level" "cpres"."interest_level" DEFAULT 'interested'::cpres.interest_level NOT NULL,
+    "query" text,
+    "price" numeric,
+    "at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "interest_pkey" PRIMARY KEY ("good_id", "person_id")
+);
+
+ALTER TABLE "cpres"."interest" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "cpres"."osm_auvergne" (
+    "geog" geography,
+    "osm_type" text,
+    "osm_id" bigint,
+    "tags" jsonb
+);
+
+CREATE TABLE "cpres"."person" (
+    "person_id" uuid DEFAULT uuidv7() NOT NULL,
+    "name" text NOT NULL,
+    "email" text NOT NULL,
+    "phone" text,
+    "login_challenge" uuid,
+    "challenge_used_at" timestamp with time zone,
+    CONSTRAINT "person_pkey" PRIMARY KEY ("person_id")
+);
+
+ALTER TABLE "cpres"."person" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "cpres"."translation" (
+    "id" text NOT NULL,
+    "lang" text NOT NULL,
+    "text" text NOT NULL,
+    CONSTRAINT "translation_pkey" PRIMARY KEY ("id", "lang")
+);
+
+CREATE INDEX "translation_id_lang_idx" ON "cpres"."translation" USING btree (id pg_catalog.text_ops, lang pg_catalog.text_ops);
+
+ALTER TABLE "cpres"."good_media" ADD CONSTRAINT "good_media_content_check" CHECK (length(content) < (1024 * 1000));
+
+ALTER TABLE "cpres"."interest" ADD CONSTRAINT "interest_person_id_fkey" FOREIGN KEY ("person_id") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_email_check" CHECK (TRIM(BOTH FROM email) <> ''::text AND POSITION(('@'::text) IN (email)) <> 0);
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_email_key" UNIQUE ("email");
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_name_check" CHECK (TRIM(BOTH FROM name) <> ''::text AND POSITION(('@'::text) IN (name)) = 0);
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_name_key" UNIQUE ("name");
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_phone_check" CHECK (TRIM(BOTH FROM phone) <> ''::text);
+
+ALTER TABLE "cpres"."person" ADD CONSTRAINT "person_phone_key" UNIQUE ("phone");
+
+CREATE VIEW "cpres"."auvergne_boundary" AS
+ SELECT st_boundary(st_union(st_multi(geog::geometry))) AS geom,
+    'auvergne'::text AS id
+   FROM cpres.osm_auvergne
+  WHERE osm_type = 'relation'::text AND (tags ->> 'boundary'::text) = 'administrative'::text AND (tags ->> 'admin_level'::text) = '6'::text;
+
+CREATE VIEW "cpres"."auvergne_highway" AS
+ SELECT osm_id,
+    geog,
+    COALESCE(NULLIF(JSON_VALUE(tags, '$."maxspeed"' RETURNING numeric), 0::numeric),
+        CASE tags ->> 'highway'::text
+            WHEN 'motorway'::text THEN 130
+            WHEN 'motorway_link'::text THEN 70
+            WHEN 'trunk'::text THEN 110
+            WHEN 'trunk_link'::text THEN 50
+            WHEN 'primary'::text THEN 90
+            WHEN 'primary_link'::text THEN 50
+            WHEN 'secondary'::text THEN 70
+            WHEN 'secondary_link'::text THEN 50
+            WHEN 'tertiary'::text THEN 50
+            WHEN 'tertiary_link'::text THEN 50
+            WHEN 'residential'::text THEN 25
+            WHEN 'service'::text THEN 15
+            WHEN 'unclassified'::text THEN 25
+            WHEN 'living_street'::text THEN 10
+            ELSE 30
+        END::numeric) AS speed
+   FROM cpres.osm_auvergne
+  WHERE osm_type = 'way'::text AND ((tags ->> 'highway'::text) = ANY (ARRAY['motorway'::text, 'motorway_link'::text, 'trunk'::text, 'trunk_link'::text, 'primary'::text, 'primary_link'::text, 'secondary'::text, 'secondary_link'::text, 'tertiary'::text, 'tertiary_link'::text, 'unclassified'::text, 'service'::text, 'living_street'::text, 'residential'::text])) AND geometrytype(geog) = 'LINESTRING'::text;
+
+CREATE VIEW "cpres"."auvergne_network_edge" AS
+ WITH crossing AS (
+         SELECT e1.osm_id,
+            e1.geog,
+            e1.speed,
+            st_intersection(e1.geog, e2.geog)::geometry AS point
+           FROM cpres.auvergne_highway e1
+             JOIN cpres.auvergne_highway e2 ON st_intersects(e1.geog, e2.geog) AND e1.osm_id <> e2.osm_id AND e1.geog && st_makeenvelope(3.51::double precision, 46.01::double precision, 3.78::double precision, 46.15::double precision, 4326)::geography
+        ), split AS (
+         SELECT crossing.osm_id,
+            split.geom,
+            crossing.speed
+           FROM crossing,
+            LATERAL st_dump(st_split(st_snap(crossing.geog::geometry, crossing.point, 0.1::double precision), crossing.point)) split(path, geom)
+        )
+ SELECT osm_id,
+    row_number() OVER (ORDER BY geog) AS id,
+    geog,
+    st_startpoint(geog::geometry) AS startpoint,
+    st_endpoint(geog::geometry) AS endpoint,
+    st_length(geog) / (speed / 3.6)::double precision AS duration
+   FROM ( SELECT split.osm_id,
+            split.geom::geography AS geom,
+            split.speed
+           FROM split) _(osm_id, geog, speed)
+  WHERE st_startpoint(geog::geometry) <> st_endpoint(geog::geometry);
+
+CREATE VIEW "cpres"."auvergne_network_node" AS
+ WITH node(geom) AS (
+         SELECT unnest(ARRAY[auvergne_network_edge.startpoint, auvergne_network_edge.endpoint]) AS unnest
+           FROM cpres.auvergne_network_edge
+        )
+ SELECT row_number() OVER (ORDER BY geom) AS id,
+    geom
+   FROM node
+  GROUP BY geom;
+
+CREATE VIEW "cpres"."auvergne_network" AS
+ SELECT edge.osm_id,
+    edge.id,
+    edge.geog,
+    source.id AS source,
+    target.id AS target,
+    edge.duration AS cost,
+    edge.duration AS reverse_cost
+   FROM cpres.auvergne_network_edge edge
+     JOIN cpres.auvergne_network_node source ON edge.startpoint = source.geom
+     JOIN cpres.auvergne_network_node target ON edge.endpoint = target.geom;
+
+CREATE OR REPLACE FUNCTION cpres.current_person_id()
+ RETURNS uuid
+ LANGUAGE sql
+ PARALLEL SAFE STRICT
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT (NULLIF(current_setting('cpres.person_id'::text, true), ''::text))::uuid AS "nullif";
+END;
+
+CREATE TABLE "cpres"."message" (
+    "message_id" uuid DEFAULT uuidv7() NOT NULL,
+    "good_id" uuid NOT NULL,
+    "person_id" uuid NOT NULL,
+    "author" uuid DEFAULT cpres.current_person_id() NOT NULL,
+    "content" text NOT NULL,
+    "at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "message_pkey" PRIMARY KEY ("message_id")
+);
+
+ALTER TABLE "cpres"."message" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "cpres"."person_detail" (
+    "person_id" uuid DEFAULT cpres.current_person_id() NOT NULL,
+    "location" point,
+    "push_endpoint" jsonb,
+    CONSTRAINT "person_detail_pkey" PRIMARY KEY ("person_id")
+);
+
+ALTER TABLE "cpres"."person_detail" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "cpres"."message" ADD CONSTRAINT "message_author_fkey" FOREIGN KEY ("author") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."message" ADD CONSTRAINT "message_content_check" CHECK (TRIM(BOTH FROM content) <> ''::text);
+
+ALTER TABLE "cpres"."message" ADD CONSTRAINT "message_good_id_person_id_fkey" FOREIGN KEY ("good_id", "person_id") REFERENCES "cpres"."interest" ("good_id", "person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."message" ADD CONSTRAINT "message_person_id_fkey" FOREIGN KEY ("person_id") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."person_detail" ADD CONSTRAINT "person_detail_person_id_fkey" FOREIGN KEY ("person_id") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+CREATE POLICY "owner" ON "cpres"."message" FOR ALL TO "person" USING (((author = cpres.current_person_id()) OR (EXISTS ( SELECT
+   FROM cpres.interest
+  WHERE ((message.good_id = interest.good_id) AND (message.person_id = interest.person_id)))))) WITH CHECK ((author = cpres.current_person_id()));
+
+CREATE POLICY "owner" ON "cpres"."person" FOR ALL TO "person" USING (true) WITH CHECK ((person_id = cpres.current_person_id()));
+
+CREATE POLICY "owner" ON "cpres"."person_detail" FOR ALL TO "person" USING ((person_id = cpres.current_person_id()));
+
+CREATE OR REPLACE FUNCTION cpres.embed_passage(content text)
+ RETURNS vector
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT SECURITY DEFINER
+BEGIN ATOMIC
+ SELECT (array_fill(0.1, ARRAY[384]))::vector(384) AS array_fill;
+END;
+
+CREATE TABLE "cpres"."good" (
+    "good_id" uuid DEFAULT uuidv7() NOT NULL,
+    "title" text NOT NULL,
+    "description" text NOT NULL,
+    "passage" text GENERATED ALWAYS AS (((title || ': '::text) || description)) STORED NOT NULL,
+    "embedding" vector(384) GENERATED ALWAYS AS (cpres.embed_passage(((title || ': '::text) || description))) STORED NOT NULL,
+    "tags" text[] DEFAULT '{}'::text[] NOT NULL,
+    "location" point NOT NULL,
+    "giver" uuid DEFAULT cpres.current_person_id() NOT NULL,
+    "receiver" uuid,
+    "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "updated_at" timestamp with time zone,
+    "given_at" timestamp with time zone,
+    CONSTRAINT "good_pkey" PRIMARY KEY ("good_id")
+);
+
+ALTER TABLE "cpres"."good" ENABLE ROW LEVEL SECURITY;
+
+CREATE INDEX "good_embedding_idx" ON "cpres"."good" USING hnsw (embedding public.vector_cosine_ops);
+
+ALTER TABLE "cpres"."good" ADD CONSTRAINT "good_giver_fkey" FOREIGN KEY ("giver") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."good" ADD CONSTRAINT "good_receiver_fkey" FOREIGN KEY ("receiver") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."good" ADD CONSTRAINT "good_title_check" CHECK (TRIM(BOTH FROM title) <> ''::text);
+
+ALTER TABLE "cpres"."good_media" ADD CONSTRAINT "good_media_good_id_fkey" FOREIGN KEY ("good_id") REFERENCES "cpres"."good" ("good_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."interest" ADD CONSTRAINT "interest_good_id_fkey" FOREIGN KEY ("good_id") REFERENCES "cpres"."good" ("good_id") ON DELETE CASCADE;
+
+ALTER TABLE "cpres"."message" ADD CONSTRAINT "message_good_id_fkey" FOREIGN KEY ("good_id") REFERENCES "cpres"."good" ("good_id") ON DELETE CASCADE;
+
+CREATE TRIGGER updated_at BEFORE UPDATE ON cpres.good FOR EACH ROW EXECUTE FUNCTION moddatetime('updated_at');
+
+CREATE POLICY "owner" ON "cpres"."good" FOR ALL TO "person" USING (true) WITH CHECK ((giver = cpres.current_person_id()));
+
+CREATE POLICY "owner" ON "cpres"."good_media" FOR ALL TO "person" USING (true) WITH CHECK ((EXISTS ( SELECT
+   FROM cpres.good
+  WHERE ((good.giver = cpres.current_person_id()) AND (good.good_id = good_media.good_id)))));
+
+CREATE POLICY "owner" ON "cpres"."interest" FOR ALL TO "person" USING (((person_id = cpres.current_person_id()) OR (EXISTS ( SELECT
+   FROM cpres.good
+  WHERE ((interest.good_id = good.good_id) AND (good.giver = cpres.current_person_id()))))));
+
+CREATE OR REPLACE FUNCTION cpres.embed_query(query text)
+ RETURNS vector
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT SECURITY DEFINER
+BEGIN ATOMIC
+ SELECT (array_fill(0.1, ARRAY[384]))::vector(384) AS array_fill;
+END;
+
+CREATE TABLE "cpres"."search" (
+    "person_id" uuid DEFAULT cpres.current_person_id() NOT NULL,
+    "query" text NOT NULL,
+    "embedding" vector(384) GENERATED ALWAYS AS (cpres.embed_query(query)) STORED NOT NULL,
+    "interest" "cpres"."interest_level" DEFAULT 'interested'::cpres.interest_level NOT NULL,
+    "at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "search_pkey" PRIMARY KEY ("person_id", "query")
+);
+
+ALTER TABLE "cpres"."search" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "cpres"."search" ADD CONSTRAINT "search_person_id_fkey" FOREIGN KEY ("person_id") REFERENCES "cpres"."person" ("person_id") ON DELETE CASCADE;
+
+CREATE POLICY "owner" ON "cpres"."search" FOR ALL TO "person" USING (true) WITH CHECK ((person_id = cpres.current_person_id()));
+
+CREATE OR REPLACE FUNCTION cpres.rerank_distance(query text, content text)
+ RETURNS real
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT SECURITY DEFINER
+BEGIN ATOMIC
+ SELECT
+         CASE
+             WHEN (content ~~* (('%'::text || query) || '%'::text)) THEN '-1'::integer
+             ELSE 1
+         END AS "case";
+END;
+
+CREATE OR REPLACE PROCEDURE cpres.want(IN _good_id uuid, IN level cpres.interest_level, IN price_ text)
+ LANGUAGE sql
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ INSERT INTO cpres.interest (good_id, person_id, origin, level, price)
+   VALUES (want._good_id, cpres.current_person_id(), 'manual'::cpres.interest_origin, want.level, (NULLIF(want.price_, ''::text))::numeric) ON CONFLICT(good_id, person_id) DO UPDATE SET level = excluded.level, price = excluded.price;
+END;
+
+-- pgmt:section name="cpres_2" module="cpres"
+GRANT SELECT ("name", "person_id", "phone") ON "cpres"."person" TO "anon";
+
+GRANT SELECT ("location", "person_id", "push_endpoint") ON "cpres"."person_detail" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."current_person_id"() TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_passage"(content text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_query"(query text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."rerank_distance"(query text, content text) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."want"(IN _good_id uuid, IN level cpres.interest_level, IN price_ text) TO "anon";
+
+GRANT USAGE ON SCHEMA "cpres" TO "anon";
+
+GRANT SELECT ON "cpres"."good" TO "anon";
+
+GRANT SELECT ON "cpres"."good_media" TO "anon";
+
+GRANT SELECT ON "cpres"."interest" TO "anon";
+
+GRANT SELECT ON "cpres"."search" TO "anon";
+
+GRANT SELECT ON "cpres"."auvergne_boundary" TO "anon";
+
+GRANT SELECT ON "cpres"."auvergne_highway" TO "anon";
+
+GRANT SELECT ON "cpres"."auvergne_network" TO "anon";
+
+GRANT SELECT ON "cpres"."auvergne_network_node" TO "anon";
+
+GRANT INSERT ("description", "given_at", "good_id", "location", "receiver", "tags", "title"), UPDATE ("description", "given_at", "good_id", "location", "receiver", "tags", "title") ON "cpres"."good" TO "person";
+
+GRANT INSERT ("email", "name", "phone"), SELECT ("name", "person_id", "phone"), UPDATE ("email", "name", "phone") ON "cpres"."person" TO "person";
+
+GRANT INSERT ("location", "push_endpoint"), SELECT ("location", "person_id", "push_endpoint"), UPDATE ("location", "push_endpoint") ON "cpres"."person_detail" TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."current_person_id"() TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_passage"(content text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_query"(query text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."rerank_distance"(query text, content text) TO "person";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."want"(IN _good_id uuid, IN level cpres.interest_level, IN price_ text) TO "person";
+
+GRANT CREATE, USAGE ON SCHEMA "cpres" TO "person";
+
+GRANT DELETE, SELECT ON "cpres"."good" TO "person";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "cpres"."good_media" TO "person";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "cpres"."interest" TO "person";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "cpres"."message" TO "person";
+
+GRANT SELECT ON "cpres"."osm_auvergne" TO "person";
+
+GRANT DELETE ON "cpres"."person" TO "person";
+
+GRANT DELETE ON "cpres"."person_detail" TO "person";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "cpres"."search" TO "person";
+
+GRANT SELECT ON "cpres"."auvergne_boundary" TO "person";
+
+GRANT SELECT ON "cpres"."auvergne_highway" TO "person";
+
+GRANT SELECT ON "cpres"."auvergne_network" TO "person";
+
+GRANT SELECT ON "cpres"."auvergne_network_node" TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."current_person_id"() TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_passage"(content text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."embed_query"(query text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."rerank_distance"(query text, content text) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "cpres"."want"(IN _good_id uuid, IN level cpres.interest_level, IN price_ text) TO PUBLIC;
+
+GRANT USAGE ON TYPE "cpres"."interest_level" TO PUBLIC;
+
+GRANT USAGE ON TYPE "cpres"."interest_origin" TO PUBLIC;
+
+GRANT USAGE ON TYPE "cpres"."interest_state" TO PUBLIC;
+
+-- pgmt:section name="gieze_2" module="gieze" remaps="(unmoduled)"
+CREATE DOMAIN "gieze"."amount" AS numeric(10,2) CONSTRAINT amount_check CHECK (VALUE >= 0::numeric);
+
+CREATE DOMAIN "gieze"."rate" AS numeric(6,5) CONSTRAINT rate_check CHECK (VALUE >= 0::numeric);
+
+CREATE TABLE "gieze"."admin" (
+    "name" text NOT NULL,
+    "password" text NOT NULL,
+    "salt" text NOT NULL,
+    CONSTRAINT "admin_pkey" PRIMARY KEY ("name")
+);
+
+CREATE TABLE "gieze"."bl" (
+    "bl" bigint GENERATED BY DEFAULT AS IDENTITY NOT NULL,
+    "client" text NOT NULL,
+    "inserted_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "shipped_at" date,
+    "invoiced" boolean DEFAULT false,
+    CONSTRAINT "bl_pkey" PRIMARY KEY ("bl")
+);
+
+CREATE TABLE "gieze"."bl_line" (
+    "bl" bigint NOT NULL,
+    "product" text NOT NULL,
+    "quantity" integer NOT NULL,
+    CONSTRAINT "bl_line_pkey" PRIMARY KEY ("bl", "product")
+);
+
+CREATE TABLE "gieze"."client" (
+    "client" text NOT NULL,
+    "billing_address" text NOT NULL,
+    "shipping_address" text,
+    "phone" text,
+    CONSTRAINT "client_pkey" PRIMARY KEY ("client")
+);
+
+CREATE TABLE "gieze"."invoice" (
+    "invoice" text NOT NULL,
+    "increment" bigint NOT NULL,
+    "client" text NOT NULL,
+    "month" date,
+    "address" text NOT NULL,
+    "client_address" text NOT NULL,
+    "invoiced_at" timestamp with time zone NOT NULL,
+    "deadline_at" timestamp with time zone NOT NULL,
+    "total_ht" "gieze"."amount" NOT NULL,
+    "total_tva" "gieze"."amount" NOT NULL,
+    "total_ttc" "gieze"."amount" NOT NULL,
+    "bank_info" text NOT NULL,
+    "legal_infos" text NOT NULL,
+    "footer" text,
+    CONSTRAINT "invoice_pkey" PRIMARY KEY ("invoice")
+);
+
+CREATE TABLE "gieze"."invoice_line" (
+    "invoice" text NOT NULL,
+    "bl" text NOT NULL,
+    "product" text NOT NULL,
+    "quantity" bigint NOT NULL,
+    "shipped_at" date NOT NULL,
+    "unit_price_ht" "gieze"."amount" NOT NULL,
+    "total_price_ht" "gieze"."amount" NOT NULL,
+    "tva_rate" "gieze"."rate" NOT NULL,
+    "total_tva" "gieze"."amount" NOT NULL,
+    "total_price_ttc" "gieze"."amount" NOT NULL,
+    CONSTRAINT "invoice_line_pkey" PRIMARY KEY ("invoice", "bl", "product")
+);
+
+CREATE TABLE "gieze"."product" (
+    "product" text NOT NULL,
+    "unit_price_ht" "gieze"."amount" NOT NULL,
+    "tva_rate" "gieze"."rate" NOT NULL,
+    CONSTRAINT "product_pkey" PRIMARY KEY ("product")
+);
+
+ALTER TABLE "gieze"."bl" ADD CONSTRAINT "bl_client_fkey" FOREIGN KEY ("client") REFERENCES "gieze"."client" ("client") ON DELETE CASCADE;
+
+ALTER TABLE "gieze"."bl_line" ADD CONSTRAINT "bl_line_bl_fkey" FOREIGN KEY ("bl") REFERENCES "gieze"."bl" ("bl") ON DELETE CASCADE;
+
+ALTER TABLE "gieze"."bl_line" ADD CONSTRAINT "bl_line_product_fkey" FOREIGN KEY ("product") REFERENCES "gieze"."product" ("product") ON DELETE CASCADE;
+
+ALTER TABLE "gieze"."bl_line" ADD CONSTRAINT "bl_line_quantity_check" CHECK (quantity > 0);
+
+ALTER TABLE "gieze"."invoice" ADD CONSTRAINT "invoice_client_month_increment_key" UNIQUE ("client", "month", "increment");
+
+ALTER TABLE "gieze"."invoice_line" ADD CONSTRAINT "invoice_line_invoice_fkey" FOREIGN KEY ("invoice") REFERENCES "gieze"."invoice" ("invoice") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "gieze"."invoice_line" ADD CONSTRAINT "invoice_line_quantity_check" CHECK (quantity > 0);
+
+-- pgmt:section name="gieze_3" module="gieze"
+GRANT USAGE ON SCHEMA "gieze" TO "anon";
+
+GRANT USAGE ON SCHEMA "gieze" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."bl" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."bl_line" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."client" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."invoice" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."invoice_line" TO "gieze_admin";
+
+GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON "gieze"."product" TO "gieze_admin";
+
+GRANT USAGE ON DOMAIN "gieze"."amount" TO PUBLIC;
+
+GRANT USAGE ON DOMAIN "gieze"."rate" TO PUBLIC;
+
+-- pgmt:section name="gps_2" module="gps"
+CREATE TABLE "gps"."ping" (
+    "location" geometry(Point,4326) NOT NULL,
+    "run_id" uuid NOT NULL,
+    "at" timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT "ping_pkey" PRIMARY KEY ("run_id", "location", "at")
+);
+
+ALTER TABLE "gps"."ping" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "gps"."runner" (
+    "runner_id" uuid DEFAULT uuidv7() NOT NULL,
+    "name" text NOT NULL,
+    "password" text NOT NULL,
+    "salt" text NOT NULL,
+    CONSTRAINT "runner_pkey" PRIMARY KEY ("runner_id")
+);
+
+ALTER TABLE "gps"."runner" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "gps"."runner" ADD CONSTRAINT "runner_name_check" CHECK (TRIM(BOTH FROM name) <> ''::text AND POSITION(('@'::text) IN (name)) = 0);
+
+ALTER TABLE "gps"."runner" ADD CONSTRAINT "runner_name_key" UNIQUE ("name");
+
+CREATE POLICY "recent" ON "gps"."ping" AS RESTRICTIVE FOR SELECT TO "anon" USING ((at >= (now() - '1 mon'::interval)));
+
+CREATE OR REPLACE FUNCTION gps.current_runner_id()
+ RETURNS uuid
+ LANGUAGE sql
+ PARALLEL SAFE STRICT
+ SET search_path TO 'gps', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT (NULLIF((((NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb -> 'cookies'::text) ->> 'gps.current_runner_id'::text), ''::text))::uuid AS "nullif";
+END;
+
+CREATE TABLE "gps"."run" (
+    "run_id" uuid DEFAULT uuidv7() NOT NULL,
+    "name" text DEFAULT to_char(now(), 'TMDay DD/MM/YY, HH24:MI'::text),
+    "starts_at" timestamp with time zone DEFAULT now() NOT NULL,
+    "ends_at" timestamp with time zone,
+    "runner_id" uuid DEFAULT gps.current_runner_id() NOT NULL,
+    "geom" geometry(LineString,4326) DEFAULT NULL::geometry,
+    CONSTRAINT "run_pkey" PRIMARY KEY ("run_id")
+);
+
+ALTER TABLE "gps"."run" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "gps"."ping" ADD CONSTRAINT "ping_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "gps"."run" ("run_id");
+
+ALTER TABLE "gps"."run" ADD CONSTRAINT "run_runner_id_fkey" FOREIGN KEY ("runner_id") REFERENCES "gps"."runner" ("runner_id");
+
+CREATE POLICY "owner" ON "gps"."ping" FOR ALL TO "anon" USING ((EXISTS ( SELECT
+   FROM gps.run
+  WHERE ((run.runner_id = gps.current_runner_id()) AND (run.run_id = ping.run_id)))));
+
+CREATE POLICY "owner" ON "gps"."run" FOR ALL TO "anon" USING ((runner_id = gps.current_runner_id()));
+
+CREATE POLICY "owner" ON "gps"."runner" FOR ALL TO "anon" USING ((runner_id = gps.current_runner_id()));
+
+GRANT EXECUTE ON FUNCTION "gps"."current_runner_id"() TO "anon";
+
+GRANT USAGE ON SCHEMA "gps" TO "anon";
+
+GRANT DELETE, INSERT, SELECT ON "gps"."ping" TO "anon";
+
+GRANT INSERT, SELECT, UPDATE ON "gps"."run" TO "anon";
+
+GRANT INSERT, SELECT, UPDATE ON "gps"."runner" TO "anon";
+
+GRANT USAGE ON SCHEMA "gps" TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "gps"."current_runner_id"() TO PUBLIC;
+
+-- pgmt:section name="httpg_2" module="httpg"
+CREATE OR REPLACE FUNCTION httpg.query()
+ RETURNS jsonb
+ LANGUAGE sql
+ STABLE PARALLEL SAFE STRICT
+BEGIN ATOMIC
+ SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb AS "nullif";
+END;
+
+GRANT EXECUTE ON FUNCTION "httpg"."query"() TO "anon";
+
+GRANT USAGE ON SCHEMA "httpg" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "httpg"."query"() TO "jmeu";
+
+GRANT EXECUTE ON FUNCTION "httpg"."query"() TO PUBLIC;
+
+-- pgmt:section name="url_2" module="url" remaps="(unmoduled)"
+CREATE OR REPLACE FUNCTION url.encode(value text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE STRICT
+ SET search_path TO 'pg_catalog'
+BEGIN ATOMIC
+ SELECT string_agg(
+         CASE
+             WHEN ((octet_length(ch.ch) > 1) OR (ch.ch !~ '[0-9a-za-z:/@._?#-]+'::text)) THEN regexp_replace(upper("substring"(((ch.ch)::bytea)::text, 3)), '(..)'::text, '%\1'::text, 'g'::text)
+             ELSE ch.ch
+         END, ''::text) AS string_agg
+    FROM string_to_table(encode.value, NULL::text) ch(ch);
+END;
+
+CREATE OR REPLACE FUNCTION url.url(path text, params jsonb DEFAULT '{}'::jsonb)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+ SET search_path TO 'pg_catalog'
+BEGIN ATOMIC
+ SELECT format('%s?%s'::text, path, ( WITH RECURSIVE param(path, value) AS (
+                  SELECT jsonb_each.key,
+                     jsonb_each.value
+                    FROM jsonb_each(url.params) jsonb_each(key, value)
+                 UNION ALL
+                 ( WITH _param AS (
+                          SELECT param_1.path,
+                             param_1.value
+                            FROM param param_1
+                         )
+                  SELECT format('%s[%s]'::text, _param.path, c.key) AS format,
+                     c.value
+                    FROM _param,
+                     LATERAL jsonb_each(_param.value) c(key, value)
+                   WHERE (_param.value IS JSON OBJECT)
+                 UNION ALL
+                  SELECT format('%s[]'::text, _param.path) AS format,
+                     c.value
+                    FROM _param,
+                     LATERAL jsonb_array_elements(_param.value) c(value)
+                   WHERE (_param.value IS JSON ARRAY))
+                 )
+          SELECT string_agg(format('%s=%s'::text, param.path, url.encode((param.value #>> '{}'::text[]))), '&'::text) AS string_agg
+            FROM param
+           WHERE (param.value IS JSON SCALAR))) AS format;
+END;
+
+-- pgmt:section name="url_3" module="url"
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "anon";
+
+GRANT USAGE ON SCHEMA "url" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "gieze_admin";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "gieze_admin";
+
+GRANT USAGE ON SCHEMA "url" TO "gieze_admin";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "grandroc";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "grandroc";
+
+GRANT USAGE ON SCHEMA "url" TO "grandroc";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "jmeu";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "jmeu";
+
+GRANT USAGE ON SCHEMA "url" TO "jmeu";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO "person";
+
+GRANT EXECUTE ON FUNCTION "url"."encode"(value text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "url"."url"(path text, params jsonb) TO PUBLIC;
+
+GRANT USAGE ON SCHEMA "url" TO "runner";
+
+-- pgmt:section name="blog" module="blog" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "blog";
+
+CREATE TABLE "blog"."comment" (
+    "comment_id" uuid DEFAULT uuidv7() NOT NULL,
+    "author" text NOT NULL,
+    "content" text NOT NULL,
+    "language" regconfig DEFAULT 'english'::regconfig NOT NULL,
+    "fts" tsvector GENERATED ALWAYS AS ((setweight(to_tsvector('simple'::regconfig, author), 'A'::"char") || setweight(to_tsvector(language, content), 'B'::"char"))) STORED NOT NULL,
+    "post_id" uuid NOT NULL,
+    "published_at" timestamp with time zone DEFAULT now(),
+    "approved_at" timestamp with time zone,
+    CONSTRAINT "comment_pkey" PRIMARY KEY ("comment_id")
+);
+
+ALTER TABLE "blog"."comment" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "blog"."post" (
+    "post_id" uuid DEFAULT uuidv7() NOT NULL,
+    "title" text NOT NULL,
+    "content" text NOT NULL,
+    "language" regconfig DEFAULT 'english'::regconfig NOT NULL,
+    "fts" tsvector GENERATED ALWAYS AS ((setweight(to_tsvector(language, title), 'A'::"char") || setweight(to_tsvector(language, content), 'B'::"char"))) STORED NOT NULL,
+    "published_at" timestamp with time zone DEFAULT now(),
+    "updated_at" timestamp with time zone,
+    CONSTRAINT "post_pkey" PRIMARY KEY ("post_id")
+);
+
+ALTER TABLE "blog"."post" ENABLE ROW LEVEL SECURITY;
+
+CREATE INDEX "fts" ON "blog"."post" USING gin (fts pg_catalog.tsvector_ops);
+
+CREATE INDEX "post_id" ON "blog"."comment" USING btree (post_id pg_catalog.uuid_ops);
+
+CREATE INDEX "published" ON "blog"."post" USING btree (published_at pg_catalog.timestamptz_ops) WHERE (published_at IS NOT NULL);
+
+ALTER TABLE "blog"."comment" ADD CONSTRAINT "comment_post_id_fkey" FOREIGN KEY ("post_id") REFERENCES "blog"."post" ("post_id") ON DELETE CASCADE;
+
+ALTER TABLE "blog"."comment" ADD CONSTRAINT "only non-empty author" CHECK (TRIM(BOTH FROM author) <> ''::text AND length(author) <= 100);
+
+ALTER TABLE "blog"."comment" ADD CONSTRAINT "only non-empty comment" CHECK (TRIM(BOTH FROM content) <> ''::text AND length(content) <= 10000);
+
+CREATE POLICY "moderated" ON "blog"."comment" FOR ALL TO "anon" USING (( WITH query(query) AS (
+         SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb AS "nullif"
+        )
+ SELECT
+        CASE
+            WHEN (((query.query -> 'qs'::text) ? 'include_unmoderated'::text) OR (comment.comment_id = (COALESCE(((query.query -> 'qs'::text) ->> 'comment_id'::text), (((query.query -> 'body'::text) -> 'params'::text) ->> 0)))::uuid)) THEN true
+            ELSE (comment.approved_at IS NOT NULL)
+        END AS "case"
+   FROM query)) WITH CHECK (true);
+
+CREATE POLICY "published" ON "blog"."post" FOR ALL TO "anon" USING ((published_at IS NOT NULL));
+
+CREATE VIEW "blog"."atom" WITH (security_invoker = true) AS
+ WITH httpg(scheme, host) AS (
+         WITH q(q) AS (
+                 SELECT current_setting('httpg.query'::text, true)::jsonb AS current_setting
+                )
+         SELECT q.q ->> 'scheme'::text AS "?column?",
+            q.q ->> 'host'::text AS "?column?"
+           FROM q
+        ), entry(xml) AS (
+         SELECT xmlagg(XMLELEMENT(NAME entry, XMLELEMENT(NAME title, post.title), XMLELEMENT(NAME link, XMLATTRIBUTES(url.url(format('%s://%s/query'::text, httpg.scheme, httpg.host), jsonb_build_object('sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1', 'params[]', post.title)) AS href)), XMLELEMENT(NAME id, 'urn:uuid:'::text || post.post_id), XMLELEMENT(NAME content, XMLATTRIBUTES('html' AS type), post.content)) ORDER BY post.published_at DESC) AS xmlagg
+           FROM httpg,
+            blog.post
+         LIMIT 50
+        ), feed(xml) AS (
+         SELECT XMLELEMENT(NAME feed, XMLATTRIBUTES('http://www.w3.org/2005/Atom' AS xmlns), XMLELEMENT(NAME title, 'docteurklein''s blog'), XMLELEMENT(NAME link, url.url(format('%s://%s/query'::text, httpg.scheme, httpg.host), jsonb_build_object('sql', 'select * from blog.blog'))), XMLELEMENT(NAME id, 'urn:uuid:019ef8ba-51f7-7b44-a223-e85ddb5bedea'), entry.xml) AS "xmlelement"
+           FROM entry,
+            httpg
+        )
+ SELECT jsonb_build_object('content-type', 'application/atom+xml') AS header,
+    NULL::text AS body
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    '<?xml version="1.0" encoding="UTF-8"?>
+'::text AS body
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    XMLSERIALIZE(DOCUMENT feed.xml AS text INDENT) AS body
+   FROM feed;
+
+CREATE VIEW "blog"."atom_comment" WITH (security_invoker = true) AS
+ WITH httpg(scheme, host) AS (
+         WITH q(q) AS (
+                 SELECT current_setting('httpg.query'::text, true)::jsonb AS current_setting
+                )
+         SELECT q.q ->> 'scheme'::text AS "?column?",
+            q.q ->> 'host'::text AS "?column?"
+           FROM q
+        ), entry(xml) AS (
+         SELECT xmlagg(XMLELEMENT(NAME entry, XMLELEMENT(NAME title, format('%s commented on %s'::text, comment.author, post.title)), XMLELEMENT(NAME link, XMLATTRIBUTES(url.url(format('%s://%s/query'::text, httpg.scheme, httpg.host), jsonb_build_object('sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1', 'params[]', post.title)) AS href)), XMLELEMENT(NAME id, 'urn:uuid:'::text || comment.comment_id), XMLELEMENT(NAME content, XMLATTRIBUTES('html' AS type), xmltext(comment.content)::text)) ORDER BY comment.published_at DESC) AS xmlagg
+           FROM httpg,
+            blog.comment
+             JOIN blog.post USING (post_id)
+         LIMIT 50
+        ), feed(xml) AS (
+         SELECT XMLELEMENT(NAME feed, XMLATTRIBUTES('http://www.w3.org/2005/Atom' AS xmlns), XMLELEMENT(NAME title, 'Comments on docteurklein''s blog'), XMLELEMENT(NAME link, url.url(format('%s://%s/query'::text, httpg.scheme, httpg.host), jsonb_build_object('sql', 'select * from blog.blog'))), XMLELEMENT(NAME id, 'urn:uuid:019ef8ba-51f7-7b44-a223-e85ddb5bedeb'), entry.xml) AS "xmlelement"
+           FROM entry,
+            httpg
+        )
+ SELECT jsonb_build_object('content-type', 'application/atom+xml') AS header,
+    NULL::text AS body
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    '<?xml version="1.0" encoding="UTF-8"?>
+'::text AS body
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    XMLSERIALIZE(DOCUMENT feed.xml AS text INDENT) AS body
+   FROM feed;
+
+CREATE VIEW "blog"."comment_html" WITH (security_invoker = true) AS
+ WITH httpg(qs) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?"
+           FROM query
+        )
+ SELECT comment.post_id,
+    comment.comment_id,
+    XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME address, format('%s (%s)'::text, comment.author, comment.published_at)),
+        CASE
+            WHEN httpg.qs ? 'search'::text THEN XMLELEMENT(NAME pre, ts_headline(comment.language, xmltext(comment.content)::text, websearch_to_tsquery(comment.language, (httpg.qs -> 'params'::text) ->> 0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2'::text)::xml)
+            ELSE xmltext(comment.content)
+        END) AS body
+   FROM blog.comment,
+    httpg;
+
+CREATE VIEW "blog"."error" WITH (security_invoker = true) AS
+ WITH httpg(error, qs) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?",
+            NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), c(attname, conname) AS (
+         SELECT a.attname,
+            c.conname::text AS conname
+           FROM httpg,
+            pg_constraint c
+             JOIN pg_attribute a ON (a.attnum = ANY (c.conkey)) AND a.attrelid = c.conrelid
+          WHERE c.conname = "substring"(httpg.error, 'violates check constraint "([^"]+)"'::text) AND c.connamespace = 'blog'::regnamespace::oid
+        ), all_(target, msg) AS (
+         SELECT c.attname,
+            c.conname
+           FROM c
+        UNION ALL
+         SELECT NULL::name AS name,
+            httpg.error
+           FROM httpg
+          WHERE httpg.error IS NOT NULL
+        )
+ SELECT target,
+    XMLELEMENT(NAME article, XMLATTRIBUTES('card error' AS class), msg)::text AS html
+   FROM all_
+  WHERE msg IS NOT NULL;
+
+CREATE VIEW "blog"."post_html" WITH (security_invoker = true) AS
+ WITH httpg(qs, params, comment_id) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            (query.query -> 'body'::text) -> 'params'::text AS "?column?",
+            ((query.query -> 'qs'::text) ->> 'comment_id'::text)::uuid AS uuid
+           FROM query
+        ), entry(post_id, title, xml) AS (
+         SELECT post.post_id,
+            post.title,
+            XMLELEMENT(NAME div, XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME span, post.published_at::date), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1', 'params[]', post.title)) || '#title'::text AS href), XMLELEMENT(NAME h2, XMLATTRIBUTES('title' AS id), post.title)),
+                CASE
+                    WHEN httpg.qs ? 'search'::text THEN XMLELEMENT(NAME pre, ts_headline(post.language, post.content, websearch_to_tsquery(post.language, (httpg.qs -> 'params'::text) ->> 0), 'MaxFragments=100,FragmentDelimiter="<br/>[...]<br/>",MaxWords=10,MinWords=2'::text)::xml)
+                    ELSE post.content::xml
+                END, XMLELEMENT(NAME hr), XMLELEMENT(NAME h4, XMLATTRIBUTES('comments' AS id), 'Comments'), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/blog/query?include_lsn=#comments' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+                        insert into blog.comment (comment_id, author, content, post_id) values ($1::uuid, $2, $3, $4::uuid)
+                        returning 303 status, jsonb_build_object(''Location'', url.url(''/blog/query'', jsonb_build_object(
+                            ''sql'', ''select * from blog.head union all select null, body::text from blog.post_html where post_id = $1::uuid'',
+                            ''params[0]'', post_id,
+                            ''comment_id'', comment_id
+                        )) || ''#comments'') header
+                    ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from blog.head union all select null, body::text from blog.post_html where post_id = $4::uuid' AS value)), ( SELECT error.html::xml AS html
+                   FROM blog.error
+                  WHERE error.target = 'author'::name), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, 'author' AS placeholder, COALESCE(httpg.params ->> 0, uuidv7()::text) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[1]' AS name, 'required' AS required, 'author' AS placeholder, httpg.params ->> 1 AS value)), ( SELECT error.html::xml AS html
+                   FROM blog.error
+                  WHERE error.target = 'content'::name), XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[2]' AS name, 'comment' AS placeholder, 'required' AS required, 7 AS rows), COALESCE(httpg.params ->> 2, ''::text)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[3]' AS name, post.post_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Comment' AS value))), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1', 'params[]', post.title, 'include_unmoderated', NULL::unknown)) || '#comments'::text AS href), 'Include unmoderated'), XMLELEMENT(NAME div, XMLATTRIBUTES('messages' AS class), ( SELECT xmlagg(c.body ORDER BY comment.published_at DESC) AS xmlagg
+                   FROM blog.comment
+                     JOIN blog.comment_html c USING (comment_id)
+                  WHERE c.post_id = post.post_id AND
+                        CASE
+                            WHEN httpg.qs ? 'search'::text THEN comment.fts @@ websearch_to_tsquery(comment.language, (httpg.qs -> 'params'::text) ->> 0)
+                            ELSE true
+                        END)))) AS "xmlelement"
+           FROM httpg,
+            blog.post
+        )
+ SELECT post_id,
+    title,
+    xml AS body
+   FROM entry;
+
+CREATE VIEW "blog"."ts_stat" AS
+ SELECT word,
+    nentry,
+    nentry::numeric / max(nentry) OVER ()::numeric AS ratio
+   FROM ts_stat('select fts from blog.post'::text) ts_stat(word, ndoc, nentry);
+
+CREATE VIEW "blog"."head" WITH (security_invoker = true) AS
+ SELECT jsonb_build_object('cache-control', 'public, max-age=3600') AS header,
+    '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>docteurklein''s blog</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width" />
+    <meta http-equiv="Content-Security-Policy" content="
+        default-src ''self'';
+        base-uri ''self'';
+        form-action ''self'';
+        font-src
+            ''self''
+            fonts.gstatic.com
+        ;
+        style-src
+            ''self''
+            fonts.googleapis.com
+            ''unsafe-inline''
+        ;
+    " />
+    <link rel="stylesheet" href="/index.css?v=4" />
+    <link rel="alternate" type="application/atom+xml"  title="Atom feed of blog posts"  href="/query?sql=select * from blog.atom" />
+    <link rel="alternate" type="application/atom+xml"  title="Atom feed of comments"  href="/query?sql=select * from blog.atom_comment" />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Dosis">
+    <style>
+        body {
+            line-height: 2;
+            font-family: ''Dosis'', serif;
+            font-size: 1.2em;
+        }
+        textarea, pre, code {
+            line-height: initial;
+        }
+        form * {
+            width: 100%;
+        }
+        pre:has(code) {
+            max-height: 50vh;
+            min-width: 100%;
+            overflow: auto;
+            white-space: pre;
+
+            & code {
+                border: 0;
+            }
+        }
+
+        ul.cloud {
+          list-style: none;
+          padding-left: 0;
+          display: flex;
+          flex-wrap: wrap;
+          align-items: center;
+          justify-content: center;
+          line-height: 2.5rem;
+
+          & li {
+            margin-left: 5px;
+          }
+        }
+
+        code {
+            border: 1px solid grey;
+            padding: 3px;
+        }
+
+        body {
+          display: grid;
+          grid-template-columns:
+            1fr min(60rem, 100%) 1fr;
+        }
+
+        body>* {
+          grid-column: 2;
+        }
+    </style>
+</head>
+'::text AS html
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    XMLELEMENT(NAME nav, XMLELEMENT(NAME ul, XMLATTRIBUTES('display: flex; gap: 1rem;' AS style), XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.blog')) AS href), XMLELEMENT(NAME h1, 'docteurklein''s blog'))), XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.atom')) AS href, 'application/atom+xml' AS type, 'alternate' AS rel), 'Atom feed of blog posts')), XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.atom_comment')) AS href, 'application/atom+xml' AS type, 'alternate' AS rel), 'Atom feed of comments'))))::text AS html
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    error.html
+   FROM blog.error
+  WHERE error.target IS NULL
+UNION ALL
+( WITH httpg(qs) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), form(html) AS (
+         SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('GET' AS method, '/blog/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+                select * from blog.head
+                union all
+                select * from blog.search($1)
+                ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('search' AS type, 'params[0]' AS name, 'query' AS placeholder,
+                CASE
+                    WHEN httpg.qs ? 'search'::text THEN (httpg.qs -> 'params'::text) ->> 0
+                    ELSE NULL::text
+                END AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'search' AS name)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Search' AS value))) AS "xmlelement"
+           FROM httpg
+        ), cloud(html) AS (
+         SELECT XMLELEMENT(NAME ul, XMLATTRIBUTES('cloud' AS class), xmlagg(XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.head union all select * from blog.search($1)', 'params[]', unnamed_subquery_4.word, 'search', NULL::unknown)) AS href, format('font-size: calc(%s * 1ch)'::text, round(LEAST(5::numeric, GREATEST(1::numeric, unnamed_subquery_4.ratio * 4::numeric)), 2)) AS style), format('%s (%s)'::text, unnamed_subquery_4.word, unnamed_subquery_4.nentry))))) AS "xmlelement"
+           FROM ( WITH top AS (
+                         SELECT ts_stat.word,
+                            ts_stat.nentry,
+                            ts_stat.ratio
+                           FROM blog.ts_stat
+                          ORDER BY ts_stat.nentry DESC
+                         LIMIT 5
+                        ), rand AS (
+                         SELECT ts_stat.word,
+                            ts_stat.nentry,
+                            ts_stat.ratio
+                           FROM blog.ts_stat
+                          WHERE NOT (EXISTS ( SELECT
+                                   FROM top
+                                  WHERE ts_stat.word = top.word))
+                          ORDER BY (random())
+                         LIMIT 5
+                        )
+                 SELECT top.word,
+                    top.nentry,
+                    top.ratio
+                   FROM top
+                UNION ALL
+                 SELECT rand.word,
+                    rand.nentry,
+                    rand.ratio
+                   FROM rand
+          ORDER BY 1) unnamed_subquery_4
+        )
+ SELECT NULL::jsonb AS header,
+    XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME div, form.html), cloud.html)::text AS html
+   FROM form,
+    cloud);
+
+CREATE VIEW "blog"."blog" WITH (security_invoker = true) AS
+ SELECT head.header,
+    head.html
+   FROM blog.head
+UNION ALL
+ SELECT NULL::jsonb AS header,
+    XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/blog/query'::text, jsonb_build_object('sql', 'select * from blog.head union all select null, body::text from blog.post_html where title = $1', 'params[]', post.title)) || '#title'::text AS href), XMLELEMENT(NAME h2, format('%s: %s'::text, post.published_at::date, post.title)))::text AS html
+   FROM blog.post;
+
+CREATE OR REPLACE FUNCTION blog.random_string(integer)
+ RETURNS text
+ LANGUAGE sql
+AS $function$
+    with corpus (corpus) as (
+        select 'you are some cool person and I really like you abcdefghijklmnopqrstuvwxyz          '
+    )
+    select array_to_string(array(
+        select substring(corpus from (random() * length(corpus))::int for 5)
+        from corpus, generate_series(1, $1)
+    ), '')
+$function$;
+
+CREATE OR REPLACE FUNCTION blog.search(query text)
+ RETURNS TABLE(header jsonb, body text)
+ LANGUAGE sql
+ STABLE PARALLEL SAFE STRICT
+BEGIN ATOMIC
+ SELECT NULL::jsonb AS jsonb,
+     (post_html.body)::text AS body
+    FROM (blog.post
+      JOIN blog.post_html USING (post_id))
+   WHERE ((post.fts @@ websearch_to_tsquery(post.language, search.query)) OR (EXISTS ( SELECT
+            FROM blog.comment
+           WHERE ((comment.fts @@ websearch_to_tsquery(comment.language, search.query)) AND (comment.post_id = post.post_id)))));
+END;
+
+-- pgmt:section name="blog_2" module="blog"
+GRANT EXECUTE ON FUNCTION "blog"."search"(query text) TO "anon";
+
+GRANT USAGE ON SCHEMA "blog" TO "anon";
+
+GRANT INSERT, SELECT ON "blog"."comment" TO "anon";
+
+GRANT SELECT ON "blog"."post" TO "anon";
+
+GRANT SELECT ON "blog"."atom" TO "anon";
+
+GRANT SELECT ON "blog"."atom_comment" TO "anon";
+
+GRANT SELECT ON "blog"."blog" TO "anon";
+
+GRANT SELECT ON "blog"."comment_html" TO "anon";
+
+GRANT SELECT ON "blog"."error" TO "anon";
+
+GRANT SELECT ON "blog"."head" TO "anon";
+
+GRANT SELECT ON "blog"."post_html" TO "anon";
+
+GRANT SELECT ON "blog"."ts_stat" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "blog"."random_string"(integer) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "blog"."search"(query text) TO PUBLIC;
+
+-- pgmt:section name="grandroc" module="grandroc" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "grandroc";
+
+CREATE TYPE "grandroc"."booking_status" AS ENUM ('in progress', 'confirmed', 'canceled');
+
+CREATE DOMAIN "grandroc"."amount" AS numeric(10,2) CONSTRAINT amount_check CHECK (VALUE >= 0::numeric);
+
+CREATE TABLE "grandroc"."admin" (
+    "name" text NOT NULL,
+    "password" text NOT NULL,
+    "salt" text NOT NULL,
+    CONSTRAINT "admin_pkey" PRIMARY KEY ("name")
+);
+
+CREATE TABLE "grandroc"."booking" (
+    "booking_id" uuid DEFAULT uuidv7() NOT NULL,
+    "place" text NOT NULL,
+    "occupant" text NOT NULL,
+    "period" daterange NOT NULL,
+    "status" "grandroc"."booking_status" DEFAULT 'in progress'::grandroc.booking_status NOT NULL,
+    "nb_adults" integer,
+    "nb_children" integer DEFAULT 0 NOT NULL,
+    "nb_babies" integer DEFAULT 0 NOT NULL,
+    "nb_horses" integer DEFAULT 0 NOT NULL,
+    "nb_dogs" integer DEFAULT 0 NOT NULL,
+    "nb_emplacements" integer DEFAULT 0 NOT NULL,
+    "with_draps" boolean DEFAULT false,
+    "with_serviette" boolean DEFAULT false,
+    "with_cleaning" boolean DEFAULT false,
+    "food_price_unit" "grandroc"."amount",
+    "cleaning_price" "grandroc"."amount",
+    "is_pension_complete" boolean DEFAULT false,
+    "price" "grandroc"."amount" NOT NULL,
+    "is_early" boolean DEFAULT false NOT NULL,
+    "is_late" boolean DEFAULT false NOT NULL,
+    "at" date DEFAULT now(),
+    "cue" integer DEFAULT random(0, 180) NOT NULL,
+    CONSTRAINT "booking_pkey" PRIMARY KEY ("booking_id")
+);
+
+CREATE TABLE "grandroc"."occupant" (
+    "occupant" text NOT NULL,
+    "email" text,
+    "tel" text,
+    CONSTRAINT "occupant_pkey" PRIMARY KEY ("occupant")
+);
+
+CREATE TABLE "grandroc"."place" (
+    "place" text NOT NULL,
+    "taxe_sejour" "grandroc"."amount" NOT NULL,
+    "electricity_cost_unit" "grandroc"."amount",
+    "dog_price_unit" "grandroc"."amount",
+    "cgv" text NOT NULL,
+    CONSTRAINT "place_pkey" PRIMARY KEY ("place")
+);
+
+ALTER TABLE "grandroc"."booking" ADD CONSTRAINT "booking_occupant_fkey" FOREIGN KEY ("occupant") REFERENCES "grandroc"."occupant" ("occupant") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "grandroc"."booking" ADD CONSTRAINT "booking_place_fkey" FOREIGN KEY ("place") REFERENCES "grandroc"."place" ("place") ON DELETE CASCADE ON UPDATE CASCADE;
+
+ALTER TABLE "grandroc"."booking" ADD CONSTRAINT "booking_place_period_excl" EXCLUDE USING gist (place WITH =, period WITH &&) WHERE (status = 'confirmed'::grandroc.booking_status);
+
+CREATE VIEW "grandroc"."head" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT '<!DOCTYPE html>'::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME link, XMLATTRIBUTES('stylesheet' AS rel, '/index.css' AS href))::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME link, XMLATTRIBUTES('stylesheet' AS rel, '/grandroc/index.css' AS href))::text AS body
+UNION ALL
+ SELECT '<meta name="viewport" content="width=device-width">'::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME script, XMLATTRIBUTES('module' AS type), '
+        document.querySelectorAll(''.from'').forEach(n => {
+            n.addEventListener(''change'', e => {
+                let to = document.querySelector(''.to'');
+                to.value = to.value || n.value;
+            });
+        });
+        document.querySelectorAll(''.booking'').forEach(n => {
+            n.addEventListener(''click'', (e) => {
+                document.querySelectorAll(`[data-booking="${e.target.dataset.booking}"]`).forEach(n => n.classList.toggle(''active''));
+            });
+        });
+    '::text::xml)::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME h1, 'Le Grand Roc')::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('grid' AS class, 'POST' AS method, url.url('/grandroc/login'::text, jsonb_build_object('sql', 'select 1', 'redirect', url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html')), 'params[0]', 'grandroc')) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'name' AS name, 'name' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('password' AS type, 'password' AS name, 'password' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'login' AS value)))::text AS body
+  WHERE CURRENT_ROLE <> 'grandroc'::name
+UNION ALL
+ SELECT XMLELEMENT(NAME nav, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html')) AS href), 'Bookings'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html')) AS href), 'Occupants'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.place_html')) AS href), 'Logements'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.stat')) AS href), 'Stats'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/logout'::text, jsonb_build_object('redirect', url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head')))) AS href), 'Logout'))::text AS body
+  WHERE CURRENT_ROLE = 'grandroc'::name
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('flashes' AS class), XMLELEMENT(NAME article, XMLATTRIBUTES('red card' AS class), httpg.error))::text AS body
+   FROM httpg
+  WHERE httpg.error IS NOT NULL;
+
+CREATE VIEW "grandroc"."occupant_html" WITH (security_invoker = true) AS
+ WITH httpg(params) AS (
+         SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text) -> 'params'::text AS "?column?"
+        ), add(sql, action, occupant) AS (
+         SELECT '
+            insert into grandroc.occupant (occupant, tel, email) values ($1, $2, $3)
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/grandroc/query'', jsonb_build_object(
+                ''sql'', ''select * from grandroc.head union all select body::text from grandroc.occupant_html''
+            ))) header;
+        '::text AS "?column?",
+            'Add'::text AS "?column?",
+            NULL::grandroc.occupant AS occupant
+        ), edit(sql, action, occupant) AS (
+         SELECT '
+            update grandroc.occupant set occupant = $1, tel = $2, email = $3
+            where occupant = $4
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/grandroc/query'', jsonb_build_object(
+                ''sql'', ''select * from grandroc.head union all select body::text from grandroc.occupant_html''
+            ))) header;
+        '::text AS "?column?",
+            'Edit'::text AS "?column?",
+            o.*::grandroc.occupant AS o
+           FROM grandroc.occupant o
+          ORDER BY o.occupant
+        )
+ SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/grandroc/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, unnamed_subquery.sql AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from grandroc.head union all select body::text from grandroc.occupant_html where case when $1 is not null then occupant = $1 else true end' AS value)), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME label, 'Nom', XMLELEMENT(NAME input, XMLATTRIBUTES('params[0]' AS name, 'text' AS type, 'required' AS required, COALESCE(httpg.params ->> 0, (unnamed_subquery.occupant).occupant) AS value))), XMLELEMENT(NAME label, 'Tél', XMLELEMENT(NAME input, XMLATTRIBUTES('params[1]' AS name, 'tel' AS type, COALESCE(httpg.params ->> 1, (unnamed_subquery.occupant).tel) AS value))), XMLELEMENT(NAME label, 'email', XMLELEMENT(NAME input, XMLATTRIBUTES('params[2]' AS name, 'email' AS type, 'required' AS required, COALESCE(httpg.params ->> 2, (unnamed_subquery.occupant).email) AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('params[3]' AS name, 'hidden' AS type, (unnamed_subquery.occupant).occupant AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, unnamed_subquery.action AS value)))) AS body,
+    (unnamed_subquery.occupant).occupant AS occupant
+   FROM httpg,
+    ( SELECT add.sql,
+            add.action,
+            add.occupant
+           FROM add
+        UNION ALL
+         SELECT edit.sql,
+            edit.action,
+            edit.occupant
+           FROM edit) unnamed_subquery;
+
+CREATE VIEW "grandroc"."place_html" WITH (security_invoker = true) AS
+ WITH httpg(params) AS (
+         SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text) -> 'params'::text AS "?column?"
+        ), add(sql, action, place) AS (
+         SELECT '
+            insert into grandroc.place (place, taxe_sejour, electricity_cost_unit, dog_price_unit, cgv)
+            values ($1, nullif($2, '''')::amount, nullif($3, '''')::amount, nullif($4, '''')::amount, $5)
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/grandroc/query'', jsonb_build_object(
+                ''sql'', ''select * from grandroc.head union all select body::text from grandroc.place_html''
+            ))) header;
+        '::text AS "?column?",
+            'Add'::text AS "?column?",
+            NULL::grandroc.place AS place
+        ), edit(sql, action, place) AS (
+         SELECT '
+            update grandroc.place
+                set place = $1,
+                taxe_sejour = nullif($2, '''')::amount,
+                electricity_cost_unit = nullif($3, '''')::amount,
+                dog_price_unit = nullif($4, '''')::amount,
+                cgv = $5
+            where place = $6
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/grandroc/query'', jsonb_build_object(
+                ''sql'', ''select * from grandroc.head union all select body::text from grandroc.place_html''
+            ))) header;
+        '::text AS "?column?",
+            'Edit'::text AS "?column?",
+            p.*::grandroc.place AS p
+           FROM grandroc.place p
+          ORDER BY p.place
+        )
+ SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/grandroc/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, unnamed_subquery.sql AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from grandroc.head union all select body::text from grandroc.place_html where case when $1 is not null then place = $1 else true end' AS value)), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME label, 'Logement', XMLELEMENT(NAME input, XMLATTRIBUTES('params[0]' AS name, 'text' AS type, 'required' AS required, COALESCE(httpg.params ->> 0, (unnamed_subquery.place).place) AS value))), XMLELEMENT(NAME label, 'Taxe de séjour', XMLELEMENT(NAME input, XMLATTRIBUTES('params[1]' AS name, 'number' AS type, 'any' AS step, 'required' AS required, COALESCE(httpg.params ->> 1, (unnamed_subquery.place).taxe_sejour::text) AS value))), XMLELEMENT(NAME label, 'Prix électricité', XMLELEMENT(NAME input, XMLATTRIBUTES('params[2]' AS name, 'number' AS type, 'any' AS step, COALESCE(httpg.params ->> 3, (unnamed_subquery.place).electricity_cost_unit::text) AS value))), XMLELEMENT(NAME label, 'Prix chien', XMLELEMENT(NAME input, XMLATTRIBUTES('params[3]' AS name, 'number' AS type, 'any' AS step, COALESCE(httpg.params ->> 4, (unnamed_subquery.place).dog_price_unit::text) AS value))), XMLELEMENT(NAME label, 'CGV', XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[4]' AS name, 5 AS rows, 'required' AS required), COALESCE(httpg.params ->> 5, (unnamed_subquery.place).cgv, ''::text))), XMLELEMENT(NAME input, XMLATTRIBUTES('params[5]' AS name, 'hidden' AS type, (unnamed_subquery.place).place AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, unnamed_subquery.action AS value)))) AS body,
+    (unnamed_subquery.place).place AS place
+   FROM httpg,
+    ( SELECT add.sql,
+            add.action,
+            add.place
+           FROM add
+        UNION ALL
+         SELECT edit.sql,
+            edit.action,
+            edit.place
+           FROM edit) unnamed_subquery;
+
+CREATE VIEW "grandroc"."stat" WITH (security_invoker = true) AS
+ WITH top_place(nb, place, max) AS (
+         SELECT count(booking.*) AS count,
+            booking.place,
+            max(count(booking.*)) OVER () AS max
+           FROM grandroc.booking
+          GROUP BY booking.place
+        ), top_date(nb, date, max) AS (
+         SELECT count(booking.*) AS count,
+            date_trunc('month'::text, d.d)::date AS date_trunc,
+            max(count(booking.*)) OVER () AS max
+           FROM generate_series(now() - '6 mons'::interval, now() + '6 mons'::interval, '1 day'::interval) d(d)
+             LEFT JOIN grandroc.booking ON lower(booking.period) = d.d::date
+          GROUP BY (date_trunc('month'::text, d.d)::date)
+          ORDER BY (date_trunc('month'::text, d.d)::date)
+        )
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('chart' AS class), XMLELEMENT(NAME "table", XMLELEMENT(NAME caption, XMLELEMENT(NAME h3, 'Top places')), xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html', 'place', top_place.place)) AS href), top_place.place)), XMLELEMENT(NAME td, XMLELEMENT(NAME div, XMLATTRIBUTES(format('--size: %s; --max: %s'::text, top_place.nb, top_place.max) AS style), top_place.nb)))))) AS body
+   FROM top_place
+UNION ALL
+ SELECT XMLELEMENT(NAME hr) AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('chart' AS class), XMLELEMENT(NAME "table", XMLELEMENT(NAME caption, XMLELEMENT(NAME h3, 'Top Dates')), xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html', 'when', to_char(top_date.date::timestamp with time zone, 'MM-YY'::text))) AS href), to_char(top_date.date::timestamp with time zone, 'Mon/YY'::text))), XMLELEMENT(NAME td, XMLELEMENT(NAME div, XMLATTRIBUTES(format('--size: %s; --max: %s'::text, top_date.nb, top_date.max) AS style), top_date.nb)))))) AS body
+   FROM top_date;
+
+CREATE OR REPLACE PROCEDURE grandroc.book(IN booking_id uuid, IN place text, IN occupant text, IN nb_adults integer, IN nb_children integer, IN nb_babies integer, IN nb_horses integer, IN nb_dogs integer, IN nb_emplacements integer, IN food_price_unit grandroc.amount, IN cleaning_price grandroc.amount, IN price grandroc.amount, IN from_ date, IN to_ date, INOUT status integer DEFAULT NULL::integer, INOUT header jsonb DEFAULT NULL::jsonb)
+ LANGUAGE sql
+BEGIN ATOMIC
+ WITH httpg(body) AS (
+          SELECT ((NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb -> 'body'::text) AS "?column?"
+         ), occupant(occupant) AS (
+          INSERT INTO grandroc.occupant (occupant)
+           VALUES (book.occupant) ON CONFLICT(occupant) DO NOTHING
+           RETURNING occupant.occupant
+         )
+  INSERT INTO grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, cleaning_price, food_price_unit, is_pension_complete, price, is_early, is_late, period)  SELECT COALESCE(book.booking_id, uuidv7()) AS "coalesce",
+             book.place AS place,
+             COALESCE(( SELECT occupant.occupant
+                    FROM occupant), book.occupant) AS "coalesce",
+             book.nb_adults AS nb_adults,
+             book.nb_children AS nb_children,
+             book.nb_babies AS nb_babies,
+             book.nb_horses AS nb_horses,
+             book.nb_dogs AS nb_dogs,
+             book.nb_emplacements AS nb_emplacements,
+             ((httpg.body ->> 'with_draps'::text) = 'on'::text),
+             ((httpg.body ->> 'with_serviette'::text) = 'on'::text),
+             book.cleaning_price AS cleaning_price,
+             book.food_price_unit AS food_price_unit,
+             ((httpg.body ->> 'pension'::text) = 'complete'::text),
+             book.price AS price,
+             COALESCE(((httpg.body ->> 'is_early'::text) = 'on'::text), false) AS "coalesce",
+             COALESCE(((httpg.body ->> 'is_late'::text) = 'on'::text), false) AS "coalesce",
+             daterange(book.from_, book.to_, '[]'::text) AS daterange
+            FROM httpg ON CONFLICT(booking_id) DO UPDATE SET place = excluded.place, occupant = excluded.occupant, nb_adults = excluded.nb_adults, nb_children = excluded.nb_children, nb_babies = excluded.nb_babies, nb_horses = excluded.nb_horses, nb_dogs = excluded.nb_dogs, nb_emplacements = excluded.nb_emplacements, with_draps = excluded.with_draps, with_serviette = excluded.with_serviette, cleaning_price = excluded.cleaning_price, food_price_unit = excluded.food_price_unit, is_pension_complete = excluded.is_pension_complete, price = excluded.price, is_early = excluded.is_early, is_late = excluded.is_late, period = excluded.period
+   RETURNING 303 AS status,
+     jsonb_build_object('Location', url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html', 'when', to_char((book.from_)::timestamp with time zone, 'MM-YY'::text)))) AS header;
+END;
+
+CREATE OR REPLACE FUNCTION grandroc.days(period daterange)
+ RETURNS integer
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+BEGIN ATOMIC
+ SELECT (((date_trunc('day'::text, (upper(period))::timestamp with time zone))::date - (date_trunc('day'::text, (lower(period))::timestamp with time zone))::date) - 1);
+END;
+
+CREATE VIEW "grandroc"."booking_html" WITH (security_invoker = true) AS
+ WITH httpg(when_, booking_id, place, search, params, body) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT to_date((query.query -> 'qs'::text) ->> 'when'::text, 'MM-YY'::text) AS to_date,
+            NULLIF((query.query -> 'qs'::text) ->> 'booking_id'::text, ''::text)::uuid AS "nullif",
+            (query.query -> 'qs'::text) ->> 'place'::text AS "?column?",
+            (query.query -> 'qs'::text) ->> 'search'::text AS "?column?",
+            (query.query -> 'body'::text) -> 'params'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?"
+           FROM query
+        ), day(d) AS (
+         SELECT d.d::date AS d
+           FROM httpg,
+            LATERAL generate_series(date_trunc('week'::text, date_trunc('month'::text, COALESCE(httpg.when_::timestamp with time zone, now()))), date_trunc('month'::text, COALESCE(httpg.when_::timestamp with time zone, now())) + '1 mon'::interval - '1 day'::interval, '1 day'::interval) d(d)
+        ), calendar(html) AS (
+         SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('day' AS class,
+                CASE
+                    WHEN now()::date = day.d THEN 'background-color: oklch(from grey l c h / 0.2)'::text
+                    ELSE NULL::text
+                END AS style), XMLELEMENT(NAME "time", XMLATTRIBUTES(day.d AS "timestamp"), to_char(day.d::timestamp with time zone, 'dy dd/mm'::text)), COALESCE(xmlagg(
+                CASE
+                    WHEN booking.place IS NOT NULL THEN XMLELEMENT(NAME section, XMLATTRIBUTES(format('booking %s'::text,
+                    CASE
+                        WHEN lower(booking.period) <> day.d THEN 'line'::text
+                        ELSE NULL::text
+                    END) AS class, format('--cue: %s;'::text, booking.cue) AS style, booking.booking_id AS "data-booking"), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select body::text from grandroc.contract_html where booking_id = $1::uuid', 'params[0]', booking.booking_id)) AS href), format('%s: %s'::text, booking.occupant, booking.place)), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html', 'booking_id', booking.booking_id)) AS href), XMLELEMENT(NAME button, 'Edit')), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/grandroc/query' AS action, 'inline' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'delete from grandroc.booking where booking_id = $1::uuid' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, booking.booking_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, 'Are you sure?') AS onclick, '[x]' AS value))))
+                    ELSE NULL::xml
+                END ORDER BY booking.period, (grandroc.days(booking.period)) DESC, booking.place)), '') AS "xmlelement"
+           FROM httpg,
+            day
+             LEFT JOIN grandroc.booking ON booking.period @> day.d
+          WHERE
+                CASE
+                    WHEN httpg.place IS NOT NULL THEN booking.place = httpg.place
+                    ELSE true
+                END
+          GROUP BY day.d
+        ), current_booking(b) AS (
+         SELECT booking.*::grandroc.booking AS booking
+           FROM httpg,
+            grandroc.booking
+          WHERE booking.booking_id = httpg.booking_id
+        UNION ALL
+         SELECT NULL::grandroc.booking AS booking
+           FROM httpg
+          WHERE httpg.booking_id IS NULL
+        )
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('grid' AS class, 'POST' AS method, '/grandroc/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+            call grandroc.book(
+                booking_id => nullif($1, '''')::uuid,
+                place => $2,
+                occupant => $3,
+                nb_adults => $4::int,
+                nb_children => coalesce(nullif($5, '''')::int, 0),
+                nb_babies => coalesce(nullif($6, '''')::int, 0),
+                nb_horses => coalesce(nullif($7, '''')::int, 0),
+                nb_dogs => coalesce(nullif($8, '''')::int, 0),
+                nb_emplacements => coalesce(nullif($9, '''')::int, 0),
+                food_price_unit => nullif($10, '''')::grandroc.amount,
+                price => nullif($11, '''')::grandroc.amount,
+                cleaning_price => nullif($12, '''')::grandroc.amount,
+                from_ => $13::date,
+                to_ => $14::date
+            )
+        ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from grandroc.head union all select body::text from grandroc.booking_html' AS value)), XMLELEMENT(NAME datalist, XMLATTRIBUTES('occupants' AS id), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(occupant.occupant AS value)) ORDER BY occupant.occupant) AS xmlagg
+           FROM grandroc.occupant), ''::xml)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, COALESCE(NULLIF(httpg.params ->> 0, ''::text)::uuid, (current_booking.b).booking_id) AS value)), XMLELEMENT(NAME label, 'Logement', XMLELEMENT(NAME "select", XMLATTRIBUTES('params[1]' AS name, 'required' AS required), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(place.place AS value,
+                CASE
+                    WHEN (current_booking_1.b).place = place.place THEN 'selected'::text
+                    ELSE NULL::text
+                END AS selected), place.place) ORDER BY place.place) AS xmlagg
+           FROM current_booking current_booking_1,
+            grandroc.place), ''::xml))), XMLELEMENT(NAME label, 'Occupant', XMLELEMENT(NAME input, XMLATTRIBUTES('required' AS required, 'occupants' AS list, 'params[2]' AS name, COALESCE(httpg.params ->> 2, (current_booking.b).occupant) AS value))), XMLELEMENT(NAME label, 'Nb adultes', XMLELEMENT(NAME input, XMLATTRIBUTES('required' AS required, 'number' AS type, 'params[3]' AS name, COALESCE(NULLIF(httpg.params ->> 3, ''::text)::integer, (current_booking.b).nb_adults) AS value))), XMLELEMENT(NAME label, 'Prix forfait', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[10]' AS name, 'required' AS required, 'any' AS step, COALESCE(NULLIF(httpg.params ->> 10, ''::text)::grandroc.amount, (current_booking.b).price) AS value))), XMLELEMENT(NAME label, 'De', XMLELEMENT(NAME input, XMLATTRIBUTES('required' AS required, 'from' AS class, 'date' AS type, 'params[12]' AS name, COALESCE(NULLIF(httpg.params ->> 12, ''::text)::date, lower((current_booking.b).period)) AS value))), XMLELEMENT(NAME label, 'à', XMLELEMENT(NAME input, XMLATTRIBUTES('required' AS required, 'to' AS class, 'date' AS type, 'params[13]' AS name, COALESCE(NULLIF(httpg.params ->> 13, ''::text)::date, (upper((current_booking.b).period) - '1 day'::interval)::date) AS value))), XMLELEMENT(NAME label, 'Nb enfants', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[4]' AS name, COALESCE(NULLIF(httpg.params ->> 4, ''::text)::integer, (current_booking.b).nb_children) AS value))), XMLELEMENT(NAME label, 'nb bébés', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[5]' AS name, COALESCE(NULLIF(httpg.params ->> 5, ''::text)::integer, (current_booking.b).nb_babies) AS value))), XMLELEMENT(NAME label, 'Nb chevaux', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[6]' AS name, COALESCE(NULLIF(httpg.params ->> 6, ''::text)::integer, (current_booking.b).nb_horses) AS value))), XMLELEMENT(NAME label, 'Nb chiens', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[7]' AS name, COALESCE(NULLIF(httpg.params ->> 7, ''::text)::integer, (current_booking.b).nb_dogs) AS value))), XMLELEMENT(NAME label, 'Nb emplacements', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[8]' AS name, COALESCE(NULLIF(httpg.params ->> 8, ''::text)::integer, (current_booking.b).nb_emplacements) AS value))), XMLELEMENT(NAME label, 'Prix Ménage', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[11]' AS name, 'any' AS step, COALESCE(NULLIF(httpg.params ->> 10, ''::text)::grandroc.amount, (current_booking.b).cleaning_price) AS value))), XMLELEMENT(NAME label, 'Prix repas', XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[9]' AS name, 'any' AS step, COALESCE(NULLIF(httpg.params ->> 9, ''::text)::grandroc.amount, (current_booking.b).food_price_unit) AS value))), XMLELEMENT(NAME fieldset, XMLELEMENT(NAME label, 'Demi-pension?', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'pension' AS name, 'demi' AS value,
+        CASE
+            WHEN NOT COALESCE((httpg.body ->> 'pension'::text) = 'complete'::text, (current_booking.b).is_pension_complete) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME label, 'Pension Complete?', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'pension' AS name, 'complete' AS value,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'pension'::text) = 'complete'::text, (current_booking.b).is_pension_complete) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked)))), XMLELEMENT(NAME label, 'Draps?', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'with_draps' AS name,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'with_draps'::text) = 'on'::text, (current_booking.b).with_draps) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME label, 'Serviettes?', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'with_serviette' AS name,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'with_serviette'::text) = 'on'::text, (current_booking.b).with_serviette) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME label, 'Ménage?', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'with_cleaning' AS name,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'with_cleaning'::text) = 'on'::text, (current_booking.b).with_cleaning) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME label, 'Arrivée anticipée?', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'is_early' AS name,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'is_early'::text) = 'on'::text, (current_booking.b).is_early) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME label, 'Départ tardif?', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'is_late' AS name,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'is_late'::text) = 'on'::text, (current_booking.b).is_late) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type,
+        CASE
+            WHEN (current_booking.b).booking_id IS NOT NULL THEN 'Edit'::text
+            ELSE 'Add'::text
+        END AS value))) AS body
+   FROM current_booking,
+    httpg
+  WHERE httpg.search IS NULL
+UNION ALL
+ SELECT '<hr/>'::xml AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('#list' AS action, 'grid' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select body::text from grandroc.head union all select body::text from grandroc.booking_html' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('search' AS type, 'search' AS name, httpg.search AS value, 'Search' AS placeholder))) AS body
+   FROM httpg
+UNION ALL
+ SELECT XMLELEMENT(NAME hr, XMLATTRIBUTES('list' AS id)) AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select body::text from grandroc.contract_html where booking_id = $1::uuid', 'params[0]', booking.booking_id)) AS href), format('%s: %s du %s au %s'::text, booking.occupant, booking.place, to_char(lower(booking.period)::timestamp with time zone, 'DD/MM/YY'::text), to_char(upper(booking.period) - '1 day'::interval, 'DD/MM/YY'::text))), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html', 'booking_id', booking.booking_id)) AS href), XMLELEMENT(NAME button, 'Edit')), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/grandroc/query' AS action, 'inline' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'delete from grandroc.booking where booking_id = $1::uuid' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, booking.booking_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, 'Are you sure?') AS onclick, '[x]' AS value)))) AS body
+   FROM grandroc.booking,
+    httpg
+  WHERE httpg.search IS NOT NULL AND booking.occupant ~~* format('%%%s%%'::text, httpg.search)
+UNION ALL
+ SELECT XMLELEMENT(NAME nav, XMLATTRIBUTES('calnav' AS id), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html', 'when', to_char(COALESCE(httpg.when_, now()::date) - '1 mon'::interval, 'MM-YY'::text))) || '#calnav'::text AS href), 'prev'), xmltext(to_char(COALESCE(httpg.when_, now()::date)::timestamp with time zone, 'Mon/YY'::text)), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/grandroc/query'::text, jsonb_build_object('sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html', 'when', to_char(COALESCE(httpg.when_, now()::date) + '1 mon'::interval, 'MM-YY'::text))) || '#calnav'::text AS href), 'next')) AS body
+   FROM httpg
+  WHERE httpg.search IS NULL
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('calendar' AS class), xmlagg(calendar.html)) AS body
+   FROM calendar,
+    httpg
+  WHERE httpg.search IS NULL;
+
+CREATE VIEW "grandroc"."contract_html" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        ), line(booking_id, label, qty, pu, total) AS (
+         SELECT booking_1.booking_id,
+            line.label,
+            line.qty,
+            line.pu,
+            line.qty::numeric * line.pu::numeric AS "?column?"
+           FROM grandroc.booking booking_1
+             JOIN grandroc.place place_1 USING (place),
+            LATERAL unnest(ARRAY[ROW(booking_1.place, 1, booking_1.price), ROW('Ménage'::text, 1, booking_1.cleaning_price), ROW('Taxe de séjour'::text, booking_1.nb_adults * grandroc.days(booking_1.period), place_1.taxe_sejour), ROW('Serviettes'::text,
+                CASE
+                    WHEN booking_1.with_serviette THEN booking_1.nb_adults + booking_1.nb_children
+                    ELSE NULL::integer
+                END, 4::grandroc.amount), ROW('Draps'::text, booking_1.nb_adults + booking_1.nb_children, 8::grandroc.amount), ROW(
+                CASE
+                    WHEN booking_1.is_pension_complete THEN 'Pension Complete'::text
+                    ELSE 'Demi pension'::text
+                END, booking_1.nb_adults + booking_1.nb_children * grandroc.days(booking_1.period), booking_1.food_price_unit), ROW('Chevaux'::text, booking_1.nb_horses * grandroc.days(booking_1.period), 5::grandroc.amount), ROW('Chiens'::text, booking_1.nb_dogs, place_1.dog_price_unit), ROW('Départ ou arrivée tardive'::text, 1,
+                CASE
+                    WHEN booking_1.is_early AND booking_1.is_late THEN 70
+                    WHEN booking_1.is_early THEN 50
+                    WHEN booking_1.is_late THEN 50
+                    ELSE NULL::integer
+                END::grandroc.amount), ROW('Electricité'::text, booking_1.nb_emplacements * grandroc.days(booking_1.period), place_1.electricity_cost_unit)]) line(label text, qty integer, pu grandroc.amount)
+        ), grand_total(booking_id, grand_total, acompte) AS (
+         SELECT line.booking_id,
+            sum(line.total) AS sum,
+            round(0.3 * sum(line.total), 0) AS round
+           FROM line
+          GROUP BY line.booking_id
+        )
+ SELECT '<!DOCTYPE html>'::text || XMLELEMENT(NAME html, XMLATTRIBUTES('fr' AS lang), XMLELEMENT(NAME head, XMLELEMENT(NAME meta, XMLATTRIBUTES('UTF-8' AS charset)), XMLELEMENT(NAME meta, XMLATTRIBUTES('viewport' AS name, 'width=device-width, initial-scale=1' AS content)), XMLELEMENT(NAME title, xmltext(format('Contrat de location – %s du Grand Roc'::text, booking.place))), XMLELEMENT(NAME link, XMLATTRIBUTES('stylesheet' AS rel, '/grandroc/contract.css' AS href))), XMLELEMENT(NAME body, XMLATTRIBUTES(true AS contenteditable), XMLELEMENT(NAME main, XMLATTRIBUTES('page' AS class), XMLELEMENT(NAME header, XMLATTRIBUTES('header' AS class), XMLELEMENT(NAME div, XMLELEMENT(NAME div, XMLATTRIBUTES('brand' AS class), xmltext('LE GRAND ROC'::text)), XMLELEMENT(NAME div, XMLATTRIBUTES('brand-subtitle' AS class), xmltext('Gîtes • Camping • Logements insolites'::text))), XMLELEMENT(NAME div, XMLATTRIBUTES('contract-title' AS class), XMLELEMENT(NAME h1, xmltext('CONTRAT DE LOCATION'::text)), XMLELEMENT(NAME p, xmltext(booking.place)), XMLELEMENT(NAME p, xmltext('Ferrières-sur-Sichon'::text)))), XMLELEMENT(NAME section, XMLATTRIBUTES('intro' AS class), XMLELEMENT(NAME div, XMLATTRIBUTES('eyebrow' AS class), xmltext('Votre séjour au Grand Roc'::text)), XMLELEMENT(NAME p, xmltext('Nous vous remercions d''avoir choisi notre hébergement.'::text)), XMLELEMENT(NAME p, xmltext('Vous trouverez ci-dessous le récapitulatif de votre réservation et des prestations retenues.'::text))), XMLELEMENT(NAME section, XMLATTRIBUTES('info-grid' AS class), XMLELEMENT(NAME div, XMLATTRIBUTES('panel' AS class), XMLELEMENT(NAME h2, xmltext('Informations du locataire'::text)), XMLELEMENT(NAME p, XMLATTRIBUTES('client-name' AS class), xmltext(booking.occupant)), XMLELEMENT(NAME p, xmltext(format('Téléphone: %s'::text, occupant.tel))), XMLELEMENT(NAME p, xmltext(format('E-mail: %s'::text, occupant.email)))), XMLELEMENT(NAME div, XMLATTRIBUTES('panel' AS class), XMLELEMENT(NAME h2, xmltext('Dates du séjour'::text)), XMLELEMENT(NAME p, XMLELEMENT(NAME strong, xmltext(format('du %s au %s'::text, to_char(lower(booking.period)::timestamp with time zone, 'DD/MM/YYYY'::text), to_char(upper(booking.period) - '1 day'::interval, 'DD/MM/YYYY'::text))))), XMLELEMENT(NAME p, XMLELEMENT(NAME strong, xmltext('Durée: '::text)), xmltext(format(' %s nuitée(s)'::text, grandroc.days(booking.period)))), XMLELEMENT(NAME p, XMLELEMENT(NAME strong, xmltext('Adultes: '::text)), xmltext(booking.nb_adults::text)),
+        CASE
+            WHEN booking.nb_children > 0 THEN XMLELEMENT(NAME p, XMLELEMENT(NAME strong, xmltext('Enfants: '::text)), xmltext((booking.nb_children + booking.nb_babies)::text))
+            ELSE NULL::xml
+        END, XMLELEMENT(NAME p, XMLELEMENT(NAME strong, xmltext('Date du contrat: '::text)), xmltext(to_char(booking.at::timestamp with time zone, 'DD/MM/YYYY'::text))))), XMLELEMENT(NAME h2, XMLATTRIBUTES('section-title' AS class), xmltext('Détail des prestations'::text)), XMLELEMENT(NAME "table", XMLELEMENT(NAME thead, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLATTRIBUTES('width: 43%' AS style), xmltext('Prestation'::text)), XMLELEMENT(NAME th, XMLATTRIBUTES('center' AS class, 'width: 17%' AS style), xmltext('Quantité'::text)), XMLELEMENT(NAME th, XMLATTRIBUTES('right' AS class, 'width: 20%' AS style), xmltext('Prix unitaire'::text)), XMLELEMENT(NAME th, XMLATTRIBUTES('right' AS class, 'width: 20%' AS style), xmltext('Total'::text)))), XMLELEMENT(NAME tbody, ( SELECT xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME td, line.label), XMLELEMENT(NAME td, XMLATTRIBUTES('center' AS class), line.qty::text), XMLELEMENT(NAME td, XMLATTRIBUTES('right' AS class), line.pu::text), XMLELEMENT(NAME td, XMLATTRIBUTES('right' AS class), line.total))) AS xmlagg
+           FROM line
+          WHERE line.booking_id = booking.booking_id AND line.total > 0::numeric))), XMLELEMENT(NAME section, XMLATTRIBUTES('payment' AS class), XMLELEMENT(NAME div, XMLATTRIBUTES('payment-row payment-total' AS class), XMLELEMENT(NAME span, xmltext('Total du séjour'::text)), XMLELEMENT(NAME span, xmltext(grand_total.grand_total::text))), XMLELEMENT(NAME div, XMLATTRIBUTES('payment-row' AS class), XMLELEMENT(NAME span, xmltext('Acompte de 30 %'::text)), XMLELEMENT(NAME strong, xmltext(round(grand_total.acompte, 2)::text))), XMLELEMENT(NAME div, XMLATTRIBUTES('payment-row' AS class), XMLELEMENT(NAME span, xmltext('Solde restant à régler'::text)), XMLELEMENT(NAME strong, xmltext((grand_total.grand_total - grand_total.acompte)::text))), XMLELEMENT(NAME div, XMLATTRIBUTES('payment-row' AS class), XMLELEMENT(NAME span, xmltext('Date limite de versement de l''acompte'::text)), XMLELEMENT(NAME strong, xmltext(to_char(booking.at + '14 days'::interval, 'DD/MM/YYYY'::text))))), XMLELEMENT(NAME section, XMLATTRIBUTES('deposit' AS class), XMLELEMENT(NAME strong, xmltext('Dépôt de garantie: 1 000 €'::text)), XMLELEMENT(NAME p, xmltext('Le dépôt de garantie est distinct du montant total du séjour et n''est pas inclus dans le calcul ci-dessus.'::text))), XMLELEMENT(NAME h2, XMLATTRIBUTES('section-title' AS class), xmltext('Informations pratiques'::text)), XMLELEMENT(NAME section, XMLATTRIBUTES('practical' AS class), XMLELEMENT(NAME div, XMLELEMENT(NAME strong, xmltext('Arrivée'::text)), xmltext('
+      À partir de 17 h et jusqu''à 20 h, sauf accord préalable.
+    '::text)), XMLELEMENT(NAME div, XMLELEMENT(NAME strong, xmltext('Départ'::text)), xmltext('
+      Avant 10 h, sauf accord préalable.
+    '::text))), XMLELEMENT(NAME h2, XMLATTRIBUTES('section-title' AS class), xmltext('Conditions du séjour'::text)), XMLELEMENT(NAME section, XMLATTRIBUTES('conditions' AS class), XMLELEMENT(NAME p, xmltext('Le locataire reconnaît avoir pris connaissance des conditions de location applicables au séjour.'::text)), XMLELEMENT(NAME p, xmltext('Le locataire s''engage à respecter les lieux, les équipements et le voisinage, et à restituer l''hébergement dans les conditions prévues au contrat.'::text)), XMLELEMENT(NAME p, xmltext('Le présent document récapitule la réservation, les prestations sélectionnées et les montants associés. Les autres conditions contractuelles doivent être conservées dans la version définitive du contrat.'::text))), XMLELEMENT(NAME section, XMLATTRIBUTES('signatures' AS class), XMLELEMENT(NAME div, XMLATTRIBUTES('signature-box' AS class), XMLELEMENT(NAME strong, xmltext('Le locataire'::text)), XMLELEMENT(NAME p, xmltext('Signature suivie de la mention "Lu et approuvé" :'::text)))), XMLELEMENT(NAME footer, XMLATTRIBUTES('footer' AS class), xmltext('
+    LE GRAND ROC • Lieu-dit Mounier Haut • 03250 Ferrières-sur-Sichon'::text), XMLELEMENT(NAME br), xmltext('
+    06 87 49 68 60 • contact@legrandroc.com • www.legrandroc.com
+  '::text)), XMLELEMENT(NAME pre, XMLATTRIBUTES('cgv' AS class), place.cgv))))::text AS body,
+    grand_total.booking_id
+   FROM grand_total
+     JOIN grandroc.booking USING (booking_id)
+     JOIN grandroc.occupant USING (occupant)
+     JOIN grandroc.place USING (place);
+
+CREATE OR REPLACE FUNCTION grandroc.login()
+ RETURNS SETOF text
+ LANGUAGE sql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'grandroc', 'pg_catalog'
+BEGIN ATOMIC
+ WITH httpg(body) AS (
+          SELECT ((current_setting('httpg.query'::text, true))::jsonb -> 'body'::text) AS "?column?"
+         )
+  SELECT 'set local role to grandroc'::text AS text
+    FROM grandroc.admin,
+     httpg
+   WHERE ((admin.name = (httpg.body ->> 'name'::text)) AND (admin.password = crypt((httpg.body ->> 'password'::text), admin.salt)));
+END;
+
+-- pgmt:section name="grandroc_2" module="grandroc"
+GRANT EXECUTE ON FUNCTION "grandroc"."login"() TO "anon";
+
+GRANT USAGE ON SCHEMA "grandroc" TO "anon";
+
+GRANT SELECT ON "grandroc"."head" TO "anon";
+
+GRANT SELECT ON "grandroc"."stat" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "grandroc"."days"(period daterange) TO "grandroc";
+
+GRANT EXECUTE ON PROCEDURE "grandroc"."book"(IN booking_id uuid, IN place text, IN occupant text, IN nb_adults integer, IN nb_children integer, IN nb_babies integer, IN nb_horses integer, IN nb_dogs integer, IN nb_emplacements integer, IN food_price_unit grandroc.amount, IN cleaning_price grandroc.amount, IN price grandroc.amount, IN from_ date, IN to_ date, INOUT status integer, INOUT header jsonb) TO "grandroc";
+
+GRANT USAGE ON SCHEMA "grandroc" TO "grandroc";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "grandroc"."booking" TO "grandroc";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "grandroc"."occupant" TO "grandroc";
+
+GRANT DELETE, INSERT, SELECT, UPDATE ON "grandroc"."place" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."booking_html" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."contract_html" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."head" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."occupant_html" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."place_html" TO "grandroc";
+
+GRANT SELECT ON "grandroc"."stat" TO "grandroc";
+
+GRANT USAGE ON DOMAIN "grandroc"."amount" TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "grandroc"."days"(period daterange) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "grandroc"."login"() TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "grandroc"."book"(IN booking_id uuid, IN place text, IN occupant text, IN nb_adults integer, IN nb_children integer, IN nb_babies integer, IN nb_horses integer, IN nb_dogs integer, IN nb_emplacements integer, IN food_price_unit grandroc.amount, IN cleaning_price grandroc.amount, IN price grandroc.amount, IN from_ date, IN to_ date, INOUT status integer, INOUT header jsonb) TO PUBLIC;
+
+GRANT USAGE ON TYPE "grandroc"."booking_status" TO PUBLIC;
+
+-- pgmt:section name="jmeu" module="jmeu" remaps="(unmoduled)"
+CREATE SCHEMA IF NOT EXISTS "jmeu";
+
+CREATE TABLE "jmeu"."animal" (
+    "tenant_id" uuid DEFAULT (NULLIF(current_setting('jmeu.tenant_id'::text, true), ''::text))::uuid NOT NULL,
+    "number" text NOT NULL,
+    "lot" text NOT NULL,
+    "sex" text NOT NULL,
+    "birth" date DEFAULT now() NOT NULL,
+    "mother" text,
+    CONSTRAINT "animal_pkey" PRIMARY KEY ("tenant_id", "number")
+);
+
+ALTER TABLE "jmeu"."animal" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "jmeu"."medication" (
+    "tenant_id" uuid DEFAULT (NULLIF(current_setting('jmeu.tenant_id'::text, true), ''::text))::uuid NOT NULL,
+    "medication_id" uuid DEFAULT uuidv7() NOT NULL,
+    "name" text NOT NULL,
+    "posology" text NOT NULL,
+    "is_empty" boolean DEFAULT false NOT NULL,
+    "date" date DEFAULT now() NOT NULL,
+    CONSTRAINT "medication_pkey" PRIMARY KEY ("tenant_id", "medication_id")
+);
+
+ALTER TABLE "jmeu"."medication" ENABLE ROW LEVEL SECURITY;
+
+CREATE TABLE "jmeu"."tenant" (
+    "tenant_id" uuid DEFAULT uuidv7() NOT NULL,
+    "name" text NOT NULL,
+    "password" text NOT NULL,
+    "salt" text NOT NULL,
+    CONSTRAINT "tenant_pkey" PRIMARY KEY ("tenant_id")
+);
+
+CREATE TABLE "jmeu"."treatment" (
+    "tenant_id" uuid DEFAULT (NULLIF(current_setting('jmeu.tenant_id'::text, true), ''::text))::uuid NOT NULL,
+    "number" text NOT NULL,
+    "at" timestamp with time zone DEFAULT now() NOT NULL,
+    "medication_id" uuid NOT NULL,
+    "ordonnance" text NOT NULL,
+    "comment" text,
+    CONSTRAINT "treatment_pkey" PRIMARY KEY ("tenant_id", "number", "medication_id", "at")
+);
+
+ALTER TABLE "jmeu"."treatment" ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE "jmeu"."animal" ADD CONSTRAINT "animal_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "jmeu"."tenant" ("tenant_id");
+
+ALTER TABLE "jmeu"."animal" ADD CONSTRAINT "has_mother" FOREIGN KEY ("tenant_id", "mother") REFERENCES "jmeu"."animal" ("tenant_id", "number");
+
+ALTER TABLE "jmeu"."medication" ADD CONSTRAINT "medication_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "jmeu"."tenant" ("tenant_id");
+
+ALTER TABLE "jmeu"."tenant" ADD CONSTRAINT "tenant_name_key" UNIQUE ("name");
+
+ALTER TABLE "jmeu"."treatment" ADD CONSTRAINT "treatment_tenant_id_fkey" FOREIGN KEY ("tenant_id") REFERENCES "jmeu"."tenant" ("tenant_id");
+
+ALTER TABLE "jmeu"."treatment" ADD CONSTRAINT "treatment_tenant_id_medication_id_fkey" FOREIGN KEY ("tenant_id", "medication_id") REFERENCES "jmeu"."medication" ("tenant_id", "medication_id");
+
+ALTER TABLE "jmeu"."treatment" ADD CONSTRAINT "treatment_tenant_id_number_fkey" FOREIGN KEY ("tenant_id", "number") REFERENCES "jmeu"."animal" ("tenant_id", "number");
+
+CREATE POLICY "owner" ON "jmeu"."animal" FOR ALL TO "jmeu" USING ((tenant_id = (current_setting('jmeu.tenant_id'::text, true))::uuid));
+
+CREATE POLICY "owner" ON "jmeu"."medication" FOR ALL TO "jmeu" USING ((tenant_id = (current_setting('jmeu.tenant_id'::text, true))::uuid));
+
+CREATE POLICY "owner" ON "jmeu"."treatment" FOR ALL TO "jmeu" USING ((tenant_id = (current_setting('jmeu.tenant_id'::text, true))::uuid));
+
+CREATE VIEW "jmeu"."admin_html" WITH (security_invoker = true) AS
+ WITH httpg(qs, body) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?"
+           FROM query
+        )
+ SELECT XMLELEMENT(NAME details, XMLELEMENT(NAME summary, 'Ajouter animal'), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/jmeu/query'::text, jsonb_build_object('redirect', 'referer')) AS action), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+                insert into jmeu.animal (number, lot, sex, birth) values ($1, $2, $3, $4::date)
+            ' AS value)), XMLELEMENT(NAME label, 'Numero', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, 'required' AS required))), XMLELEMENT(NAME label, 'Lot', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[1]' AS name, 'required' AS required))), XMLELEMENT(NAME fieldset, XMLELEMENT(NAME label, 'Mâle', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'params[2]' AS name, 'Mâle' AS value, 'required' AS required))), XMLELEMENT(NAME label, 'Femelle', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'params[2]' AS name, 'Femelle' AS value)))), XMLELEMENT(NAME label, 'Date de naissance', XMLELEMENT(NAME input, XMLATTRIBUTES('date' AS type, 'params[3]' AS name, 'required' AS required)))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Ajouter animal' AS value)))) AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('GET' AS method), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select * from jmeu.head union all select body::text from jmeu.admin_html' AS value)), XMLELEMENT(NAME label, 'Numéro', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'number' AS name, httpg.qs ->> 'number'::text AS value))), XMLELEMENT(NAME label, 'Lot', XMLELEMENT(NAME "select", XMLATTRIBUTES('lot' AS name), COALESCE(( WITH lot(lot) AS (
+                 SELECT ''::text AS lot
+                UNION ALL
+                 SELECT DISTINCT animal.lot
+                   FROM jmeu.animal
+                )
+         SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(lot.lot AS value,
+                CASE
+                    WHEN lot.lot = (httpg_1.qs ->> 'lot'::text) THEN 'selected'::text
+                    ELSE NULL::text
+                END AS selected), lot.lot) ORDER BY lot.lot) AS xmlagg
+           FROM lot,
+            httpg httpg_1), ''::xml))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Chercher' AS value))) AS body
+   FROM httpg
+UNION ALL
+ SELECT XMLELEMENT(NAME pre, COALESCE(jsonb_pretty(httpg.body), ''::text)) AS body
+   FROM httpg
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, 'treat' AS id, 'admin' AS class, url.url('/jmeu/query'::text, jsonb_build_object('sql', 'call jmeu.admin()', 'lot', httpg.qs ->> 'lot'::text)) AS action), '') AS body
+   FROM httpg
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, 'move_lot' AS id, 'admin' AS class, url.url('/jmeu/query'::text, jsonb_build_object('sql', 'call jmeu.admin()', 'lot', httpg.qs ->> 'lot'::text)) AS action), '') AS body
+   FROM httpg
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/jmeu/query'::text, jsonb_build_object('sql', 'call jmeu.admin()', 'lot', httpg.qs ->> 'lot'::text)) AS action), XMLELEMENT(NAME label, 'Tous', XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'all' AS id))), XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class, '--min: 40vw' AS style), XMLELEMENT(NAME div, XMLATTRIBUTES('animals' AS class), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME label, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('checkbox' AS type, 'number[]' AS name, animal.number AS value)), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.animal_html', 'number', animal.number)) AS href), animal.number)) ORDER BY animal.number) AS xmlagg
+           FROM jmeu.animal,
+            httpg httpg_1
+          WHERE
+                CASE
+                    WHEN NULLIF(httpg_1.qs ->> 'lot'::text, ''::text) IS NOT NULL THEN (httpg_1.qs ->> 'lot'::text) = animal.lot
+                    ELSE true
+                END AND
+                CASE
+                    WHEN NULLIF(httpg_1.qs ->> 'number'::text, ''::text) IS NOT NULL THEN (httpg_1.qs ->> 'number'::text) = animal.number
+                    ELSE true
+                END), 'Aucun animal'::xml)), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('' AS class), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME label, 'Ordonnance', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'ordonnance' AS name, 'required' AS required, 'treat' AS form))), XMLELEMENT(NAME label, 'Médicament', XMLELEMENT(NAME "select", XMLATTRIBUTES('medication_id' AS name, 'required' AS required, 'treat' AS form), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(medication.medication_id AS value), format('%s (%s)'::text, medication.name, medication.posology)) ORDER BY medication.name) AS xmlagg
+           FROM jmeu.medication
+          WHERE NOT medication.is_empty), ''::xml))), XMLELEMENT(NAME label, 'Commentaire', XMLELEMENT(NAME textarea, XMLATTRIBUTES('comment' AS name, 5 AS rows, 'treat' AS form), '')), XMLELEMENT(NAME button, XMLATTRIBUTES('submit' AS type, 'action' AS name, 'treat' AS value, 'treat' AS form), 'Traiter')), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME label, 'Lot', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'lot' AS name, 'required' AS required, 'move_lot' AS form))), XMLELEMENT(NAME button, XMLATTRIBUTES('submit' AS type, 'action' AS name, 'move_lot' AS value, 'move_lot' AS form), 'Changer de lot'))))) AS body
+   FROM httpg;
+
+CREATE VIEW "jmeu"."agneulage_html" WITH (security_invoker = true) AS
+ WITH httpg(qs, body) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?"
+           FROM query
+        )
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('GET' AS method), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select * from jmeu.head union all select body::text from jmeu.agneulage_html' AS value)), XMLELEMENT(NAME label, 'De', XMLELEMENT(NAME input, XMLATTRIBUTES('date' AS type, 'from' AS name, httpg.qs ->> 'from'::text AS value))), XMLELEMENT(NAME label, 'à', XMLELEMENT(NAME input, XMLATTRIBUTES('date' AS type, 'to' AS name, httpg.qs ->> 'to'::text AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Chercher' AS value))) AS body
+   FROM httpg
+UNION ALL
+( SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('card animal grid' AS class), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.animal_html', 'number', animal.number)) AS href), animal.number), XMLELEMENT(NAME div, format('Sexe: %s'::text, animal.sex)), XMLELEMENT(NAME div, format('Lot: %s'::text, animal.lot)), XMLELEMENT(NAME "time", to_char(animal.birth::timestamp with time zone, 'DD/MM/YY'::text))) AS body
+   FROM jmeu.animal,
+    httpg
+  WHERE animal.mother IS NOT NULL AND
+        CASE
+            WHEN NULLIF(httpg.qs ->> 'from'::text, ''::text) IS NOT NULL THEN animal.birth >= ((httpg.qs ->> 'from'::text)::date)
+            ELSE true
+        END AND
+        CASE
+            WHEN NULLIF(httpg.qs ->> 'to'::text, ''::text) IS NOT NULL THEN animal.birth <= ((httpg.qs ->> 'to'::text)::date)
+            ELSE true
+        END
+  ORDER BY animal.birth DESC);
+
+CREATE VIEW "jmeu"."animal_html" WITH (security_invoker = true) AS
+ WITH httpg(qs, body) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?"
+           FROM query
+        )
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('card animal' AS class), XMLELEMENT(NAME h3, animal.number), XMLELEMENT(NAME div, format('Lot: %s'::text, animal.lot)), XMLELEMENT(NAME div, format('Sexe: %s'::text, animal.sex)), XMLELEMENT(NAME "time", to_char(animal.birth::timestamp with time zone, 'DD/MM/YY'::text)),
+        CASE
+            WHEN animal.mother IS NOT NULL THEN XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.animal_html', 'number', animal.mother)) AS href), 'Mère')
+            ELSE NULL::xml
+        END, XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME details, XMLATTRIBUTES(true AS open), XMLELEMENT(NAME summary, 'Traitements'), ( SELECT xmlagg(XMLELEMENT(NAME div, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME h4, medication.name), XMLELEMENT(NAME div, medication.posology), XMLELEMENT(NAME "time", to_char(treatment.at, 'DD/MM/YY'::text)), XMLELEMENT(NAME pre, COALESCE(treatment.comment, ''::text))) ORDER BY treatment.at DESC) AS xmlagg
+           FROM jmeu.treatment
+             JOIN jmeu.medication USING (medication_id)
+          WHERE treatment.number = animal.number)), XMLELEMENT(NAME details, XMLATTRIBUTES(true AS open), XMLELEMENT(NAME summary, 'Agneulages'), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/jmeu/query'::text, jsonb_build_object('redirect', 'referer', 'flashes[green]', 'Sauvegardé')) AS action), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+                        insert into jmeu.animal (number, lot, mother, sex, birth) values ($1, $2, $3, $4, $5::date)
+                    ' AS value)), XMLELEMENT(NAME label, 'Numero', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, 'required' AS required))), XMLELEMENT(NAME label, 'Lot', XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[1]' AS name, 'required' AS required))), XMLELEMENT(NAME fieldset, XMLELEMENT(NAME label, 'Mâle', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'params[3]' AS name, 'Mâle' AS value, 'required' AS required))), XMLELEMENT(NAME label, 'Femelle', XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, 'params[3]' AS name, 'Femelle' AS value)))), XMLELEMENT(NAME label, 'Date de naissance', XMLELEMENT(NAME input, XMLATTRIBUTES('date' AS type, 'params[4]' AS name, 'required' AS required))), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[2]' AS name, animal.number AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Ajouter agneau' AS value))), ( SELECT xmlagg(XMLELEMENT(NAME div, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.animal_html', 'number', a.number)) AS href), a.number), XMLELEMENT(NAME div, format('Sexe: %s'::text, a.sex)), XMLELEMENT(NAME div, format('(Lot: %s)'::text, a.lot)), XMLELEMENT(NAME "time", to_char(a.birth::timestamp with time zone, 'DD/MM/YY'::text))) ORDER BY a.birth DESC) AS xmlagg
+           FROM jmeu.animal a
+          WHERE a.mother = animal.number)))) AS body
+   FROM jmeu.animal,
+    httpg
+  WHERE
+        CASE
+            WHEN httpg.qs ? 'number'::text THEN animal.number = (httpg.qs ->> 'number'::text)
+            ELSE true
+        END;
+
+CREATE VIEW "jmeu"."head" WITH (security_invoker = true) AS
+ WITH httpg(qs, body, error) AS (
+         WITH query(query, error) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif",
+                    NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?",
+            query.error
+           FROM query
+        )
+ SELECT '<!DOCTYPE html>'::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME link, XMLATTRIBUTES('stylesheet' AS rel, '/index.css' AS href))::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME link, XMLATTRIBUTES('stylesheet' AS rel, '/jmeu/index.css' AS href))::text AS body
+UNION ALL
+ SELECT '<meta name="viewport" content="width=device-width">'::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME script, XMLATTRIBUTES('module' AS type), '
+        document.getElementById(''all'')?.addEventListener(''click'', (e) => {
+            document.querySelectorAll(''.animals input[type=checkbox]'').forEach(n => {
+                n.checked = e.target.checked;
+            });
+        });
+        document.querySelectorAll(''form.admin'').forEach(n => {
+            n.addEventListener(''submit'', (e) => {
+                document.querySelectorAll(''.animals input[type=checkbox]'').forEach(i => {
+                    i.setAttribute(''form'', e.target.id);
+                });
+            });
+        });
+    '::text::xml)::text AS body
+UNION ALL
+ SELECT XMLELEMENT(NAME header, XMLELEMENT(NAME h1, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('redirect', url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head')))) AS href), 'Jmeu')), ( SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('grid' AS class, 'POST' AS method, url.url('/jmeu/login'::text, jsonb_build_object('redirect', url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.admin_html')), 'params[0]', 'jmeu')) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'name' AS name, 'name' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('password' AS type, 'password' AS name, 'password' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'login' AS value))) AS "xmlelement"
+          WHERE CURRENT_ROLE <> 'jmeu'::name), ( SELECT XMLELEMENT(NAME nav, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.admin_html')) AS href), 'Animaux'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.agneulage_html')) AS href), 'Agneulages'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.treatment_html')) AS href), 'Journal sanitaire'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.medication_html')) AS href), 'Médicaments'), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/logout'::text, jsonb_build_object('redirect', url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head')))) AS href), 'Logout')) AS "xmlelement"
+          WHERE CURRENT_ROLE = 'jmeu'::name), ( SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('flashes' AS class), XMLELEMENT(NAME article, XMLATTRIBUTES('red card' AS class), httpg.error)) AS "xmlelement"
+           FROM httpg
+          WHERE httpg.error IS NOT NULL), ( SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('flashes' AS class), XMLELEMENT(NAME article, XMLATTRIBUTES(format('%s card'::text, jsonb_each_text.key) AS class), jsonb_each_text.value)) AS "xmlelement"
+           FROM httpg,
+            LATERAL jsonb_each_text(httpg.qs -> 'flashes'::text) jsonb_each_text(key, value)))::text AS body;
+
+CREATE VIEW "jmeu"."medication_html" WITH (security_invoker = true) AS
+ WITH httpg(body, params) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text AS "?column?",
+            (NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text) -> 'params'::text AS "?column?"
+        ), add(sql, action, medication) AS (
+         SELECT '
+            insert into jmeu.medication (name, posology) values ($1, $2)
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/jmeu/query'', jsonb_build_object(
+                ''sql'', ''select * from jmeu.head union all select body::text from jmeu.medication_html'',
+                ''flashes[green]'', ''Sauvegardé''
+            ))) header;
+        '::text AS "?column?",
+            'Add'::text AS "?column?",
+            NULL::jmeu.medication AS medication
+        ), edit(sql, action, medication) AS (
+         SELECT '
+            update jmeu.medication set name = $1, posology = $2, is_empty = coalesce(httpg_query()->''body''->>''is_empty'' = ''on'', false)
+            where medication_id = $3::uuid
+            returning 303 status,
+            jsonb_build_object(''Location'', url.url(''/jmeu/query'', jsonb_build_object(
+                ''sql'', ''select * from jmeu.head union all select body::text from jmeu.medication_html'',
+                ''flashes[green]'', ''Sauvegardé''
+            ))) header;
+        '::text AS "?column?",
+            'Edit'::text AS "?column?",
+            m.*::jmeu.medication AS m
+           FROM jmeu.medication m
+          ORDER BY m.name, m.date
+        )
+ SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/jmeu/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, unnamed_subquery.sql AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from jmeu.head union all select body::text from jmeu.medication_html where case when nullif($3, '''') is not null then medication_id = $3::uuid else true end' AS value)), XMLELEMENT(NAME fieldset, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME label, 'Nom', XMLELEMENT(NAME input, XMLATTRIBUTES('params[0]' AS name, 'text' AS type, 'required' AS required, COALESCE(httpg.params ->> 1, (unnamed_subquery.medication).name) AS value))), XMLELEMENT(NAME label, 'Posologie', XMLELEMENT(NAME input, XMLATTRIBUTES('params[1]' AS name, 'text' AS type, 'required' AS required, COALESCE(NULLIF(httpg.params ->> 2, ''::text), (unnamed_subquery.medication).posology) AS value))), XMLELEMENT(NAME label, 'Vide?', XMLELEMENT(NAME input, XMLATTRIBUTES('is_empty' AS name, 'checkbox' AS type,
+        CASE
+            WHEN COALESCE((httpg.body ->> 'is_empty'::text) = 'on'::text, (unnamed_subquery.medication).is_empty) THEN 'checked'::text
+            ELSE NULL::text
+        END AS checked))), XMLELEMENT(NAME input, XMLATTRIBUTES('params[2]' AS name, 'hidden' AS type, (unnamed_subquery.medication).medication_id AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, unnamed_subquery.action AS value)))) AS body,
+    (unnamed_subquery.medication).medication_id AS medication_id
+   FROM httpg,
+    ( SELECT add.sql,
+            add.action,
+            add.medication
+           FROM add
+        UNION ALL
+         SELECT edit.sql,
+            edit.action,
+            edit.medication
+           FROM edit) unnamed_subquery;
+
+CREATE VIEW "jmeu"."treatment_html" WITH (security_invoker = true) AS
+ WITH httpg(qs, body) AS (
+         WITH query(query) AS (
+                 SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT query.query -> 'qs'::text AS "?column?",
+            query.query -> 'body'::text AS "?column?"
+           FROM query
+        ), treat_group AS (
+         SELECT treatment.tenant_id,
+            treatment.number,
+            treatment.at,
+            treatment.medication_id,
+            treatment.ordonnance,
+            treatment.comment,
+            date_part('year'::text, treatment.at) AS year
+           FROM jmeu.treatment
+        )
+ SELECT XMLELEMENT(NAME div, XMLELEMENT(NAME h2, treat_group.year), COALESCE(xmlagg(XMLELEMENT(NAME div, XMLATTRIBUTES('card treatment grid' AS class), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.animal_html', 'number', treat_group.number)) AS href), treat_group.number), XMLELEMENT(NAME "time", to_char(treat_group.at, 'DD/MM/YY'::text)), XMLELEMENT(NAME div, medication.name), XMLELEMENT(NAME div, medication.posology), XMLELEMENT(NAME pre, COALESCE(treat_group.comment, ''::text)))), ''::xml)) AS body
+   FROM treat_group
+     JOIN jmeu.medication USING (medication_id)
+  GROUP BY treat_group.year
+  ORDER BY treat_group.year DESC;
+
+CREATE OR REPLACE PROCEDURE jmeu.admin(INOUT status integer DEFAULT NULL::integer, INOUT header jsonb DEFAULT NULL::jsonb)
+ LANGUAGE sql
+BEGIN ATOMIC
+ WITH httpg(qs, body) AS (
+          SELECT ((NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb -> 'qs'::text) AS "?column?",
+             ((NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb -> 'body'::text) AS "?column?"
+         ), "treat" AS (
+          INSERT INTO jmeu.treatment (number, at, ordonnance, medication_id, comment)  SELECT number.value AS number,
+                     now() AS now,
+                     (httpg_1.body ->> 'ordonnance'::text),
+                     ((httpg_1.body ->> 'medication_id'::text))::uuid AS uuid,
+                     (httpg_1.body ->> 'comment'::text)
+                    FROM httpg httpg_1,
+                     LATERAL jsonb_array_elements_text((httpg_1.body -> 'number'::text)) number(value)
+                   WHERE ((httpg_1.body ->> 'action'::text) = 'treat'::text)
+         ), move_lot AS (
+          UPDATE jmeu.animal SET lot = (httpg_1.body ->> 'lot'::text)
+            FROM httpg httpg_1
+           WHERE (((httpg_1.body -> 'number'::text) ? animal.number) AND ((httpg_1.body ->> 'action'::text) = 'move_lot'::text))
+         )
+  SELECT 303 AS status,
+     jsonb_build_object('Location', url.url('/jmeu/query'::text, jsonb_build_object('sql', 'select * from jmeu.head union all select body::text from jmeu.admin_html', 'lot', (httpg.qs ->> 'lot'::text), 'flashes[green]', 'Sauvegardé'))) AS header
+    FROM httpg;
+END;
+
+CREATE OR REPLACE FUNCTION jmeu.login()
+ RETURNS SETOF text
+ LANGUAGE sql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'jmeu', 'pg_catalog'
+BEGIN ATOMIC
+ WITH httpg(body) AS (
+          SELECT ((current_setting('httpg.query'::text, true))::jsonb -> 'body'::text) AS "?column?"
+         )
+  SELECT format('set local role to jmeu; set local "jmeu.tenant_id" to %L'::text, tenant.tenant_id) AS format
+    FROM jmeu.tenant,
+     httpg
+   WHERE ((tenant.name = (httpg.body ->> 'name'::text)) AND (tenant.password = crypt((httpg.body ->> 'password'::text), tenant.salt)));
+END;
+
+-- pgmt:section name="jmeu_2" module="jmeu"
+GRANT EXECUTE ON FUNCTION "jmeu"."login"() TO "anon";
+
+GRANT USAGE ON SCHEMA "jmeu" TO "anon";
+
+GRANT SELECT ON "jmeu"."head" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "jmeu"."login"() TO "jmeu";
+
+GRANT EXECUTE ON PROCEDURE "jmeu"."admin"(INOUT status integer, INOUT header jsonb) TO "jmeu";
+
+GRANT USAGE ON SCHEMA "jmeu" TO "jmeu";
+
+GRANT INSERT, SELECT, UPDATE ON "jmeu"."animal" TO "jmeu";
+
+GRANT INSERT, SELECT, UPDATE ON "jmeu"."medication" TO "jmeu";
+
+GRANT INSERT, SELECT ON "jmeu"."treatment" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."admin_html" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."agneulage_html" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."animal_html" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."head" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."medication_html" TO "jmeu";
+
+GRANT SELECT ON "jmeu"."treatment_html" TO "jmeu";
+
+GRANT EXECUTE ON FUNCTION "jmeu"."login"() TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "jmeu"."admin"(INOUT status integer, INOUT header jsonb) TO PUBLIC;
+
+-- pgmt:section name="analyze" module="analyze"
+CREATE SCHEMA IF NOT EXISTS "plan";
+
+CREATE OR REPLACE FUNCTION plan.exec(sql text, params jsonb DEFAULT '{}'::jsonb)
+ RETURNS SETOF record
+ LANGUAGE plpgsql
+ STRICT SECURITY DEFINER
+AS $function$
+begin
+    return query execute sql using params;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION plan.explain_html(query_ text DEFAULT NULL::text)
+ RETURNS TABLE(status integer, header jsonb, body text)
+ LANGUAGE sql
+ STABLE PARALLEL SAFE
+BEGIN ATOMIC
+ WITH RECURSIVE httpg(query) AS (
+          SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb AS "nullif"
+         ), plan(plan) AS MATERIALIZED (
+          SELECT ((_.plans)::jsonb -> 0) AS "?column?"
+            FROM plan.exec(explain_html.query_) _(plans json)
+           WHERE (NULLIF(explain_html.query_, ''::text) IS NOT NULL)
+         UNION ALL
+          SELECT ((((httpg.query -> 'qs'::text) ->> 'plan'::text))::jsonb -> 0)
+            FROM httpg
+           WHERE (NULLIF(((httpg.query -> 'qs'::text) ->> 'plan'::text), ''::text) IS NOT NULL)
+         ), node(plan, type, cost, "time", loops, planned_rows, actual_rows, row_ratio, filtered, wal_bytes, shared_read_blocks, shared_hit_blocks, temp_written_blocks, path, depth) AS (
+          SELECT (plan.plan -> 'Plan'::text) AS "?column?",
+             ((plan.plan -> 'Plan'::text) ->> 'Node Type'::text) AS "?column?",
+             (((plan.plan -> 'Plan'::text) -> 'Total Cost'::text))::numeric AS "numeric",
+             (((plan.plan -> 'Plan'::text) -> 'Actual Total Time'::text))::numeric AS "numeric",
+             (((plan.plan -> 'Plan'::text) -> 'Actual Loops'::text))::integer AS int4,
+             (((plan.plan -> 'Plan'::text) -> 'Plan Rows'::text))::numeric AS "numeric",
+             (((plan.plan -> 'Plan'::text) -> 'Actual Rows'::text))::integer AS int4,
+             round(((((plan.plan -> 'Plan'::text) -> 'Plan Rows'::text))::numeric / (GREATEST((((plan.plan -> 'Plan'::text) -> 'Actual Rows'::text))::integer, 1))::numeric), 2) AS round,
+             (COALESCE(((plan.plan -> 'Plan'::text) -> 'Rows Removed by Filter'::text), ((plan.plan -> 'Plan'::text) -> 'Rows Removed by Join Filter'::text)))::numeric AS "coalesce",
+             (((plan.plan -> 'Plan'::text) -> 'WAL Bytes'::text))::integer AS int4,
+             (((plan.plan -> 'Plan'::text) -> 'Shared Read Blocks'::text))::integer AS int4,
+             (((plan.plan -> 'Plan'::text) -> 'Shared Hit Blocks'::text))::integer AS int4,
+             (((plan.plan -> 'Plan'::text) -> 'Temp Written Blocks'::text))::integer AS int4,
+             '{}'::bigint[] AS int8,
+             0 AS "?column?"
+            FROM plan
+         UNION ALL
+          SELECT sub.value AS sub,
+             (sub.value ->> 'Node Type'::text),
+             ((sub.value -> 'Total Cost'::text))::numeric AS "numeric",
+             ((sub.value -> 'Actual Total Time'::text))::numeric AS "numeric",
+             ((sub.value -> 'Actual loops'::text))::integer AS int4,
+             ((sub.value -> 'Plan Rows'::text))::numeric AS "numeric",
+             ((sub.value -> 'Actual Rows'::text))::integer AS int4,
+             round((((sub.value -> 'Plan Rows'::text))::numeric / (GREATEST(((sub.value -> 'Actual Rows'::text))::integer, 1))::numeric), 2) AS round,
+             (COALESCE((sub.value -> 'Rows Removed by Filter'::text), (sub.value -> 'Rows Removed by Join Filter'::text)))::numeric AS "coalesce",
+             ((sub.value -> 'WAL Bytes'::text))::integer AS int4,
+             ((sub.value -> 'Shared Read Blocks'::text))::integer AS int4,
+             ((sub.value -> 'Shared Hit Blocks'::text))::integer AS int4,
+             ((sub.value -> 'Temp Written Blocks'::text))::integer AS int4,
+             (node.path || ARRAY[row_number() OVER ()]),
+             (node.depth + 1)
+            FROM node,
+             LATERAL jsonb_array_elements((node.plan -> 'Plans'::text)) sub(value)
+         )
+  SELECT 200,
+     NULL::jsonb AS jsonb,
+     '<!DOCTYPE html>'::text AS text
+ UNION ALL
+  SELECT NULL::integer AS int4,
+     NULL::jsonb AS jsonb,
+     '
+<link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Dosis">
+<style>
+
+body, textarea, pre {
+    font-family: ''Dosis'', serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+:root {
+    interpolate-size: allow-keywords;
+}
+table {
+    tbody tr:has(details[open]) {
+        background-color: #e1f3d2;
+    }
+    tbody tr:nth-child(odd) {
+        background-color: #eee;
+    }
+    width: 100%;
+    thead {
+        & * {
+            background-color: #cee5ea;
+            opacity: .8;
+        }
+        top: 0px;
+        position: sticky;
+    }
+    th {
+        overflow: hidden;
+        max-width: 3vw;
+    }
+    td {
+        max-width: min-content;
+        &.node {
+            max-width: 66vw;
+        }
+        &.num {
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: ''tnum'';
+            text-align: right;
+        }
+    }
+}
+
+textarea {
+    width: 100%;
+}
+
+details {
+    & pre {
+        max-height: 40vh;
+        max-width: 66vw;
+        overflow: scroll;
+        text-wrap: wrap;
+        overflow-wrap: break-word;
+    }
+    &::details-content {
+      transition: opacity 1s;
+      opacity: 0;
+    }
+    
+    &[open]::details-content {
+      opacity: 1;
+    }
+}
+</style>
+'::text AS text
+ UNION ALL
+  SELECT NULL::integer AS int4,
+     NULL::jsonb AS jsonb,
+     (XMLELEMENT(NAME form, XMLATTRIBUTES('GET' AS method, '/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'use_primary' AS name)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select * from plan.explain_html($1)' AS value)), XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[0]' AS name, 7 AS rows), COALESCE(explain_html.query_, 'explain (format json, analyze, timing, costs, buffers, io, verbose)\n'::text)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type))))::text AS "xmlelement"
+    FROM httpg
+ UNION ALL
+  SELECT NULL::integer AS int4,
+     NULL::jsonb AS jsonb,
+     (XMLELEMENT(NAME details, XMLELEMENT(NAME pre, jsonb_pretty((plan.plan - 'Plan'::text)))))::text AS "xmlelement"
+    FROM plan
+ UNION ALL
+  SELECT NULL::integer AS int4,
+     NULL::jsonb AS jsonb,
+     (XMLELEMENT(NAME "table", XMLATTRIBUTES('1' AS border), XMLELEMENT(NAME thead, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'time', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'time',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'time'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'cost', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'cost',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'cost'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'loops', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'loops',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'loops'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'rows', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'rows',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'rows'::text) THEN '▼'::text
+             ELSE NULL::text
+         END), ' / ', XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'bad_row_estim', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'bad estim',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'bad_row_estim'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'filtered', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'filtered',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'filtered'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'wal_bytes', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'WAL Bytes',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'wal_bytes'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'shared_read_blocks', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'read blocks',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'shared_read_blocks'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'temp_written_blocks', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'temp written blocks',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'temp_written_blocks'::text) THEN '▼'::text
+             ELSE NULL::text
+         END)), XMLELEMENT(NAME th, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/query'::text, ((httpg.query -> 'qs'::text) || jsonb_build_object('sort', 'node', 'sql', (httpg.query ->> 'sql'::text)))) AS href), 'node',
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'node'::text) THEN '▲'::text
+             ELSE NULL::text
+         END)))), xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node."time")::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node.cost)::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node.loops)::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), format('%s/%s (%sx)'::text, node.actual_rows, node.planned_rows, node.row_ratio)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node.filtered)::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node.wal_bytes)::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), format('%s (%s hits)'::text, node.shared_read_blocks, node.shared_hit_blocks)), XMLELEMENT(NAME td, XMLATTRIBUTES('num' AS class), COALESCE((node.temp_written_blocks)::text, ''::text)), XMLELEMENT(NAME td, XMLATTRIBUTES('node' AS class), XMLELEMENT(NAME details, XMLELEMENT(NAME summary, repeat('--'::text, node.depth), node.type), XMLELEMENT(NAME pre, jsonb_pretty((node.plan - 'Plans'::text)))))) ORDER BY
+         CASE
+             WHEN (COALESCE(((httpg.query -> 'qs'::text) ->> 'sort'::text), 'time'::text) = 'time'::text) THEN node."time"
+             ELSE NULL::numeric
+         END DESC,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'cost'::text) THEN node.cost
+             ELSE NULL::numeric
+         END DESC,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'loops'::text) THEN node.loops
+             ELSE NULL::integer
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'bad_row_estim'::text) THEN node.row_ratio
+             ELSE NULL::numeric
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'rows'::text) THEN node.actual_rows
+             ELSE NULL::integer
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'filtered'::text) THEN node.filtered
+             ELSE NULL::numeric
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'wal_bytes'::text) THEN node.wal_bytes
+             ELSE NULL::integer
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'shared_read_blocks'::text) THEN node.shared_read_blocks
+             ELSE NULL::integer
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'temp_written_blocks'::text) THEN node.temp_written_blocks
+             ELSE NULL::integer
+         END DESC NULLS LAST,
+         CASE
+             WHEN (((httpg.query -> 'qs'::text) ->> 'sort'::text) = 'node'::text) THEN node.path
+             ELSE NULL::bigint[]
+         END)))::text AS "xmlelement"
+    FROM node,
+     httpg
+   GROUP BY httpg.query;
+END;
+
+GRANT EXECUTE ON FUNCTION "plan"."exec"(sql text, params jsonb) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "plan"."explain_html"(query_ text) TO "anon";
+
+GRANT USAGE ON SCHEMA "plan" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "plan"."exec"(sql text, params jsonb) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "plan"."explain_html"(query_ text) TO PUBLIC;
+
+-- pgmt:section name="cpres_3" module="cpres" remaps="(unmoduled)"
+CREATE TYPE "cpres"."public_person" AS (name text, phone text);
+
+CREATE VIEW "cpres"."route" WITH (security_invoker = true) AS
+ WITH q(qs) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), palette(palette) AS (
+         SELECT array_agg(format('#%s00%s'::text, lpad(to_hex(c.c), 2, '0'::text), lpad(to_hex(255 - c.c), 2, '0'::text))) AS array_agg
+           FROM generate_series(0, 255) c(c)
+        ), location(point) AS (
+         SELECT COALESCE((q.qs ->> 'location'::text)::point, person_detail.location) AS "coalesce"
+           FROM cpres.person_detail,
+            q
+          WHERE person_detail.person_id = cpres.current_person_id()
+        ), start(vid) AS (
+         SELECT auvergne_network.source
+           FROM cpres.auvergne_network,
+            location
+          ORDER BY (auvergne_network.geog <-> location.point::geometry::geography)
+         LIMIT 5
+        ), "end"(vid) AS (
+         SELECT unnest(ARRAY[unnamed_subquery.source, unnamed_subquery.target]) AS unnest
+           FROM q,
+            cpres.good,
+            LATERAL ( SELECT auvergne_network.source,
+                    auvergne_network.target
+                   FROM cpres.auvergne_network
+                  WHERE
+                        CASE
+                            WHEN NULLIF(q.qs ->> 'target'::text, ''::text) IS NULL THEN true
+                            ELSE good.good_id = NULLIF(q.qs ->> 'target'::text, ''::text)::uuid
+                        END
+                  ORDER BY (auvergne_network.geog <-> good.location::geometry::geography)
+                 LIMIT 1) unnamed_subquery
+        )
+ SELECT DISTINCT ON (node.geom) st_linemerge(edge.geog::geometry, true) AS geom,
+    node.geom AS node,
+    path.agg_cost AS cost,
+    NULL::text AS id,
+    'route'::text AS "group",
+    jsonb_build_object('color', palette.palette[width_bucket(a.speed + 1::numeric, 0::numeric, max(a.speed) OVER () + 1::numeric, 255)]) AS style,
+    jsonb_build_object('content', jsonb_build_object('total_duration', max(path.agg_cost) OVER ()::integer::double precision * '00:00:01'::interval, 'duration', path.cost::integer::double precision * '00:00:01'::interval, 'speed', a.speed)::text) AS tooltip,
+    jsonb_build_object('content', jsonb_build_object('total_duration', max(path.agg_cost) OVER ()::integer::double precision * '00:00:01'::interval, 'duration', path.cost::integer::double precision * '00:00:01'::interval, 'speed', a.speed)::text) AS popup
+   FROM palette,
+    pgr_dijkstra('select id, source, target, cost, reverse_cost from auvergne_network'::text, ARRAY( SELECT start.vid
+           FROM start), ARRAY( SELECT "end".vid
+           FROM "end"), directed => true) path(seq, path_seq, start_vid, end_vid, node, edge, cost, agg_cost)
+     JOIN cpres.auvergne_network edge ON path.edge = edge.id
+     JOIN cpres.auvergne_network_node node ON path.node = node.id
+     JOIN cpres.auvergne_highway a ON a.osm_id = edge.osm_id;
+
+CREATE OR REPLACE FUNCTION cpres._(id_ text, lang_ text DEFAULT NULL::text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH t(text) AS (
+          SELECT translation.text
+            FROM cpres.translation
+           WHERE ((translation.id = _.id_) AND (translation.lang = COALESCE(_.lang_, (((current_setting('httpg.query'::text, true))::jsonb -> 'qs'::text) ->> 'lang'::text), "substring"(((current_setting('httpg.query'::text, true))::jsonb ->> 'accept_language'::text), '^(\w+)-?\w*,?.*'::text))))
+          LIMIT 1
+         )
+  SELECT COALESCE(( SELECT t.text
+            FROM t), id_) AS "coalesce";
+END;
+
+CREATE VIEW "cpres"."about" WITH (security_invoker = true) AS
+ SELECT XMLELEMENT(NAME h2, cpres._('About'::text)) AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME p, 'Fait avec amour et passion par Florian Klein.') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME a, XMLATTRIBUTES('https://github.com/docteurklein/httpg' AS href), 'code source') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME h2, 'Mentions légales') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME p, '    Editeur: Florian Klein <br/>
+    florian.klein@free.fr <br/>
+    Hébergé en europe sur google cloud et neon.tech.
+'::xml) AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME h2, 'Politique de confidentialité') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME pre, '
+Les administrateurs s’engagent à ce que la collecte et le traitement de vos données, effectués à partir du portail economie.gouv.fr, soient conformes au règlement général sur la protection des données (RGPD) et à la loi Informatique et Libertés.
+
+En application de la réglementation relative à la protection des données personnelles (le Règlement UE 2016/679 et la Loi Informatique et Libertés du 6 janvier 1978), le Bureau de l''assistance et des technologies numériques traite les données recueillies pour gérer et traiter vos demandes. Vous disposez d''un droit d''accès, de rectification, d''effacement, de limitation et d''opposition sur vos données. Vous pouvez exercer ce droit en envoyant un courrier à :
+
+Ministères économiques et financiers
+SG-SIRCOM, Bureau de l''assistance et des technologies numériques
+teledoc 581
+139 rue de Bercy
+75572 Paris cedex 12
+
+En cas de non-conformité relative au traitement de vos données, vous avez le droit d''introduire une réclamation auprès de l’autorité de contrôle, la CNIL, 3, Place de Fontenoy TSA 80715 75334 PARIS Cedex 07.
+') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME h2, 'Cookies') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME pre, '
+Seul 1 cookie essentiel est utilisé pour maintenir l''utilisateur connecté.
+') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME h2, 'Données personnelles') AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME pre, '
+Seul votre email est nécessairement stocké pour garantir de pouvoir se reconnecter.
+vous pouvez optionnellement stocker votre pseudonyme et votre numéro de téléphone si vous souhaitez être contacté par les autres utilisatuers du site.
+Votre position géographique (tel que renseignée par votre navigateur) peut être sauvegardée si vous le désirez pour faciliter la recherche locale de biens et calculer les distances de trajets.
+
+Vous pouvez à tout moment effacer ces données optionnelles, voire même l''entiereté de votre compte, auquel cas **toutes** vos données sont instantanément éffacées.
+') AS html;
+
+CREATE VIEW "cpres"."giving activity" WITH (security_invoker = true) AS
+ WITH q(body) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text AS "?column?"
+        ), data(good_id, giver_id, title, given) AS (
+         SELECT good.good_id,
+            good.giver,
+            good.title,
+            (EXISTS ( SELECT
+                   FROM cpres.interest
+                  WHERE interest.good_id = good.good_id AND (interest.state = ANY (ARRAY['approved'::cpres.interest_state, 'late'::cpres.interest_state, 'given'::cpres.interest_state])))) AS "exists"
+           FROM cpres.good
+          WHERE good.giver = cpres.current_person_id() AND (EXISTS ( SELECT
+                   FROM cpres.interest
+                  WHERE interest.good_id = good.good_id))
+          ORDER BY (COALESCE(good.updated_at, good.created_at)) DESC
+        ), html(html) AS (
+         SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME h2, XMLELEMENT(NAME a, XMLATTRIBUTES(data.title AS id, url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid', 'params[]', data.good_id, 'show_map', true)) AS href), data.title)), XMLELEMENT(NAME div, XMLATTRIBUTES('grid interest' AS class), ( SELECT xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class, format('%s-%s'::text, interest.good_id, interest.person_id) AS id), XMLELEMENT(NAME div, XMLATTRIBUTES('inline' AS class), XMLELEMENT(NAME h4, format(cpres._('%s is %s'::text), receiver.name, cpres._(interest.level::text))),
+                        CASE
+                            WHEN interest.price IS NOT NULL THEN XMLELEMENT(NAME div, format(cpres._('For %s€'::text), interest.price))
+                            ELSE NULL::xml
+                        END, ' ',
+                        CASE
+                            WHEN receiver.phone IS NOT NULL THEN XMLCONCAT(XMLELEMENT(NAME a, XMLATTRIBUTES(format('tel:%s'::text, receiver.phone) AS href, 'tel' AS class), receiver.phone), XMLELEMENT(NAME a, XMLATTRIBUTES(format(cpres._('https://wa.me/%s?text=About receiving %s'::text), receiver.phone, data.title) AS href, 'whatsapp' AS class, 'whatsapp' AS title), '✆'))
+                            ELSE NULL::xml
+                        END), ( WITH message AS (
+                                 SELECT message_1.message_id,
+                                    message_1.good_id,
+                                    message_1.person_id,
+                                    message_1.author,
+                                    message_1.content,
+                                    message_1.at
+                                   FROM cpres.message message_1
+                                  WHERE message_1.good_id = interest.good_id AND message_1.person_id = interest.person_id
+                                )
+                         SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('messages' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES(message.message_id AS id), format(cpres._('%s at %s: '::text), author.name, to_char(message.at, cpres._('HH24:MI, TMDay DD/MM'::text))), XMLELEMENT(NAME pre, message.content)) ORDER BY message.at), ''::xml)) AS "xmlelement"
+                           FROM message
+                             JOIN cpres.person author ON author.person_id = message.author), ( WITH message_id(message_id) AS (
+                                 SELECT uuidv7() AS uuidv7
+                                )
+                         SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, format('insert into cpres.message (message_id, good_id, person_id, content) values (%L, %L, %L, $1)'::text, message_id.message_id, interest.good_id, interest.person_id) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, url.url('/cpres/webpush'::text, jsonb_build_object('sql', 'select * from cpres.web_push_message($1::uuid, $2::uuid)', 'params[0]', message_id.message_id, 'params[1]', interest.person_id, 'redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"')))) AS value)), XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[]' AS name, '10' AS rows, 'message' AS placeholder, 'required' AS required), ''), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Send message'::text) AS value))) AS "xmlelement"
+                           FROM message_id),
+                        CASE
+                            WHEN interest.state = ANY (ARRAY['approved'::cpres.interest_state, 'late'::cpres.interest_state, 'given'::cpres.interest_state]) THEN xmltext(cpres._('Winner'::text))
+                            WHEN NOT data.given THEN XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'call cpres.give($1::uuid, $2::uuid)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, url.url('/cpres/webpush'::text, jsonb_build_object('sql', 'select * from cpres.web_push_gift($1::uuid, $2::uuid)', 'params[0]', interest.good_id, 'params[1]', interest.person_id, 'redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"')))) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, interest.good_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, interest.person_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, format(cpres._('Give to %s'::text), receiver.name) AS value)))
+                            ELSE NULL::xml
+                        END) ORDER BY interest.price DESC NULLS LAST, (
+                        CASE interest.level
+                            WHEN 'highly interested'::cpres.interest_level THEN 2
+                            WHEN 'interested'::cpres.interest_level THEN 1
+                            WHEN 'a little interested'::cpres.interest_level THEN 0
+                            ELSE NULL::integer
+                        END) DESC, interest.at) AS xmlagg
+                   FROM cpres.interest
+                     JOIN cpres.person receiver ON interest.person_id = receiver.person_id
+                     JOIN cpres.person giver ON data.giver_id = giver.person_id
+                  WHERE data.good_id = interest.good_id))) AS "xmlelement"
+           FROM data,
+            q
+        )
+ SELECT XMLELEMENT(NAME h2, cpres._('Giving activity'::text))::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid good' AS class), ( SELECT COALESCE(xmlagg(html.html), ''::xml) AS "coalesce"
+           FROM html), ( SELECT cpres._('Nothing yet.'::text) AS _
+          WHERE NOT (EXISTS ( SELECT
+                   FROM html
+                 LIMIT 1))))::text AS html;
+
+CREATE VIEW "cpres"."head" WITH (security_invoker = true) AS
+ WITH q(q) AS (
+         SELECT current_setting('httpg.query'::text, true)::jsonb AS current_setting
+        )
+ SELECT '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>cpres</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    <link rel="stylesheet" href="/cpres/index.css?v=4" />
+    <script type="module" src="/cpres/webcomponent/map.js?v=2"></script>
+    <script type="module" src="/cpres/cpres.js?v=5"></script>
+</head>
+'::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('grid hashover' AS class, 'POST' AS method, url.url('/cpres/email'::text, jsonb_build_object('redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres.findings', 'flash[green]', 'Check your emails')))) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select * from cpres.send_login_email($1, $2, $3)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('email' AS type, 'params[]' AS name, 'email' AS placeholder, 'required' AS required, 'Notification.requestPermission()' AS onfocus)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, 'location' AS class, 'off' AS autocomplete)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, 'push_endpoint' AS class, 'off' AS autocomplete)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Send login challenge'::text) AS value)))::text AS html
+   FROM q
+  WHERE cpres.current_person_id() IS NULL
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('flashes onhover' AS class), XMLELEMENT(NAME article, XMLATTRIBUTES('blue card' AS class), cpres._('Authentifiez vous pour pouvoir ajouter des annonces, mémoriser vos recherches et discuter de vos dons et demandes.'::text)))::text AS html
+  WHERE cpres.current_person_id() IS NULL
+UNION ALL
+ SELECT '
+        <form method="GET" action="/cpres/login">
+            <input type="text" name="login_challenge" placeholder="login_challenge" />
+            <input type="hidden" name="redirect" value="referer" />
+            <input type="hidden" name="params[]" value="cpres" />
+            <input type="submit" value="Login" />
+        </form>
+    '::text AS html
+   FROM q
+  WHERE ((q.q -> 'qs'::text) ->> 'debug'::text) IS NOT NULL
+UNION ALL
+ SELECT XMLELEMENT(NAME nav, XMLATTRIBUTES('menu' AS class), XMLELEMENT(NAME ul, ( WITH menu(name, sql, visible) AS (
+                 VALUES ('Search'::text,'select * from cpres.head union all select * from cpres."findings"'::text,true), ('Giving activity'::text,'select * from cpres.head union all select * from cpres."giving activity"'::text,cpres.current_person_id() IS NOT NULL), ('Receiving activity'::text,'select * from cpres.head union all select * from cpres."receiving activity"'::text,cpres.current_person_id() IS NOT NULL), ('my goods'::text,'select * from cpres.head union all select html from cpres."good admin"'::text,cpres.current_person_id() IS NOT NULL), ('About'::text,'select * from cpres.head union all select html::text from cpres.about'::text,true)
+                ), item(html) AS (
+                 SELECT XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/cpres/query'::text, jsonb_build_object('sql', menu.sql)) AS href), cpres._(menu.name)) AS "xmlelement"
+                   FROM menu,
+                    q
+                  WHERE menu.visible
+                ), profile(html) AS (
+                 SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query?redirect=referer' AS action, 'inline' AS class, 'this.submit()' AS onchange), cpres._('Welcome '::text), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[]' AS name, 'inline-name' AS class, cpres._('name'::text) AS placeholder, GREATEST(4, length(person.name)) AS size, 'required' AS required, person.name AS value)), ' ', XMLELEMENT(NAME input, XMLATTRIBUTES('tel' AS type, 'params[]' AS name, 'inline-name' AS class, cpres._('phone'::text) AS placeholder, GREATEST(4, length(person.phone)) AS size, 'required' AS required, person.phone AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'update cpres.person set name = $1, phone = nullif($2, '''') where person_id = cpres.current_person_id()' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from cpres.head union all table cpres."findings"' AS value))) AS "xmlelement"
+                   FROM cpres.person
+                  WHERE person.person_id = cpres.current_person_id()
+                ), "all"(html) AS (
+                 SELECT profile.html
+                   FROM profile
+                UNION ALL
+                 SELECT item.html
+                   FROM item
+                UNION ALL
+                 SELECT XMLELEMENT(NAME a, XMLATTRIBUTES('/cpres/logout' AS href), cpres._('Logout'::text)) AS "xmlelement"
+                  WHERE cpres.current_person_id() IS NOT NULL
+                UNION ALL
+                 SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/cpres/query'::text, jsonb_build_object('sql', 'call delete_account()', 'redirect', '/cpres/logout')) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, cpres._('Are you sure?'::text)) AS onclick, cpres._('Delete account'::text) AS value))) AS "xmlelement"
+                  WHERE cpres.current_person_id() IS NOT NULL
+                )
+         SELECT xmlagg(XMLELEMENT(NAME li, "all".html)) AS xmlagg
+           FROM "all"
+         LIMIT 1)))::text AS html
+UNION ALL
+( WITH m(color, m) AS (
+         SELECT m_1.key,
+            xmltext(cpres._(m_1.value)) AS xmltext
+           FROM q,
+            LATERAL jsonb_each_text((q.q -> 'qs'::text) -> 'flash'::text) m_1(key, value)
+        UNION ALL
+        ( SELECT 'yellow'::text AS text,
+            XMLELEMENT(NAME a, XMLATTRIBUTES((url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all table cpres."receiving activity"')) || '#'::text) || good.title AS href), format(cpres._('%s is waiting for you on %s'::text), giver.name, good.title)) AS "xmlelement"
+           FROM cpres.interest
+             JOIN cpres.good USING (good_id)
+             JOIN cpres.person giver ON giver.person_id = good.giver
+          WHERE interest.at < now() AND (interest.state = ANY (ARRAY['approved'::cpres.interest_state, 'late'::cpres.interest_state])) AND interest.person_id = cpres.current_person_id()
+          ORDER BY interest.at DESC
+         LIMIT 10)
+        UNION ALL
+        ( WITH error(error) AS (
+                 SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb AS "nullif"
+                )
+         SELECT 'red'::text AS text,
+            cpres._(error.error ->> 'error'::text)::xml AS _
+           FROM error
+          WHERE error.error IS NOT NULL)
+        )
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('flashes' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES(m.color || ' card'::text AS class), m.m))), '')::text AS html
+   FROM m);
+
+CREATE OR REPLACE FUNCTION cpres.compare_search()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'cpres', 'url', 'pg_catalog', 'public'
+AS $function$
+begin
+    with result (good_id, person_id, interest, query, rerank_distance) as (
+        select new.good_id, person_id, interest, query, rerank_distance(query, new.passage)
+        from search
+        where person_id <> new.giver
+        order by (new.embedding <=> search.embedding)
+        limit 100
+    )
+    insert into interest (good_id, person_id, level, origin, query)
+    select good_id, person_id, interest, 'automatic', query
+    from result
+    where rerank_distance < 0;
+
+    return null;
+end;
+$function$;
+
+CREATE TRIGGER compare_search AFTER INSERT OR UPDATE OF title, description ON cpres.good FOR EACH STATEMENT EXECUTE FUNCTION cpres.compare_search();
+
+CREATE OR REPLACE PROCEDURE cpres.delete_account()
+ LANGUAGE sql
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ DELETE FROM cpres.person
+   WHERE (person.person_id = cpres.current_person_id());
+END;
+
+CREATE OR REPLACE PROCEDURE cpres.give(IN _good_id uuid, IN _receiver uuid)
+ LANGUAGE sql
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH interest AS (
+          UPDATE cpres.interest SET state = 'approved'::cpres.interest_state
+           WHERE ((interest.good_id = give._good_id) AND (interest.person_id = give._receiver))
+         )
+  UPDATE cpres.good SET receiver = give._receiver, given_at = now()
+   WHERE (good.good_id = give._good_id);
+END;
+
+CREATE OR REPLACE FUNCTION cpres.good_form(id text, params jsonb, sql text)
+ RETURNS xml
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH query(q, good_id, errors) AS (
+          WITH q(q, errors) AS (
+                  SELECT (NULLIF(current_setting('httpg.query'::text, true), ''::text))::jsonb AS "nullif",
+                     (NULLIF(current_setting('httpg.errors'::text, true), ''::text))::jsonb AS "nullif"
+                 )
+          SELECT q.q,
+             ((q.q -> 'body'::text) ->> 'form.id'::text) AS "?column?",
+             q.errors
+            FROM q
+         )
+  SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action),
+         CASE
+             WHEN (good_form.id = query.good_id) THEN XMLELEMENT(NAME article, XMLATTRIBUTES('card error' AS class), COALESCE(cpres._((query.errors ->> 'error'::text)), ''::text))
+             ELSE NULL::xml
+         END, XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'form.id' AS name, good_form.id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, good_form.sql AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, COALESCE(((query.q -> 'body'::text) ->> 'on_error'::text), ((query.q -> 'qs'::text) ->> 'sql'::text), 'select * from cpres.head union all select html from cpres."good admin"'::text) AS value)), XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME div, XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, cpres._('title'::text) AS placeholder, 'required' AS required, (good_form.params ->> 0) AS value)), XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[1]' AS name, '10' AS rows, 'description' AS placeholder), COALESCE((good_form.params ->> 1), ''::text))), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'cpres-map' AS "is", 'init' AS geolocate, 'params[2]' AS name, cpres._('location: (lng,lat)'::text) AS placeholder, 'location' AS class, '\(.+,.+\)' AS pattern, 'required' AS required, (good_form.params ->> 2) AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Submit'::text) AS value))) AS "xmlelement"
+    FROM query;
+END;
+
+CREATE VIEW "cpres"."good admin" WITH (security_invoker = true) AS
+ WITH query(q) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb AS "nullif"
+        ), result(html, good_id) AS (
+         SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class),
+                CASE
+                    WHEN receiver.name IS NOT NULL THEN xmltext(format(cpres._('Given to %s'::text), receiver.name))
+                    ELSE NULL::xml
+                END, cpres.good_form(good.good_id::text,
+                CASE (query.q -> 'body'::text) ->> 'form.id'::text
+                    WHEN good.good_id::text THEN (query.q -> 'body'::text) -> 'params'::text
+                    ELSE jsonb_build_array(good.title, good.description, good.location)
+                END, format('
+            update cpres.good set title = $1::text, description = $2::text, location = $3::text::point where good_id = %L
+            returning 303 status, jsonb_build_object(''Location'', url.url(''/cpres/query'', jsonb_build_object(
+                ''sql'', ''select * from cpres.head union all select html from cpres."good admin"'',
+                ''flash[green]'', ''Updated successfully''
+            ))) header
+            '::text, good.good_id)), XMLELEMENT(NAME div, XMLATTRIBUTES('grid media' AS class), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), ( WITH url(url) AS (
+                                 SELECT url.url('/cpres/query'::text, jsonb_build_object('sql', 'select content from cpres.good_media where content_hash = $1::text::bytea', 'params[]', good_media.content_hash, 'accept', good_media.content_type, 'cache_control', 'max-age=604800 immutable')) AS url
+                                )
+                         SELECT
+                                CASE
+                                    WHEN starts_with(good_media.content_type, 'image/'::text) THEN XMLELEMENT(NAME a, XMLATTRIBUTES(url.url AS href), XMLELEMENT(NAME img, XMLATTRIBUTES(url.url AS src)))
+                                    ELSE XMLELEMENT(NAME object, XMLATTRIBUTES(url.url AS data, good_media.content_type AS type), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url AS href), good_media.name))
+                                END AS "xmlelement"
+                           FROM url), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, encode(good_media.content_hash, 'base64'::text) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, format('
+                            delete from cpres.good_media
+                            where content_hash = decode($1::text, ''base64'')
+                        '::text, good_media.good_id) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, cpres._('Are you sure?'::text)) AS onclick, cpres._('X'::text) AS value))))) AS xmlagg
+                   FROM cpres.good_media
+                  WHERE good_media.good_id = good.good_id), ''::xml)), XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action, 'multipart/form-data' AS enctype), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, format('
+                        with f (f) as (
+                            select $1::bytea[]
+                        )
+                        insert into cpres.good_media (good_id, name, content, content_type)
+                        on conflict do select
+                        select %L, convert_from(f[3], ''UTF8''), f[1], convert_from(f[2], ''UTF8'')
+                        from f
+                        where f[1] <> ''''
+                        on conflict (good_id, content_hash) do nothing
+                    '::text, good.good_id) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, COALESCE((query.q -> 'body'::text) ->> 'on_error'::text, (query.q -> 'qs'::text) ->> 'sql'::text, 'select * from cpres.head union all select html from cpres."good admin"'::text) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('file' AS type, 'file' AS name, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Add file'::text) AS value)))), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'delete from cpres.good where good_id = $1::uuid' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[]' AS name, good.good_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, cpres._('Are you sure?'::text)) AS onclick, cpres._('Remove this good'::text) AS value)))) AS "xmlelement",
+            good.good_id
+           FROM query,
+            cpres.good
+             LEFT JOIN cpres.person receiver ON good.receiver = receiver.person_id
+          WHERE good.giver = cpres.current_person_id()
+          ORDER BY (COALESCE(good.updated_at, good.created_at)) DESC, good.title
+        )
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('new' AS class), XMLELEMENT(NAME h2, cpres._('New good'::text)), cpres.good_form('new'::text,
+        CASE (query.q -> 'body'::text) ->> 'form.id'::text
+            WHEN 'new'::text THEN (query.q -> 'body'::text) -> 'params'::text
+            ELSE '[]'::jsonb
+        END, '
+        insert into cpres.good (title, description, location) values ($1, $2, $3::point)
+        returning 303 status, jsonb_build_object(''Location'', url.url(''/cpres/query'', jsonb_build_object(
+            ''sql'', ''select * from cpres.head union all select html from cpres."good admin"'',
+            ''flash[green]'', ''Saved successfully''
+        ))) header
+        '::text), XMLELEMENT(NAME h2, cpres._('Existing goods'::text)))::text AS html
+   FROM query
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid good' AS class), array_agg(result.html))::text AS html
+   FROM result
+UNION ALL
+ SELECT cpres._('Nothing yet.'::text) AS html
+  WHERE NOT (EXISTS ( SELECT
+           FROM result
+         LIMIT 1));
+
+CREATE OR REPLACE FUNCTION cpres.login_cpres()
+ RETURNS SETOF text
+ LANGUAGE sql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH "user" AS (
+          UPDATE cpres.person SET login_challenge =
+                 CASE
+                     WHEN (person.challenge_used_at < (now() - '01:00:00'::interval)) THEN NULL::uuid
+                     ELSE person.login_challenge
+                 END, challenge_used_at = COALESCE(person.challenge_used_at, now())
+           WHERE (person.login_challenge = ((((current_setting('httpg.query'::text, true))::jsonb -> 'qs'::text) ->> 'login_challenge'::text))::uuid)
+           RETURNING person.person_id
+         )
+  SELECT 'set local role to person'::text AS text
+    FROM "user"
+ UNION ALL
+  SELECT format('set local "cpres.person_id" to %L'::text, "user".person_id) AS format
+    FROM "user";
+END;
+
+CREATE OR REPLACE PROCEDURE cpres.mark_late_interests()
+ LANGUAGE sql
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ UPDATE cpres.interest SET state = 'late'::cpres.interest_state, at = now()
+   WHERE ((interest.at < (now() - '3 days'::interval)) AND (interest.state = 'approved'::cpres.interest_state));
+END;
+
+CREATE OR REPLACE FUNCTION cpres.max_interest_price(good cpres.good)
+ RETURNS xml
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH max(price) AS (
+          SELECT max(interest.price) AS max
+            FROM cpres.interest
+           WHERE ((interest.good_id = (max_interest_price.good).good_id) AND (interest.person_id <> cpres.current_person_id()))
+         )
+  SELECT XMLELEMENT(NAME div, format(cpres._('current bid at %s€'::text), max.price)) AS "xmlelement"
+    FROM max
+   WHERE (max.price > (0)::numeric);
+END;
+
+CREATE OR REPLACE FUNCTION cpres.interest_control(good cpres.good, interest cpres.interest)
+ RETURNS xml
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT XMLCONCAT(( SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/cpres/query'::text, jsonb_build_object('sql', format('call cpres.want(%L, $2::cpres.interest_level, $1)'::text, (good).good_id))) AS action, NULL::unknown AS class), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, url.url('/cpres/webpush'::text, jsonb_build_object('sql', 'select * from cpres.web_push_want($1::uuid, $2::uuid)', 'params[0]', (interest).good_id, 'params[1]', (interest).person_id, 'redirect', 'referer')) AS value)), cpres.max_interest_price(good), cpres._('propose '::text), XMLELEMENT(NAME input, XMLATTRIBUTES('price' AS class, 'number' AS type, 0 AS min, 'any' AS step, 'params[]' AS name, (interest).price AS value, cpres._('Price?'::text) AS placeholder)), XMLELEMENT(NAME span, XMLATTRIBUTES('inline' AS class), '€'), ( SELECT xmlagg(XMLELEMENT(NAME label,
+                         CASE
+                             WHEN ((interest_control.interest).level = a.value) THEN XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, a.value AS value, 'params[]' AS name, 'required' AS required, true AS checked))
+                             ELSE XMLELEMENT(NAME input, XMLATTRIBUTES('radio' AS type, a.value AS value, 'params[]' AS name, 'required' AS required))
+                         END, cpres._((a.value)::text))) AS xmlagg
+                    FROM unnest(enum_range(NULL::cpres.interest_level)) a(value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Interested'::text) AS value))) AS "xmlelement"
+           WHERE ((cpres.current_person_id() IS NOT NULL) AND (cpres.current_person_id() <> (good).giver))), ( SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/cpres/query'::text, jsonb_build_object('sql', format('call cpres.unwant(%L)'::text, (good).good_id), 'redirect', 'referer')) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, cpres._('Are you sure?'::text)) AS onclick, cpres._('Not interested anymore'::text) AS value))) AS "xmlelement"
+           WHERE ((EXISTS ( SELECT
+                    FROM cpres.interest
+                   WHERE (((interest_control.good).good_id = interest.good_id) AND (interest.person_id = cpres.current_person_id())))) AND (cpres.current_person_id() IS NOT NULL) AND (cpres.current_person_id() <> (good).giver)))) AS "xmlconcat";
+END;
+
+CREATE VIEW "cpres"."good_detail" WITH (security_invoker = true) AS
+ WITH q(qs) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), looker(location) AS (
+         SELECT COALESCE((q_1.qs ->> 'location'::text)::point, ( SELECT person_detail.location
+                   FROM cpres.person_detail
+                  WHERE person_detail.person_id = cpres.current_person_id()
+                 LIMIT 1)) AS "coalesce"
+           FROM q q_1
+        ), base AS (
+         SELECT good_1.*::cpres.good AS good,
+            interest.*::cpres.interest AS interest,
+            giver.name AS giver_name,
+                CASE
+                    WHEN looker.location IS NOT NULL THEN (good_1.location <@> looker.location) * 1.609347::double precision
+                    ELSE NULL::double precision
+                END AS bird_distance_km
+           FROM looker,
+            cpres.good good_1
+             LEFT JOIN cpres.interest ON interest.good_id = good_1.good_id AND interest.person_id = cpres.current_person_id()
+             JOIN cpres.person giver ON good_1.giver = giver.person_id
+        )
+ SELECT XMLELEMENT(NAME article, XMLELEMENT(NAME h2, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid', 'params[]', (good.good).good_id, 'target', (good.good).good_id, 'show_map', true)) AS href), (good.good).title)), XMLELEMENT(NAME img, XMLATTRIBUTES('https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png' AS src, 'marker-icon' AS class, (good.good).good_id AS "for")), XMLELEMENT(NAME span, format(cpres._('By %s'::text), good.giver_name)), ', ', XMLELEMENT(NAME span, XMLATTRIBUTES((good.good).created_at AS title), format(cpres._('at %s'::text), to_char((good.good).created_at, cpres._('TMDay DD/MM'::text)))), XMLELEMENT(NAME p, (good.good).description),
+        CASE
+            WHEN good.bird_distance_km IS NOT NULL THEN XMLELEMENT(NAME div, format('bird distance: %s km'::text, round(good.bird_distance_km::numeric, 2)))
+            ELSE NULL::xml
+        END, XMLELEMENT(NAME a, XMLATTRIBUTES(format('https://www.google.com/maps/dir/?api=1&destination=%s,%s'::text, (good.good).location[1], (good.good).location[0]) AS href, '_blank' AS target), cpres._('go with google maps'::text)),
+        CASE
+            WHEN (q.qs ->> 'show_map'::text) IS NOT NULL THEN XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'map' AS id, 'cpres-map' AS "is", 'init' AS geolocate, url.url('/cpres/query'::text, jsonb_build_object('sql', '
+                    select coalesce(jsonb_agg(feature), ''[]'')::text
+                    from (
+                        select ST_AsGeoJSON(route)::jsonb from cpres.route
+                    ) _ (feature)
+                ')) AS href, '/cpres/marker.png' AS "data-marker-url", (good.good).good_id AS "data-target", (good.good).location AS value, ( SELECT COALESCE(jsonb_agg(_.feature), '[]'::jsonb)::text AS "coalesce"
+               FROM ( SELECT st_asgeojson(route.*)::jsonb AS st_asgeojson
+                       FROM cpres.route
+                    UNION ALL
+                     SELECT st_asgeojson((good.good).location::geometry)::jsonb AS st_asgeojson) _(feature)) AS "data-geojson"))
+            ELSE NULL::xml
+        END, XMLELEMENT(NAME div, XMLATTRIBUTES('grid media' AS class), COALESCE(( SELECT xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), ( WITH url(url) AS (
+                         SELECT url.url('/cpres/query'::text, jsonb_build_object('sql', 'select content from cpres.good_media where content_hash = $1::text::bytea', 'params[]', good_media.content_hash, 'accept', good_media.content_type, 'cache_control', 'max-age=604800 immutable')) AS url
+                        )
+                 SELECT
+                        CASE
+                            WHEN starts_with(good_media.content_type, 'image/'::text) THEN XMLELEMENT(NAME a, XMLATTRIBUTES(url.url AS href), XMLELEMENT(NAME img, XMLATTRIBUTES(url.url AS src)))
+                            ELSE XMLELEMENT(NAME object, XMLATTRIBUTES(url.url AS data, good_media.content_type AS type), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url AS href), good_media.name))
+                        END AS "xmlelement"
+                   FROM url))) AS xmlagg
+           FROM cpres.good_media
+          WHERE good_media.good_id = (good.good).good_id), ''::xml)), cpres.interest_control(good.good, good.interest))::text AS html,
+    (good.good).location AS location,
+    good.bird_distance_km::integer AS bird_distance_km,
+    (good.good).good_id AS good_id,
+    (good.good).receiver AS receiver
+   FROM q,
+    base good;
+
+CREATE VIEW "cpres"."finding_list" WITH (security_invoker = true) AS
+ WITH q(qs) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), result(good_id, rerank_distance, sort) AS (
+         SELECT good.good_id,
+                CASE
+                    WHEN (q_1.qs ->> 'q'::text) <> ''::text THEN cpres.rerank_distance(q_1.qs ->> 'q'::text, good.passage)
+                    ELSE '-1'::integer::real
+                END AS "case",
+                CASE
+                    WHEN (q_1.qs ->> 'q'::text) <> ''::text THEN good.embedding <=> cpres.embed_query(q_1.qs ->> 'q'::text)
+                    ELSE 1::double precision
+                END AS "case"
+           FROM q q_1,
+            cpres.good
+          ORDER BY (
+                CASE
+                    WHEN (q_1.qs ->> 'q'::text) <> ''::text THEN good.embedding <=> cpres.embed_query(q_1.qs ->> 'q'::text)
+                    ELSE 1::double precision
+                END)
+        )
+ SELECT result.sort,
+    result.good_id,
+    d.location,
+    XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), d.html::xml) AS html
+   FROM q,
+    result
+     JOIN cpres.good_detail d USING (good_id)
+  WHERE result.rerank_distance < 0::double precision AND d.bird_distance_km < COALESCE(NULLIF(q.qs ->> 'distance'::text, ''::text)::integer, 50) AND NOT (EXISTS ( SELECT
+           FROM cpres.interest
+          WHERE interest.good_id = d.good_id AND (interest.state = ANY (ARRAY['approved'::cpres.interest_state, 'late'::cpres.interest_state, 'given'::cpres.interest_state]))))
+ LIMIT 500;
+
+CREATE VIEW "cpres"."good_marker" WITH (security_invoker = true) AS
+ SELECT location::geometry AS geom,
+    good_id AS id,
+    jsonb_build_object('content', html, 'maxHeight', 300, 'minWidth', 200, 'autoClose', false, 'closeOnClick', false) AS popup
+   FROM cpres.finding_list;
+
+CREATE VIEW "cpres"."findings" WITH (security_invoker = true) AS
+ WITH q(qs) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'qs'::text AS "?column?"
+        ), control(html) AS (
+         SELECT XMLELEMENT(NAME div, XMLELEMENT(NAME div, XMLATTRIBUTES('flashes onhover' AS class), XMLELEMENT(NAME article, XMLATTRIBUTES('blue card' AS class), cpres._('findings.help'::text)::xml)), XMLELEMENT(NAME div, XMLATTRIBUTES('grid searches' AS class), XMLELEMENT(NAME nav, XMLELEMENT(NAME h4, cpres._('Mes alertes en cours: '::text)), XMLELEMENT(NAME ul, ( WITH result AS (
+                         SELECT search.person_id,
+                            search.query,
+                            search.embedding,
+                            search.interest,
+                            search.at
+                           FROM cpres.search
+                          WHERE search.person_id = cpres.current_person_id()
+                          ORDER BY search.at DESC, search.query
+                         LIMIT 100
+                        )
+                 SELECT COALESCE(xmlagg(XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/cpres/query'::text, jsonb_build_object('q', result.query, 'sql', 'select * from cpres.head union all select * from cpres."findings"', 'use_primary', NULL::unknown)) AS href), result.query)) ORDER BY result.at DESC, result.query), ''::xml) AS "coalesce"
+                   FROM result)), ( SELECT cpres._('Nothing yet.'::text)::xml AS _
+                  WHERE NOT (EXISTS ( SELECT
+                           FROM cpres.search
+                          WHERE search.person_id = cpres.current_person_id()
+                         LIMIT 1)))), XMLELEMENT(NAME div, XMLELEMENT(NAME h4, cpres._('Ce que d''autres cherchent: '::text)), XMLELEMENT(NAME ul, ( WITH result AS (
+                         SELECT person.name,
+                            search.person_id,
+                            search.query,
+                            search.embedding,
+                            search.interest,
+                            search.at
+                           FROM cpres.search
+                             JOIN cpres.person USING (person_id)
+                          WHERE search.person_id <> cpres.current_person_id()
+                          ORDER BY search.at DESC, search.query
+                         LIMIT 100
+                        )
+                 SELECT COALESCE(xmlagg(XMLELEMENT(NAME li, format(cpres._('%s asks for %s'::text), result.name, result.query)) ORDER BY result.at DESC, result.query), ''::xml) AS "coalesce"
+                   FROM result)), ( SELECT cpres._('Nothing yet.'::text)::xml AS _
+                  WHERE NOT (EXISTS ( SELECT
+                           FROM cpres.search
+                          WHERE search.person_id <> cpres.current_person_id()
+                         LIMIT 1))))), XMLELEMENT(NAME h2, XMLATTRIBUTES('hashover showhover' AS class), cpres._('Search'::text)), XMLELEMENT(NAME form, XMLATTRIBUTES('grid' AS class, 'GET' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('q' AS name, 'search' AS type, cpres._('query'::text) AS placeholder, q.qs ->> 'q'::text AS value)), XMLELEMENT(NAME label, XMLATTRIBUTES('inline' AS class), '<span>rayon (km)</span>'::xml, XMLELEMENT(NAME input, XMLATTRIBUTES('distance' AS name, 'number' AS type, cpres._('distance'::text) AS placeholder, COALESCE(NULLIF(NULLIF(q.qs ->> 'distance'::text, 'null'::text), ''::text)::integer, 50) AS value))), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'select * from cpres.head union all select * from cpres."findings"' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'use_primary' AS name, NULL::unknown AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Search'::text) AS value))), ( SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/cpres/query'::text, jsonb_build_object('redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."findings"', 'q', q.qs ->> 'q'::text, 'use_primary', NULL::unknown)))) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'insert into cpres.search (query) values ($1)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('params[]' AS name, 'hidden' AS type, q.qs ->> 'q'::text AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Create alert'::text) AS value))) AS "xmlelement"
+                  WHERE (q.qs ->> 'q'::text) <> ''::text AND NOT (EXISTS ( SELECT
+                           FROM cpres.search
+                          WHERE search.query = (q.qs ->> 'q'::text) AND search.person_id = cpres.current_person_id())) AND cpres.current_person_id() IS NOT NULL), ( SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, url.url('/cpres/query'::text, jsonb_build_object('redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."findings"')))) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'delete from cpres.search where query = $1' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('params[]' AS name, 'hidden' AS type, q.qs ->> 'q'::text AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'destructive' AS class, format('return confirm(%L)'::text, cpres._('Are you sure?'::text)) AS onclick, cpres._('Remove alert'::text) AS value))) AS "xmlelement"
+                  WHERE (EXISTS ( SELECT
+                           FROM cpres.search
+                          WHERE search.query = (q.qs ->> 'q'::text) AND search.person_id = cpres.current_person_id())))) AS "xmlelement"
+           FROM q
+        ), map(html) AS (
+         SELECT XMLELEMENT(NAME input, XMLATTRIBUTES('cpres-map' AS "is", 'watch' AS geolocate, 'hidden' AS type, 'map' AS id, url.url('/cpres/query'::text, jsonb_build_object('sql', '
+                select coalesce(jsonb_agg(feature), ''[]'')::text
+                from (
+                    -- select ST_AsGeoJSON(route)::jsonb from cpres.route
+                    -- union all
+                    select ST_AsGeoJSON(good_marker, id_column => ''id'', geom_column => ''geom'')::jsonb from cpres.good_marker
+                    -- union all
+                    -- select ST_AsGeoJSON(step, geom_column => ''node'')::jsonb from (select node, jsonb_build_object(''content'', st_astext(node)) popup, ''route'' "group" from cpres.route) step
+                ) _ (feature)
+            ', 'use_primary', NULL::unknown, 'q', q.qs ->> 'q'::text, 'distance', q.qs ->> 'distance'::text)) AS href, '/cpres/marker.png' AS "data-marker-url", person_detail.location AS value, ( SELECT COALESCE(jsonb_agg(_.feature), '[]'::jsonb) AS "coalesce"
+                   FROM ( SELECT st_asgeojson(route.*)::jsonb AS st_asgeojson
+                           FROM cpres.route
+                        UNION ALL
+                         SELECT st_asgeojson(good_marker.*, id_column => 'id'::text, geom_column => 'geom'::text)::jsonb AS st_asgeojson
+                           FROM cpres.good_marker
+                        UNION ALL
+                         SELECT st_asgeojson(b.*)::jsonb AS st_asgeojson
+                           FROM cpres.auvergne_boundary b) _(feature)) AS "data-geojson"), '') AS "xmlelement"
+           FROM cpres.person_detail,
+            q
+          WHERE person_detail.person_id = cpres.current_person_id()
+        )
+ SELECT control.html::text AS html
+   FROM control
+UNION ALL
+ SELECT XMLELEMENT(NAME div, format(cpres._('%s results'::text), count(*)))::text AS html
+   FROM cpres.finding_list
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid search-results' AS class), XMLELEMENT(NAME div, XMLATTRIBUTES('list' AS class), ( SELECT xmlagg(finding_list.html ORDER BY finding_list.sort) AS xmlagg
+           FROM cpres.finding_list)), XMLELEMENT(NAME div, ( SELECT xmlagg(map.html) AS xmlagg
+           FROM map
+          WHERE (EXISTS ( SELECT
+                   FROM cpres.finding_list
+                 LIMIT 1)))))::text AS html;
+
+CREATE VIEW "cpres"."receiving activity" WITH (security_invoker = true) AS
+ WITH q(body) AS (
+         SELECT NULLIF(current_setting('httpg.query'::text, true), ''::text)::jsonb -> 'body'::text AS "?column?"
+        ), data(good, giver, receiver, interest) AS (
+         SELECT good.*::cpres.good AS good,
+            ROW(giver_.name, giver_.phone)::cpres.public_person AS "row",
+            ROW(receiver_.name, receiver_.phone)::cpres.public_person AS "row",
+            interest.*::cpres.interest AS interest
+           FROM cpres.interest
+             JOIN cpres.good USING (good_id)
+             JOIN cpres.person giver_ ON good.giver = giver_.person_id
+             JOIN cpres.person receiver_ ON interest.person_id = receiver_.person_id
+          WHERE interest.person_id = cpres.current_person_id()
+        ), html(good, html) AS (
+         SELECT data.good,
+            XMLELEMENT(NAME article, XMLATTRIBUTES('interest card' AS class),
+                CASE
+                    WHEN (data.interest).origin = 'automatic'::cpres.interest_origin THEN XMLELEMENT(NAME div, XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."findings"', 'q', (data.interest).query, 'use_primary', NULL::unknown)) AS href), format('found via search: %s'::text, (data.interest).query)))
+                    ELSE NULL::xml
+                END, XMLELEMENT(NAME div, XMLATTRIBUTES('inline' AS class), XMLELEMENT(NAME h2, XMLELEMENT(NAME a, XMLATTRIBUTES((data.good).title AS id, url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select html from cpres."good_detail" where good_id = $1::uuid', 'params[]', (data.good).good_id, 'show_map', true)) AS href), (data.good).title)), XMLELEMENT(NAME span, format(cpres._('By %s'::text), (data.giver).name)), ' ',
+                CASE
+                    WHEN (data.giver).phone IS NOT NULL THEN XMLCONCAT(XMLELEMENT(NAME a, XMLATTRIBUTES(format('tel:%s'::text, (data.giver).phone) AS href, 'tel' AS class), (data.giver).phone), XMLELEMENT(NAME a, XMLATTRIBUTES(format(cpres._('https://wa.me/%s?text=About giving %s'::text), (data.giver).phone, (data.good).title) AS href, 'whatsapp' AS class, 'whatsapp' AS title), '✆'))
+                    ELSE NULL::xml
+                END), ( WITH message AS (
+                         SELECT message_1.message_id,
+                            message_1.good_id,
+                            message_1.person_id,
+                            message_1.author,
+                            message_1.content,
+                            message_1.at
+                           FROM cpres.message message_1
+                          WHERE message_1.good_id = (data.interest).good_id AND message_1.person_id = (data.interest).person_id
+                        )
+                 SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('messages' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES(message.message_id AS id), format(cpres._('%s at %s: '::text), author.name, to_char(message.at, cpres._('HH24:MI, TMDay DD/MM'::text))), XMLELEMENT(NAME pre, message.content)) ORDER BY message.at), ''::xml)) AS "xmlelement"
+                   FROM message
+                     JOIN cpres.person author ON author.person_id = message.author), ( WITH message_id(message_id) AS (
+                         SELECT uuidv7() AS uuidv7
+                        )
+                 SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/cpres/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, format('insert into cpres.message (message_id, good_id, person_id, content) values (%L, %L, %L, $1)'::text, message_id.message_id, (data.interest).good_id, (data.interest).person_id) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, url.url('/cpres/webpush'::text, jsonb_build_object('sql', 'select * from cpres.web_push_message($1::uuid, $2::uuid)', 'params[0]', message_id.message_id, 'params[1]', (data.good).giver, 'redirect', url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."receiving activity"')))) AS value)), XMLELEMENT(NAME textarea, XMLATTRIBUTES('params[]' AS name, '10' AS rows, 'message' AS placeholder, 'required' AS required), ''), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, cpres._('Send message'::text) AS value))) AS "xmlelement"
+                   FROM message_id),
+                CASE
+                    WHEN (data.interest).state = ANY (ARRAY['approved'::cpres.interest_state, 'given'::cpres.interest_state, 'late'::cpres.interest_state]) THEN xmltext(cpres._('Winner'::text))
+                    ELSE cpres.interest_control(data.good, data.interest)
+                END) AS "xmlelement"
+           FROM data,
+            q
+        )
+ SELECT XMLELEMENT(NAME h2, cpres._('Receiving activity'::text))::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid good' AS class), ( SELECT COALESCE(xmlagg(html.html ORDER BY (COALESCE((html.good).updated_at, (html.good).created_at)) DESC), ''::xml) AS "coalesce"
+           FROM html), ( SELECT cpres._('Nothing yet.'::text) AS _
+          WHERE NOT (EXISTS ( SELECT
+                   FROM html
+                 LIMIT 1))))::text AS html;
+
+CREATE OR REPLACE FUNCTION cpres.send_login_email(email_ text, location_ text, push_endpoint_ text)
+ RETURNS TABLE("from" text, "to" text, subject text, plain text, html text)
+ LANGUAGE sql
+ PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ WITH login_person AS (
+          INSERT INTO cpres.person (name, email, login_challenge)
+           VALUES (replace(send_login_email.email_, '@'::text, '-at-'::text), send_login_email.email_, pg_catalog.gen_random_uuid()) ON CONFLICT(email) DO UPDATE SET login_challenge = excluded.login_challenge, challenge_used_at = NULL::timestamp with time zone
+           RETURNING person.person_id,
+             person.name,
+             person.email,
+             person.phone,
+             person.login_challenge,
+             person.challenge_used_at
+         ), person_detail AS (
+          INSERT INTO cpres.person_detail (person_id, location, push_endpoint)  SELECT login_person.person_id,
+                     (NULLIF(send_login_email.location_, ''::text))::point AS "nullif",
+                     (NULLIF(send_login_email.push_endpoint_, ''::text))::jsonb AS "nullif"
+                    FROM login_person ON CONFLICT(person_id) DO UPDATE SET location = excluded.location, push_endpoint = excluded.push_endpoint
+         ), url AS (
+          SELECT login_person.person_id,
+             login_person.name,
+             login_person.email,
+             login_person.phone,
+             login_person.login_challenge,
+             login_person.challenge_used_at,
+             url.url(format('%s://%s/cpres/login'::text, ((current_setting('httpg.query'::text, true))::jsonb ->> 'scheme'::text), ((current_setting('httpg.query'::text, true))::jsonb ->> 'host'::text)), jsonb_build_object('redirect', '/cpres/', 'login_challenge', login_person.login_challenge, 'params[]', 'cpres')) AS url
+            FROM login_person
+         )
+  SELECT 'florian.klein@free.fr'::text AS text,
+     url.email,
+     '[cpres]: Nouveau lien d''authentification'::text AS text,
+     format('
+            Bonjour %s,
+
+            Un nouveau lien a été crée pour vous authentifier sur cpres: %s
+
+            Ce lien sera valide 1 heure.
+            Ignorez ce lien si vous n''êtes pas à l''origine de la demande.
+
+            Cordialement, l''admin.
+        '::text, url.name, url.url) AS format,
+     XMLCONCAT(XMLELEMENT(NAME h1, format(cpres._('Bonjour %s'::text), url.name)), XMLELEMENT(NAME p, 'Un nouveau lien a été crée pour vous authentifier sur cpres: '), XMLELEMENT(NAME a, XMLATTRIBUTES(url.url AS href), url.url), XMLELEMENT(NAME p, 'Ce lien sera valide 1 heure.'), XMLELEMENT(NAME p, 'Ignorez ce lien si vous n''êtes pas a l''origine de la demande.'), XMLELEMENT(NAME p, 'Cordialement, l''admin.')) AS "xmlconcat"
+    FROM url;
+END;
+
+CREATE OR REPLACE PROCEDURE cpres.unwant(IN _good_id uuid)
+ LANGUAGE sql
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ DELETE FROM cpres.interest
+   WHERE ((interest.good_id = unwant._good_id) AND (interest.person_id = cpres.current_person_id()));
+END;
+
+CREATE OR REPLACE FUNCTION cpres.web_push(person_id_ uuid, title text, content text, path text)
+ RETURNS TABLE(endpoint text, p256dh text, auth text, content bytea)
+ LANGUAGE sql
+ PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT (person_detail.push_endpoint ->> 'endpoint'::text),
+     ((person_detail.push_endpoint -> 'keys'::text) ->> 'p256dh'::text),
+     ((person_detail.push_endpoint -> 'keys'::text) ->> 'auth'::text),
+     ((jsonb_build_object('title', web_push.title, 'content', web_push.content, 'path', web_push.path))::text)::bytea AS jsonb_build_object
+    FROM cpres.person_detail
+   WHERE ((person_detail.person_id = web_push.person_id_) AND (person_detail.push_endpoint IS NOT NULL) AND (EXISTS ( SELECT
+            FROM cpres.person
+           WHERE (person.person_id = cpres.current_person_id()))));
+END;
+
+CREATE OR REPLACE FUNCTION cpres.web_push_gift(good_id_ uuid, receiver_id_ uuid)
+ RETURNS TABLE(endpoint text, p256dh text, auth text, content bytea)
+ LANGUAGE sql
+ PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT p.endpoint,
+     p.p256dh,
+     p.auth,
+     p.content
+    FROM ((cpres.interest
+      JOIN cpres.good ON ((good.good_id = interest.good_id)))
+      JOIN cpres.person giver ON ((good.giver = giver.person_id))),
+     LATERAL cpres.web_push(interest.person_id, format(cpres._('%s gave you %s'::text), giver.name, good.title), NULL::text, ((url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."receiving activity"')) || '#'::text) || good.title)) p(endpoint, p256dh, auth, content)
+   WHERE ((interest.good_id = web_push_gift.good_id_) AND (interest.person_id = web_push_gift.receiver_id_));
+END;
+
+CREATE OR REPLACE FUNCTION cpres.web_push_message(message_id_ uuid, to_ uuid)
+ RETURNS TABLE(endpoint text, p256dh text, auth text, content bytea)
+ LANGUAGE sql
+ PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT p.endpoint,
+     p.p256dh,
+     p.auth,
+     p.content
+    FROM (cpres.message m
+      JOIN cpres.person author ON ((m.author = author.person_id))),
+     LATERAL cpres.web_push(web_push_message.to_, format(cpres._('New message from %s'::text), author.name), m.content, ((url.url('/cpres/query'::text, jsonb_build_object('sql', format('select * from cpres.head union all select * from cpres.%I'::text,
+         CASE m.author
+             WHEN m.person_id THEN 'giving activity'::text
+             ELSE 'receiving activity'::text
+         END))) || '#'::text) || m.message_id)) p(endpoint, p256dh, auth, content)
+   WHERE (m.message_id = web_push_message.message_id_);
+END;
+
+CREATE OR REPLACE FUNCTION cpres.web_push_want(good_id_ uuid, receiver_id_ uuid)
+ RETURNS TABLE(endpoint text, p256dh text, auth text, content bytea)
+ LANGUAGE sql
+ PARALLEL SAFE SECURITY DEFINER
+ SET search_path TO 'cpres', 'pg_catalog'
+BEGIN ATOMIC
+ SELECT p.endpoint,
+     p.p256dh,
+     p.auth,
+     p.content
+    FROM ((cpres.interest
+      JOIN cpres.good ON ((good.good_id = interest.good_id)))
+      JOIN cpres.person receiver ON ((interest.person_id = receiver.person_id))),
+     LATERAL cpres.web_push(good.giver, format(cpres._('%s is interested by %s'::text), receiver.name, good.title), NULL::text, (url.url('/cpres/query'::text, jsonb_build_object('sql', 'select * from cpres.head union all select * from cpres."giving activity"')) || format('#%s-%s'::text, good.good_id, receiver.person_id))) p(endpoint, p256dh, auth, content)
+   WHERE ((interest.good_id = web_push_want.good_id_) AND (interest.person_id = web_push_want.receiver_id_));
+END;
+
+CREATE OR REPLACE FUNCTION public.login(name text)
+ RETURNS SETOF text
+ LANGUAGE plpgsql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'cpres', 'gieze', 'pg_catalog'
+AS $function$
+begin
+    case name
+        when 'cpres' then return query select * from login_cpres();
+        when 'gieze' then return query select * from gieze.login();
+        when 'grandroc' then return query select * from grandroc.login();
+        when 'jmeu' then return query select * from jmeu.login();
+    end case;
+end;
+$function$;
+
+-- pgmt:section name="cpres_4" module="cpres"
+GRANT EXECUTE ON FUNCTION "cpres"."_"(id_ text, lang_ text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."compare_search"() TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."interest_control"(good cpres.good, interest cpres.interest) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."login_cpres"() TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."max_interest_price"(good cpres.good) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."send_login_email"(email_ text, location_ text, push_endpoint_ text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push"(person_id_ uuid, title text, content text, path text) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_gift"(good_id_ uuid, receiver_id_ uuid) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_message"(message_id_ uuid, to_ uuid) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_want"(good_id_ uuid, receiver_id_ uuid) TO "anon";
+
+GRANT EXECUTE ON FUNCTION "public"."login"(name text) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."delete_account"() TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."give"(IN _good_id uuid, IN _receiver uuid) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."mark_late_interests"() TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."unwant"(IN _good_id uuid) TO "anon";
+
+GRANT SELECT ON "cpres"."about" TO "anon";
+
+GRANT SELECT ON "cpres"."finding_list" TO "anon";
+
+GRANT SELECT ON "cpres"."findings" TO "anon";
+
+GRANT SELECT ON "cpres"."good_detail" TO "anon";
+
+GRANT SELECT ON "cpres"."good_marker" TO "anon";
+
+GRANT SELECT ON "cpres"."head" TO "anon";
+
+GRANT SELECT ON "cpres"."route" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "cpres"."_"(id_ text, lang_ text) TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "cpres"."max_interest_price"(good cpres.good) TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "public"."login"(name text) TO "httpg";
+
+GRANT EXECUTE ON FUNCTION "cpres"."_"(id_ text, lang_ text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."compare_search"() TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."good_form"(id text, params jsonb, sql text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."interest_control"(good cpres.good, interest cpres.interest) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."login_cpres"() TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."max_interest_price"(good cpres.good) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."send_login_email"(email_ text, location_ text, push_endpoint_ text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push"(person_id_ uuid, title text, content text, path text) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_gift"(good_id_ uuid, receiver_id_ uuid) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_message"(message_id_ uuid, to_ uuid) TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_want"(good_id_ uuid, receiver_id_ uuid) TO "person";
+
+GRANT EXECUTE ON FUNCTION "public"."login"(name text) TO "person";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."delete_account"() TO "person";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."give"(IN _good_id uuid, IN _receiver uuid) TO "person";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."mark_late_interests"() TO "person";
+
+GRANT EXECUTE ON PROCEDURE "cpres"."unwant"(IN _good_id uuid) TO "person";
+
+GRANT SELECT ON "cpres"."about" TO "person";
+
+GRANT SELECT ON "cpres"."finding_list" TO "person";
+
+GRANT SELECT ON "cpres"."findings" TO "person";
+
+GRANT SELECT ON "cpres"."giving activity" TO "person";
+
+GRANT SELECT ON "cpres"."good admin" TO "person";
+
+GRANT SELECT ON "cpres"."good_detail" TO "person";
+
+GRANT SELECT ON "cpres"."good_marker" TO "person";
+
+GRANT SELECT ON "cpres"."head" TO "person";
+
+GRANT SELECT ON "cpres"."receiving activity" TO "person";
+
+GRANT SELECT ON "cpres"."route" TO "person";
+
+GRANT EXECUTE ON FUNCTION "cpres"."_"(id_ text, lang_ text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."compare_search"() TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."good_form"(id text, params jsonb, sql text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."interest_control"(good cpres.good, interest cpres.interest) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."login_cpres"() TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."max_interest_price"(good cpres.good) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."send_login_email"(email_ text, location_ text, push_endpoint_ text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push"(person_id_ uuid, title text, content text, path text) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_gift"(good_id_ uuid, receiver_id_ uuid) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_message"(message_id_ uuid, to_ uuid) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "cpres"."web_push_want"(good_id_ uuid, receiver_id_ uuid) TO PUBLIC;
+
+GRANT EXECUTE ON FUNCTION "public"."login"(name text) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "cpres"."delete_account"() TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "cpres"."give"(IN _good_id uuid, IN _receiver uuid) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "cpres"."mark_late_interests"() TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "cpres"."unwant"(IN _good_id uuid) TO PUBLIC;
+
+GRANT USAGE ON TYPE "cpres"."public_person" TO PUBLIC;
+
+-- pgmt:section name="gps_3" module="gps"
+CREATE TABLE "gps"."gebco" (
+    "rast" raster
+);
+
+CREATE VIEW "gps"."gebco_geo" AS
+ SELECT st_setsrid(st_extent(st_envelope(rast))::geometry, 4326) AS geom,
+    rast
+   FROM gps.gebco
+  GROUP BY rast;
+
+CREATE VIEW "gps"."heatmap" AS
+ SELECT h3_cell_to_boundary_geometry(d.geom @ 10) AS hex,
+    count(*) AS weight
+   FROM gps.run,
+    LATERAL st_dumppoints(run.geom) d(path, geom)
+  GROUP BY (d.geom @ 10)
+  ORDER BY (count(*));
+
+CREATE VIEW "gps"."login" WITH (security_invoker = true) AS
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gps/query/res' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'call gps.login($1, $2)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name)), XMLELEMENT(NAME input, XMLATTRIBUTES('password' AS type, 'params[1]' AS name)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'login' AS value)))::text AS html;
+
+CREATE VIEW "gps"."head" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>GPS</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/charts.css/dist/charts.min.css" />
+    <link rel="stylesheet" href="/cpres/index.css?v=1" />
+    <script type="module" src="/cpres/webcomponent/map.js?v=1"></script>
+    <script type="module" src="/gps/index.js?v=1"></script>
+</head>
+<style>
+#map + .leaflet-container {
+    height: 90vh;
+}
+
+.ended {
+    text-decoration: line-through;
+}
+
+.list {
+    overflow: auto;
+    max-height: 90vh;
+}
+
+#elevation-chart {
+    & tbody {
+        max-height: 20vh;
+    }
+    max-width: 100vw;
+    margin-bottom: 1vh;
+}
+
+@media (pointer: coarse), (hover: none) {
+  [title] {
+    position: relative;
+    display: inline-flex;
+    justify-content: center;
+  }
+  [title]:hover::after {
+    content: attr(title);
+    position: absolute;
+    z-index: 10;
+    top: 50%;
+    left: 0;
+    color: #000;
+    background-color: #fff;
+    border: 1px solid;
+    width: max-content;
+    padding: 3px;
+    font-size: 10px;
+  }
+}
+</style>
+'::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME p, httpg.error)::text AS html
+   FROM httpg
+  WHERE httpg.error IS NOT NULL
+UNION ALL
+ SELECT format('Hello %s!'::text, runner.name) AS html
+   FROM gps.runner
+  WHERE runner.runner_id = gps.current_runner_id()
+UNION ALL
+ SELECT login.html
+   FROM gps.login
+  WHERE gps.current_runner_id() IS NULL;
+
+CREATE VIEW "gps"."stat" WITH (security_invoker = true) AS
+ SELECT XMLELEMENT(NAME div, XMLELEMENT(NAME h1, run.name), XMLELEMENT(NAME p, round((st_length(COALESCE(run.geom, st_makeline(ping.location ORDER BY ping.at))::geography) / 1000::double precision)::numeric, 2) || ' km'::text), XMLELEMENT(NAME p, 'started at: ', to_char(run.starts_at, 'HH24:MI:SS'::text)),
+        CASE
+            WHEN run.ends_at IS NOT NULL THEN XMLELEMENT(NAME p, 'ended at: ', to_char(run.ends_at, 'HH24:MI:SS'::text))
+            ELSE NULL::xml
+        END, XMLELEMENT(NAME div, XMLATTRIBUTES('elevation-chart' AS id), XMLELEMENT(NAME "table", XMLATTRIBUTES('charts-css column' AS class), ( WITH point(geom) AS (
+                 SELECT st_dumppoints.geom
+                   FROM st_dumppoints(run.geom) st_dumppoints(path, geom)
+                UNION ALL
+                ( SELECT ping_1.location
+                   FROM gps.ping ping_1
+                  WHERE ping_1.run_id = run.run_id
+                  ORDER BY ping_1.at)
+                ), elevation(altitude, size) AS (
+                 SELECT st_value(gebco_geo.rast, p.geom) AS st_value,
+                    COALESCE(st_value(gebco_geo.rast, p.geom) / max(st_value(gebco_geo.rast, p.geom)) OVER ()::numeric::double precision, 0::double precision) AS "coalesce"
+                   FROM point p
+                     LEFT JOIN gps.gebco_geo ON st_contains(gebco_geo.geom, p.geom)
+                )
+         SELECT xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME td, XMLATTRIBUTES(format('--size: %s'::text, elevation.size) AS style, elevation.altitude || 'm'::text AS title), ''))) AS xmlagg
+           FROM elevation)), xmltext('GEBCO Compilation Group (2025) GEBCO 2025 Grid (doi:10.5285/ 37c52e96-24ea-67ce-e063-7086abc05f29)'::text))) AS html,
+    run.run_id
+   FROM gps.run
+     LEFT JOIN gps.ping USING (run_id)
+  GROUP BY run.run_id;
+
+CREATE OR REPLACE PROCEDURE gps.end_run(IN run_id_ uuid, INOUT res refcursor DEFAULT 'res'::refcursor)
+ LANGUAGE plpgsql
+ SET search_path TO 'gps', 'url', 'pg_catalog', 'public'
+AS $procedure$
+begin
+    with deleted_ping (location, at) as (
+        delete from ping
+        where run_id = run_id_
+        returning location, at
+    ),
+    line (geom) as (
+        select st_simplify(st_makeline(location order by at), .0001)
+        from deleted_ping
+    )
+    update run set
+        ends_at = now(),
+        geom = line.geom
+    from line
+    where run_id = run_id_;
+
+    open res for select
+        303 status,
+        jsonb_build_object('Location', url('/gps/query', jsonb_build_object(
+            'run_id', run_id_,
+            'sql', 'select * from gps.head union all select * from gps.map'
+        ))) header
+    ;
+exception when others then
+    perform set_config('httpg.errors', jsonb_build_object('error', sqlerrm)::text, true);
+    open res for select
+        400 status, null body
+        union all
+        select null, html from head
+        union all
+        select null, html from map
+    ;
+end;
+$procedure$;
+
+CREATE OR REPLACE FUNCTION gps.geojson_ping(location geometry, run_id uuid, at timestamp with time zone)
+ RETURNS record
+ LANGUAGE sql
+ IMMUTABLE PARALLEL SAFE STRICT
+ SET search_path TO 'gps', 'url', 'pg_catalog', 'public'
+BEGIN ATOMIC
+ SELECT location AS geom,
+     jsonb_build_object('content', XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gps/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'delete from gps.ping where location = $1::geometry and run_id = $2::uuid and at = $3::timestamptz' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, (location)::text AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[1]' AS name, (run_id)::text AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[2]' AS name, (at)::text AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'delete point' AS value, 'destructive' AS class, format('return confirm(%L)'::text, 'Are you sure?') AS onclick)))) AS popup;
+END;
+
+CREATE VIEW "gps"."map" WITH (security_invoker = true) AS
+ WITH q(run_id) AS (
+         SELECT (current_setting('httpg.query'::text, true)::jsonb -> 'qs'::text) ->> 'run_id'::text AS "?column?"
+        ), palette(palette) AS (
+         SELECT array_agg(format('#%s00%s'::text, lpad(to_hex(c.c), 2, '0'::text), lpad(to_hex(255 - c.c), 2, '0'::text))) AS array_agg
+           FROM generate_series(0, 255) c(c)
+        ), line(line, run_id) AS (
+         SELECT st_simplify(st_makeline(ping.location ORDER BY ping.at), 0.0001::double precision) AS st_simplify,
+            ping.run_id
+           FROM gps.ping,
+            q
+          WHERE
+                CASE
+                    WHEN q.run_id IS NULL THEN true
+                    ELSE ping.run_id = q.run_id::uuid
+                END
+          GROUP BY ping.run_id
+        UNION ALL
+         SELECT run.geom,
+            run.run_id
+           FROM q,
+            gps.run
+          WHERE run.geom IS NOT NULL AND
+                CASE
+                    WHEN q.run_id IS NULL THEN true
+                    ELSE q.run_id::uuid = run.run_id
+                END
+        ), geo(geom, style, popup) AS (
+         SELECT heatmap.hex,
+            jsonb_build_object('color', palette.palette[width_bucket((heatmap.weight + 1)::double precision, 0::double precision, max(heatmap.weight) OVER ()::double precision, 255)], 'stroke', false) AS jsonb_build_object,
+            NULL::jsonb AS "?column?"
+           FROM gps.heatmap,
+            palette
+        UNION ALL
+         SELECT line.line,
+            NULL::jsonb AS jsonb,
+            jsonb_build_object('content', stat.html::text) AS jsonb_build_object
+           FROM line
+             JOIN gps.run USING (run_id)
+             JOIN gps.stat USING (run_id)
+        UNION ALL
+         SELECT g.geom,
+            NULL::jsonb AS jsonb,
+                CASE
+                    WHEN q.run_id IS NULL THEN NULL::jsonb
+                    ELSE g.popup
+                END AS popup
+           FROM q,
+            gps.ping,
+            LATERAL gps.geojson_ping(ping.location, ping.run_id, ping.at) g(geom geometry, popup jsonb)
+          WHERE
+                CASE
+                    WHEN q.run_id IS NULL THEN true
+                    ELSE ping.run_id = q.run_id::uuid
+                END
+        )
+ SELECT XMLCONCAT(XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/gps/query'::text, jsonb_build_object('sql', 'select * from gps.list')) AS href), 'back to list'), stat.html,
+        CASE
+            WHEN run.ends_at IS NULL THEN XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gps/query/res' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'call gps.end_run($1::uuid)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, q.run_id AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'end run' AS value, 'destructive' AS class, format('return confirm(%L)'::text, 'Are you sure?') AS onclick)))
+            ELSE NULL::xml
+        END)::text AS html
+   FROM q,
+    gps.run
+     JOIN gps.stat USING (run_id)
+  WHERE run.run_id = q.run_id::uuid
+UNION ALL
+ SELECT XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, NULLIF(q.run_id IS NULL, false) OR run.ends_at IS NOT NULL AS readonly, 'map' AS id, 'cpres-map' AS "is",
+        CASE
+            WHEN q.run_id IS NULL OR run.ends_at IS NOT NULL THEN NULL::text
+            ELSE 'watch'::text
+        END AS geolocate, url.url('/gps/query'::text, jsonb_build_object('sql', 'call gps.ping($1::uuid, $2::point::geometry)')) AS href, ( SELECT COALESCE(jsonb_agg(_.feature), '[]'::jsonb)::text AS "coalesce"
+           FROM ( SELECT st_asgeojson(geo.*)::jsonb AS st_asgeojson
+                   FROM geo) _(feature)) AS "data-geojson"))::text AS html
+   FROM q
+     LEFT JOIN gps.run ON run.run_id = q.run_id::uuid;
+
+CREATE VIEW "gps"."list" WITH (security_invoker = true) AS
+ WITH q(run_id) AS (
+         SELECT (current_setting('httpg.query'::text, true)::jsonb -> 'qs'::text) ->> 'run_id'::text AS "?column?"
+        ), form(html) AS (
+         SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gps/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+                insert into gps.run (name) values (nullif($1, ''''))
+                returning jsonb_build_object(''Location'', url.url(''/gps/query'', jsonb_build_object(
+                    ''sql'', ''select * from gps.head union all select * from gps.map'',
+                    ''run_id'', run_id
+                ))) header, 303 status
+            ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gps.list' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, to_char(now(), 'TMDay DD/MM/YY, HH24:MI'::text) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'new run' AS value))) AS "xmlelement"
+           FROM q
+        ), list(html, starts_at) AS (
+         SELECT XMLELEMENT(NAME a, XMLATTRIBUTES(url.url('/gps/query'::text, jsonb_build_object('sql', 'select * from gps.head union all select * from gps.map', 'run_id', run.run_id)) AS href), XMLELEMENT(NAME h3, XMLATTRIBUTES(
+                CASE
+                    WHEN run.ends_at IS NOT NULL THEN 'ended'::text
+                    ELSE NULL::text
+                END AS class), COALESCE(run.name, run.run_id::text))) AS "xmlelement",
+            run.starts_at
+           FROM gps.run
+        )
+ SELECT head.html
+   FROM gps.head
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), ( SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('list' AS class), ( SELECT form.html
+                   FROM form), xmlagg(list.html ORDER BY list.starts_at DESC)) AS "xmlelement"
+           FROM list), ( SELECT XMLELEMENT(NAME div, xmlagg(map.html::xml)) AS "xmlelement"
+           FROM gps.map))::text AS html;
+
+CREATE OR REPLACE PROCEDURE gps.login(IN name_ text, IN password_ text, INOUT res refcursor DEFAULT 'res'::refcursor)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'gps', 'url', 'pg_catalog', 'public'
+AS $procedure$
+declare runner_id_ uuid;
+begin
+    with salt (salt) as (
+        select gen_salt('bf')
+    )
+    insert into runner (name, password, salt)
+    select name_, crypt(password_, salt), salt
+    from salt
+    on conflict (name) do nothing;
+
+    select runner_id into runner_id_
+    from runner
+    where crypt(password_, salt) = password
+    limit 1;
+
+    open res for select
+        303 status,
+        jsonb_build_object(array[
+            ['Location', url('/gps/query', jsonb_build_object(
+                'sql', 'select * from gps.list'
+            ))],
+            ['Set-Cookie', format('gps.current_runner_id=%s; HttpOnly; Secure; Path=/gps', runner_id_)]
+        ]) header
+    ;
+exception when unique_violation then
+    perform set_config('httpg.errors', jsonb_build_object('error', 'duplicate name')::text, true);
+    open res for select
+        400 status, null body
+        union all
+        select null, html from head
+        union all
+        select null, html from login
+    ;
+end;
+$procedure$;
+
+CREATE OR REPLACE PROCEDURE gps.ping(IN run_id_ uuid, IN location_ geometry, INOUT status integer DEFAULT NULL::integer, INOUT body text DEFAULT NULL::text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'gps', 'url', 'pg_catalog', 'public'
+AS $procedure$
+declare geo text;
+begin
+    insert into ping (run_id, location)
+    values (run_id_, location_)
+    on conflict (run_id, location, at) do nothing
+    returning 200, st_asgeojson(geojson_ping(location, run_id, at))
+    into status, body;
+exception when check_violation then
+    perform set_config('httpg.errors', jsonb_build_object('error', sqlerrm)::text, true);
+    case sqlerrm
+        when 'no partition of relation "ping" found for row' then
+            execute format(
+                $sql$
+                create table if not exists gps.%I partition of gps.ping
+                for values from (%L) to (%L)
+                $sql$,
+                'ping_' || to_char(now(), 'YYYY_MM'),
+                date_trunc('month', now()),
+                date_trunc('month', now()) + interval '1 month'
+            );
+            call ping(run_id_, location_, status, body);
+    end case;
+end;
+$procedure$;
+
+GRANT EXECUTE ON FUNCTION "gps"."geojson_ping"(location geometry, run_id uuid, at timestamp with time zone) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "gps"."end_run"(IN run_id_ uuid, INOUT res refcursor) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "gps"."login"(IN name_ text, IN password_ text, INOUT res refcursor) TO "anon";
+
+GRANT EXECUTE ON PROCEDURE "gps"."ping"(IN run_id_ uuid, IN location_ geometry, INOUT status integer, INOUT body text) TO "anon";
+
+GRANT SELECT ON "gps"."gebco_geo" TO "anon";
+
+GRANT SELECT ON "gps"."head" TO "anon";
+
+GRANT SELECT ON "gps"."heatmap" TO "anon";
+
+GRANT SELECT ON "gps"."list" TO "anon";
+
+GRANT SELECT ON "gps"."login" TO "anon";
+
+GRANT SELECT ON "gps"."map" TO "anon";
+
+GRANT SELECT ON "gps"."stat" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "gps"."geojson_ping"(location geometry, run_id uuid, at timestamp with time zone) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "gps"."end_run"(IN run_id_ uuid, INOUT res refcursor) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "gps"."login"(IN name_ text, IN password_ text, INOUT res refcursor) TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "gps"."ping"(IN run_id_ uuid, IN location_ geometry, INOUT status integer, INOUT body text) TO PUBLIC;
+
+-- pgmt:section name="gieze_4" module="gieze" remaps="(unmoduled)"
+CREATE VIEW "gieze"."bl_admin" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT XMLELEMENT(NAME h1, 'Bons de livraison')::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('clients' AS list, 'params[0]' AS name, 'client' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.bl_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+      insert into gieze.bl (client) values ($1) returning
+        303 status,
+        jsonb_build_object(''Location'', url.url(''/gieze/query'', jsonb_build_object(
+          ''sql'', ''select * from gieze.head union all select * from gieze.bl_admin''
+        ))) header
+    ' AS value)), XMLELEMENT(NAME datalist, XMLATTRIBUTES('clients' AS id), ( SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(client.client AS value)) ORDER BY client.client) AS xmlagg
+           FROM gieze.client)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'New BL' AS value)))::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME h3, format('BL #%s pour %s'::text, bl.bl, bl.client)),
+        CASE
+            WHEN bl.shipped_at IS NULL THEN XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, bl.bl AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.bl_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+          update gieze.bl set shipped_at = now()
+          where bl = $1::bigint
+          returning
+            303 status,
+            jsonb_build_object(''Location'', url.url(''/gieze/query'', jsonb_build_object(
+              ''sql'', ''select * from gieze.head union all select * from gieze.bl_admin''
+            ))) header
+        ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Ship' AS value)))
+            ELSE xmltext(format('Livré le %s'::text, bl.shipped_at))
+        END, XMLELEMENT(NAME datalist, XMLATTRIBUTES('products' AS id), ( SELECT xmlagg(XMLELEMENT(NAME option, XMLATTRIBUTES(product.product AS value)) ORDER BY product.product) AS xmlagg
+           FROM gieze.product)), ( SELECT COALESCE(xmlagg(XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, bl.bl AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('products' AS list, 'params[1]' AS name, 'product' AS placeholder, 'required' AS required, _.product AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, 'params[2]' AS name, 'required' AS required, _.quantity AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+              insert into gieze.bl_line (bl, product, quantity) values ($1::bigint, $2, $3::int)
+              on conflict (bl, product) do update
+                set quantity = excluded.quantity
+              returning
+                303 status,
+                jsonb_build_object(''Location'', url.url(''/gieze/query'', jsonb_build_object(
+                  ''sql'', ''select * from gieze.head union all select * from gieze.bl_admin''
+                ))) header
+            ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.bl_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, _.action AS value))) ORDER BY _.product NULLS FIRST)) AS "coalesce"
+           FROM ( VALUES (bl.bl,NULL::text,1,'Add'::text)
+                UNION ALL
+                 SELECT l.bl,
+                    l.product,
+                    l.quantity,
+                    'Edit'::text AS text
+                   FROM gieze.bl_line l
+                  WHERE l.bl = bl.bl) _(bl, product, quantity, action))) ORDER BY bl.bl DESC), ''::xml))::text AS html
+   FROM gieze.bl;
+
+CREATE VIEW "gieze"."client_admin" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT XMLELEMENT(NAME h1, 'Clients')::text AS html
+UNION ALL
+ SELECT XMLSERIALIZE(DOCUMENT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+          insert into gieze.client (client, billing_address, shipping_address, phone)
+          values (nullif($1, ''''), nullif($2, ''''), nullif($3, ''''), nullif($4, ''''))
+          on conflict (client) do update set
+            billing_address = excluded.billing_address,
+            shipping_address = excluded.shipping_address,
+            phone = excluded.phone
+          returning
+            303 status,
+            jsonb_build_object(''Location'', url.url(''/gieze/query'', jsonb_build_object(
+              ''sql'', ''select * from gieze.head union all select * from gieze.client_admin''
+            ))) header
+        ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.client_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, 'client' AS placeholder, 'required' AS required, _.client AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[1]' AS name, 'Adresse de facturation' AS placeholder, 'required' AS required, _.billing_address AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[2]' AS name, 'Adresse de livraison' AS placeholder, _.shipping_address AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('tel' AS type, 'params[3]' AS name, 'Téléphone' AS placeholder, _.phone AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, _.button AS value)))) ORDER BY _.client NULLS FIRST), ''::xml)) AS text INDENT) AS html
+   FROM ( VALUES (NULL::text,NULL::text,NULL::text,NULL::text,'Add'::text)
+        UNION ALL
+         SELECT client.client,
+            client.billing_address,
+            client.shipping_address,
+            client.phone,
+            'Edit'::text AS text
+           FROM gieze.client) _(client, billing_address, shipping_address, phone, button);
+
+CREATE VIEW "gieze"."future_invoice_line" AS
+ SELECT bl.client,
+    date_trunc('month'::text, bl.shipped_at::timestamp with time zone)::date AS month,
+    bl.bl,
+    bl.shipped_at,
+    bl_line.product,
+    bl_line.quantity,
+    product.unit_price_ht,
+    product.unit_price_ht::numeric * bl_line.quantity::numeric AS total_price_ht,
+    product.tva_rate,
+    product.unit_price_ht::numeric * bl_line.quantity::numeric * product.tva_rate::numeric AS total_tva,
+    product.unit_price_ht::numeric * bl_line.quantity::numeric * (1::numeric + product.tva_rate::numeric) AS total_price_ttc
+   FROM gieze.bl_line
+     JOIN gieze.bl USING (bl)
+     JOIN gieze.product USING (product)
+  WHERE bl.shipped_at IS NOT NULL AND NOT bl.invoiced;
+
+CREATE VIEW "gieze"."future_invoice" AS
+ SELECT client.client,
+    date_trunc('month'::text, bl.shipped_at::timestamp with time zone)::date AS month,
+    sum(future_invoice_line.total_price_ht) AS total_ht,
+    sum(future_invoice_line.total_tva) AS total_tva,
+    sum(future_invoice_line.total_price_ttc) AS total_ttc
+   FROM gieze.client
+     JOIN gieze.future_invoice_line USING (client)
+     JOIN gieze.bl USING (bl)
+  WHERE future_invoice_line.month = date_trunc('month'::text, bl.shipped_at::timestamp with time zone)::date
+  GROUP BY client.client, (date_trunc('month'::text, bl.shipped_at::timestamp with time zone)::date)
+  ORDER BY (date_trunc('month'::text, bl.shipped_at::timestamp with time zone)::date), client.client;
+
+CREATE VIEW "gieze"."head" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>La Gièze</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="stylesheet" href="/cpres/index.css?v=1" />
+    <link rel="stylesheet" href="/gieze/index.css?v=1" />
+</head>
+'::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME form, XMLATTRIBUTES('grid' AS class, 'POST' AS method, url.url('/gieze/login'::text, jsonb_build_object('sql', 'select 1', 'redirect', url.url('/gieze/query'::text, jsonb_build_object('sql', 'select * from gieze.head union all select * from gieze.todo')), 'params[0]', 'gieze')) AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'name' AS name, 'name' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('password' AS type, 'password' AS name, 'password' AS placeholder, 'required' AS required)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'login' AS value)))::text AS html
+  WHERE CURRENT_ROLE <> 'gieze_admin'::name
+UNION ALL
+ SELECT XMLELEMENT(NAME article, XMLATTRIBUTES('card error' AS class), httpg.error)::text AS html
+   FROM httpg
+  WHERE httpg.error IS NOT NULL
+UNION ALL
+ SELECT XMLELEMENT(NAME nav, XMLELEMENT(NAME ul, COALESCE(xmlagg(XMLELEMENT(NAME li, XMLELEMENT(NAME a, XMLATTRIBUTES(COALESCE(menu.href, url.url('/gieze/query'::text, jsonb_build_object('sql', format('select * from gieze.head union all select * from gieze.%I'::text, menu.rel)))) AS href), menu.name))), ''::xml)))::text AS html
+   FROM ( VALUES ('TODO'::text,'todo'::text,NULL::text,CURRENT_ROLE = 'gieze_admin'::name), ('BLs'::text,'bl_admin'::text,NULL::text,CURRENT_ROLE = 'gieze_admin'::name), ('Factures'::text,'invoice_admin'::text,NULL::text,CURRENT_ROLE = 'gieze_admin'::name), ('Clients'::text,'client_admin'::text,NULL::text,CURRENT_ROLE = 'gieze_admin'::name), ('Produits'::text,'product_admin'::text,NULL::text,CURRENT_ROLE = 'gieze_admin'::name), ('Logout'::text,NULL::text,'/gieze/logout?sql=select 1&redirect=/gieze/query?sql=select * from gieze.head'::text,CURRENT_ROLE = 'gieze_admin'::name)) menu(name, rel, href, visible)
+  WHERE menu.visible;
+
+CREATE VIEW "gieze"."invoice_admin" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT XMLELEMENT(NAME h1, 'A facturer')::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card future-invoice' AS class), XMLELEMENT(NAME h3, format('%s #%s'::text, future_invoice.client, future_invoice.month)), XMLELEMENT(NAME "table", XMLELEMENT(NAME thead, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, 'Libellé'), XMLELEMENT(NAME th, 'Qté'), XMLELEMENT(NAME th, 'PU HT'), XMLELEMENT(NAME th, 'Prix HT'), XMLELEMENT(NAME th, '% TVA'), XMLELEMENT(NAME th, 'TVA'), XMLELEMENT(NAME th, 'TTC'))), XMLELEMENT(NAME tbody, ( WITH grouped(bl, shipped_at, lines) AS (
+                 SELECT l.bl,
+                    l.shipped_at,
+                    xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME td, l.product), XMLELEMENT(NAME td, l.quantity), XMLELEMENT(NAME td, l.unit_price_ht), XMLELEMENT(NAME td, l.total_price_ht), XMLELEMENT(NAME td, round(l.tva_rate::numeric * 100::numeric, 2)), XMLELEMENT(NAME td, round(l.total_tva, 2)), XMLELEMENT(NAME td, round(l.total_price_ttc, 2)))) AS xmlagg
+                   FROM gieze.future_invoice_line l
+                  WHERE l.client = future_invoice.client AND l.month = future_invoice.month
+                  GROUP BY l.bl, l.shipped_at
+                )
+         SELECT xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME th, format('BL #%s du %s'::text, grouped.bl, grouped.shipped_at)), grouped.lines)) AS xmlagg
+           FROM grouped)), XMLELEMENT(NAME tfoot, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLATTRIBUTES(3 AS colspan), 'Total €'), XMLELEMENT(NAME td, future_invoice.total_ht), XMLELEMENT(NAME td, ''), XMLELEMENT(NAME td, round(future_invoice.total_tva, 2)), XMLELEMENT(NAME td, XMLELEMENT(NAME b, round(future_invoice.total_ttc, 2)))))), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, 'call gieze.invoice($1, $2::date)' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.invoice_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[0]' AS name, future_invoice.client AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'params[1]' AS name, future_invoice.month AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'redirect' AS name, 'referer' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, 'Facturer' AS value))))), ''::xml))::text AS html
+   FROM gieze.future_invoice
+UNION ALL
+ SELECT XMLELEMENT(NAME h1, 'Factures passées')::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME h3, invoice.invoice), XMLELEMENT(NAME a, XMLATTRIBUTES('this.nextSibling.contentWindow.print()' AS onclick), 'print'), XMLELEMENT(NAME iframe, XMLATTRIBUTES(url.url('/gieze/query'::text, jsonb_build_object('sql', 'select html from gieze.invoice_detail where invoice in (''head'', $1)', 'params[0]', invoice.invoice)) AS src), ''))), ''::xml))::text AS html
+   FROM gieze.invoice;
+
+CREATE VIEW "gieze"."invoice_detail" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT '<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>La Gièze</title>
+    <meta name="color-scheme" content="dark light" />
+    <meta name="viewport" content="width=device-width" />
+    <link rel="stylesheet" href="/cpres/index.css?v=1" />
+    <link rel="stylesheet" href="/gieze/index.css?v=1" />
+</head>
+'::text AS html,
+    'head'::text AS invoice
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES(true AS contenteditable), XMLELEMENT(NAME header, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME div, XMLELEMENT(NAME img, XMLATTRIBUTES('/gieze/logo-gieze.png' AS src)), XMLELEMENT(NAME h2, 'La Gièze'), XMLELEMENT(NAME p, '03250 Ferrières-sur-Sichon'), XMLELEMENT(NAME p, '06 60 77 09 97')), XMLELEMENT(NAME div, XMLELEMENT(NAME h2, format('Facture %s-%s'::text, to_char(invoice.month::timestamp with time zone, 'YY-MM'::text), to_char(invoice.increment, 'fm000'::text))), XMLELEMENT(NAME p, format('Facturé: %s'::text, invoice.invoiced_at::date)), XMLELEMENT(NAME p, format('Echéance: %s'::text, invoice.deadline_at::date)), XMLELEMENT(NAME h3, invoice.client), XMLELEMENT(NAME p, invoice.client_address))), XMLELEMENT(NAME "table", XMLELEMENT(NAME thead, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, 'Libellé'), XMLELEMENT(NAME th, 'Qté'), XMLELEMENT(NAME th, 'PU HT'), XMLELEMENT(NAME th, 'Prix HT'), XMLELEMENT(NAME th, '% TVA'), XMLELEMENT(NAME th, 'TVA'), XMLELEMENT(NAME th, 'TTC'))), XMLELEMENT(NAME tbody, ( WITH grouped(bl, shipped_at, lines) AS (
+                 SELECT l.bl,
+                    l.shipped_at,
+                    xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME td, l.product), XMLELEMENT(NAME td, l.quantity), XMLELEMENT(NAME td, l.unit_price_ht), XMLELEMENT(NAME td, l.total_price_ht), XMLELEMENT(NAME td, round(l.tva_rate::numeric * 100::numeric, 2)), XMLELEMENT(NAME td, l.total_tva), XMLELEMENT(NAME td, l.total_price_ttc))) AS xmlagg
+                   FROM gieze.invoice_line l
+                  WHERE l.invoice = invoice.invoice
+                  GROUP BY l.bl, l.shipped_at
+                )
+         SELECT xmlagg(XMLELEMENT(NAME tr, XMLELEMENT(NAME th, format('BL #%s du %s'::text, grouped.bl, grouped.shipped_at)), grouped.lines)) AS xmlagg
+           FROM grouped)), XMLELEMENT(NAME tfoot, XMLELEMENT(NAME tr, XMLELEMENT(NAME th, XMLATTRIBUTES(3 AS colspan), 'Total €'), XMLELEMENT(NAME td, invoice.total_ht), XMLELEMENT(NAME td, ''), XMLELEMENT(NAME td, round(invoice.total_tva::numeric, 2)), XMLELEMENT(NAME td, XMLELEMENT(NAME b, round(invoice.total_ttc::numeric, 2)))))), XMLELEMENT(NAME footer, XMLELEMENT(NAME pre, 'Notes'), XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), XMLELEMENT(NAME p, invoice.bank_info), XMLELEMENT(NAME p, invoice.legal_infos))))::text AS html,
+    invoice.invoice
+   FROM gieze.invoice;
+
+CREATE VIEW "gieze"."product_admin" WITH (security_invoker = true) AS
+ WITH httpg(error) AS (
+         SELECT NULLIF(current_setting('httpg.errors'::text, true), ''::text)::jsonb ->> 'error'::text AS "?column?"
+        )
+ SELECT XMLELEMENT(NAME h1, 'Produits')::text AS html
+UNION ALL
+ SELECT XMLELEMENT(NAME div, XMLATTRIBUTES('grid' AS class), COALESCE(xmlagg(XMLELEMENT(NAME article, XMLATTRIBUTES('card' AS class), XMLELEMENT(NAME form, XMLATTRIBUTES('POST' AS method, '/gieze/query' AS action), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'sql' AS name, '
+          insert into gieze.product (product, unit_price_ht, tva_rate)
+          values (nullif($1, ''''), nullif($2, '''')::numeric, nullif($3, '''')::numeric / 100)
+          on conflict (product) do update set
+            unit_price_ht = excluded.unit_price_ht,
+            tva_rate = excluded.tva_rate
+          returning
+            303 status,
+            jsonb_build_object(''Location'', url.url(''/gieze/query'', jsonb_build_object(
+              ''sql'', ''select * from gieze.head union all select * from gieze.product_admin''
+            ))) header
+        ' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('hidden' AS type, 'on_error' AS name, 'select * from gieze.head union all select * from gieze.product_admin' AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('text' AS type, 'params[0]' AS name, 'produit' AS placeholder, 'required' AS required, _.product AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, '0.01' AS step, 'params[1]' AS name, 'Prix Unitaire HT' AS placeholder, 'required' AS required, _.unit_price_ht AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('number' AS type, '0.01' AS step, 'params[2]' AS name, 'Taux TVA (%)' AS placeholder, 'required' AS required, round(_.tva_rate * 100::numeric, 2) AS value)), XMLELEMENT(NAME input, XMLATTRIBUTES('submit' AS type, _.button AS value)))) ORDER BY _.product NULLS FIRST), ''::xml))::text AS html
+   FROM ( VALUES (NULL::text,NULL::numeric,NULL::numeric,'Add'::text)
+        UNION ALL
+         SELECT product.product,
+            product.unit_price_ht,
+            product.tva_rate,
+            'Edit'::text AS text
+           FROM gieze.product) _(product, unit_price_ht, tva_rate, button);
+
+CREATE VIEW "gieze"."todo" AS
+ SELECT XMLELEMENT(NAME h1, 'TODO')::text AS html
+UNION ALL
+( SELECT XMLELEMENT(NAME div, format('%s %s pour %s'::text, sum(bl_line.quantity), bl_line.product, bl.client))::text AS html
+   FROM gieze.bl_line
+     JOIN gieze.bl USING (bl)
+  WHERE bl.shipped_at IS NULL
+  GROUP BY bl_line.product, bl.client
+  ORDER BY (sum(bl_line.quantity)) DESC, bl_line.product, bl.client);
+
+CREATE OR REPLACE PROCEDURE gieze.invoice(IN client_ text, IN month_ date)
+ LANGUAGE sql
+ SET default_transaction_isolation TO 'serializable'
+ SET search_path TO 'gieze', 'url', 'pg_catalog', 'public'
+BEGIN ATOMIC
+ WITH next(number) AS (
+          SELECT COALESCE((max(invoice.increment) + 1), (1)::bigint) AS "coalesce"
+            FROM gieze.invoice
+           WHERE ((invoice.client = invoice.client_) AND (date_trunc('year'::text, (invoice.month)::timestamp with time zone) = date_trunc('year'::text, (invoice.month_)::timestamp with time zone)))
+         ), new_invoice AS (
+          INSERT INTO gieze.invoice (increment, invoice, client, address, client_address, month, invoiced_at, deadline_at, total_ht, total_tva, total_ttc, bank_info, legal_infos)  SELECT next.number,
+                     format('%s %s-%s'::text, fi.client, to_char((fi.month)::timestamp with time zone, 'YY-MM'::text), to_char(next.number, 'fm000'::text)) AS format,
+                     ( SELECT client.client
+                            FROM gieze.client
+                           WHERE (client.client = fi.client)) AS client,
+                     ( SELECT client.billing_address
+                            FROM gieze.client
+                           WHERE (client.client = fi.client)) AS billing_address,
+                     ( SELECT client.shipping_address
+                            FROM gieze.client
+                           WHERE (client.client = fi.client)) AS shipping_address,
+                     fi.month,
+                     now() AS now,
+                     (now() + '1 mon'::interval),
+                     fi.total_ht,
+                     fi.total_tva,
+                     fi.total_ttc,
+                     'bank info',
+                     'legal infos'
+                    FROM gieze.future_invoice fi,
+                     next
+                   WHERE ((fi.client = invoice.client_) AND (fi.month = invoice.month_))
+           RETURNING invoice.client,
+             invoice.month,
+             invoice.invoice
+         )
+  INSERT INTO gieze.invoice_line (invoice, bl, shipped_at, product, quantity, unit_price_ht, total_price_ht, tva_rate, total_tva, total_price_ttc)  SELECT ni.invoice,
+             fil.bl,
+             fil.shipped_at,
+             fil.product,
+             fil.quantity,
+             fil.unit_price_ht,
+             fil.total_price_ht,
+             fil.tva_rate,
+             fil.total_tva,
+             fil.total_price_ttc
+            FROM (new_invoice ni
+              JOIN gieze.future_invoice_line fil USING (client, month));
+ UPDATE gieze.bl SET invoiced = true
+   WHERE (((date_trunc('month'::text, (bl.shipped_at)::timestamp with time zone))::date = invoice.month_) AND (bl.client = invoice.client_) AND (bl.shipped_at IS NOT NULL));
+END;
+
+CREATE OR REPLACE FUNCTION gieze.login()
+ RETURNS SETOF text
+ LANGUAGE sql
+ PARALLEL SAFE STRICT SECURITY DEFINER
+ SET search_path TO 'gieze', 'pg_catalog'
+BEGIN ATOMIC
+ WITH httpg(body) AS (
+          SELECT ((current_setting('httpg.query'::text, true))::jsonb -> 'body'::text) AS "?column?"
+         )
+  SELECT 'set local role to gieze_admin'::text AS text
+    FROM gieze.admin,
+     httpg
+   WHERE ((admin.name = (httpg.body ->> 'name'::text)) AND (admin.password = crypt((httpg.body ->> 'password'::text), admin.salt)));
+END;
+
+-- pgmt:section name="gieze_5" module="gieze"
+GRANT EXECUTE ON FUNCTION "gieze"."login"() TO "anon";
+
+GRANT SELECT ON "gieze"."head" TO "anon";
+
+GRANT EXECUTE ON FUNCTION "gieze"."login"() TO "gieze_admin";
+
+GRANT EXECUTE ON PROCEDURE "gieze"."invoice"(IN client_ text, IN month_ date) TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."bl_admin" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."client_admin" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."future_invoice" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."future_invoice_line" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."head" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."invoice_admin" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."invoice_detail" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."product_admin" TO "gieze_admin";
+
+GRANT SELECT ON "gieze"."todo" TO "gieze_admin";
+
+GRANT EXECUTE ON FUNCTION "gieze"."login"() TO PUBLIC;
+
+GRANT EXECUTE ON PROCEDURE "gieze"."invoice"(IN client_ text, IN month_ date) TO PUBLIC;

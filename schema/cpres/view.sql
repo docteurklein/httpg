@@ -1248,7 +1248,6 @@ union all (
     with m (color, m) as (
         select m.key, xmltext(_(m.value)) from q, jsonb_each_text(q->'qs'->'flash') m
         union all (
-            -- require: extensions.sql
             select 'yellow', xmlelement(name a, xmlattributes(
                 (url('/cpres/query', jsonb_build_object(
                     'sql', 'select * from cpres.head union all table cpres."receiving activity"'
