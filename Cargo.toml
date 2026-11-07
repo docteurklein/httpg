@@ -55,7 +55,7 @@ rustls = "^0"
 axum-server = { version = "^0", features = ["tls-rustls"] }
 futures = "^0"
 tokio-stream = { version = "^0", features = ["sync"] }
-serde_qs = "1.0.0-rc.4"
+serde_qs = "^1"
 bytes = "^1"
 sqlparser = { version = "^0", features = ["visitor"] }
 cookie = "^0"

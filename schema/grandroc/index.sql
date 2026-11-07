@@ -241,7 +241,7 @@ begin atomic
 end;
 
 
-drop view if exists occupant_html;
+-- drop view if exists occupant_html;
 create or replace view occupant_html (body, occupant)
 with (security_invoker) as
     with httpg (params) as (
@@ -293,7 +293,7 @@ with (security_invoker) as
     from httpg, (table add union all table edit)
 ;
 
-drop view if exists place_html;
+-- drop view if exists place_html;
 create or replace view place_html (body, place)
 with (security_invoker) as
     with httpg (params) as (
@@ -302,7 +302,7 @@ with (security_invoker) as
     add (sql, action, place) as (
         select $$
             insert into grandroc.place (place, taxe_sejour, electricity_cost_unit, dog_price_unit, cgv)
-            values ($1, nullif($2, '')::amount, nullif($3, '')::amount, nullif($4, '')::amount, $5)
+            values ($1, nullif($2, '')::grandroc.amount, nullif($3, '')::grandroc.amount, nullif($4, '')::grandroc.amount, $5)
             returning 303 status,
             jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
@@ -313,9 +313,9 @@ with (security_invoker) as
         select $$
             update grandroc.place
                 set place = $1,
-                taxe_sejour = nullif($2, '')::amount,
-                electricity_cost_unit = nullif($3, '')::amount,
-                dog_price_unit = nullif($4, '')::amount,
+                taxe_sejour = nullif($2, '')::grandroc.amount,
+                electricity_cost_unit = nullif($3, '')::grandroc.amount,
+                dog_price_unit = nullif($4, '')::grandroc.amount,
                 cgv = $5
             where place = $6
             returning 303 status,
@@ -436,7 +436,7 @@ calendar (html) as (
         order by period asc, days(period) desc, booking.place)
     ), '')
     from httpg, day
-    left join booking on period @> d
+    left join booking on period @> d -- @TODO exclude last day
     where case when httpg.place is not null then booking.place = httpg.place else true end
     group by d
 ),
@@ -619,7 +619,7 @@ line (booking_id, label, qty, pu, total) as (
         ),
         row(
             'Draps'::text,
-            nb_adults + nb_children,
+            case when with_draps then nb_adults + nb_children end,
             8::amount
         ),
         row(
@@ -984,7 +984,7 @@ from top_date
 
 grant execute on function login() to anon;
 grant grandroc to anon;
-grant usage on schema grandroc, url to anon, grandroc;
+grant usage on schema grandroc, url, public to anon, grandroc;
 grant select on table stat to anon, grandroc;
 grant select on table head to anon, grandroc;
 grant select, insert, update, delete on table booking to grandroc;

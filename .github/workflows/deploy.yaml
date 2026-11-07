@@ -69,6 +69,9 @@ jobs:
         env:
           DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
 
+      - id: 'build'
+        run: 'nix build .#httpg-release --print-build-logs'
+
       - id: 'deploy'
         run: 'nix run .#deploy'
   

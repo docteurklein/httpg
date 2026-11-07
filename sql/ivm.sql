@@ -1,4 +1,4 @@
-set "ivm.slot_name" to :'slot_name';
+-- set "ivm.slot_name" to :'slot_name';
 
 select * from pg_create_logical_replication_slot(:'slot_name', 'wal2json')
 where not exists (select from pg_replication_slots where slot_name = :'slot_name');
@@ -79,34 +79,27 @@ create table if not exists blog.total_stat (
 
 set session characteristics as transaction isolation level serializable;
 
-create or replace procedure ivm()
+create or replace procedure ivm(slot text, current_lsn pg_lsn)
 language plpgsql
 as $$
 declare
-    current_lsn pg_lsn;
-    -- lsn pg_lsn;
     changes jsonb;
 begin
 set "auto_explain.log_min_duration" = 10000;
 -- set log_min_messages to fatal; -- unfortunate but pg_logical_slot_peek_changes floods server logs
-select confirmed_flush_lsn
-into current_lsn
-from pg_replication_slots
-where slot_name = current_setting('ivm.slot_name');
-
 raise notice 'starting at %', current_lsn;
 loop
     for current_lsn, changes in select lsn, data::jsonb->'change'
-        from pg_logical_slot_peek_changes(current_setting('ivm.slot_name'), null, null,
+        from pg_logical_slot_peek_changes(slot, null, null,
             'format-version', '1',
             'include-empty-transaction', 'false',
             'include-lsn', 'true',
             'include-types', 'false',
             'add-tables', 'blog.comment,blog.stat'
         )
-        order by lsn
+        -- order by lsn
     loop
-        with sum (post_id, incr) as (
+        with diff (post_id, incr) as (
             select post_id, coalesce(count(1) filter (where change->>'kind' = 'insert'), 0) - coalesce(count(1) filter (where change->>'kind' = 'delete'), 0)
             from jsonb_array_elements(changes) change,
             wal2json_v1(change),
@@ -116,8 +109,8 @@ loop
             group by post_id
         )
         merge into blog.stat
-        using sum
-        on sum.post_id = stat.post_id
+        using diff
+        on diff.post_id = stat.post_id
         when matched and stat.lsn >= current_lsn then do nothing
         when matched and (ncomments + incr <= 0) then delete
         when matched and incr <> 0 then update
@@ -128,7 +121,7 @@ loop
             (post_id, incr, current_lsn)
         ;
 
-        with sum (incr) as (
+        with diff (incr) as (
             select sum(coalesce(new.ncomments, 0) - coalesce(old.ncomments, 0))
             from jsonb_array_elements(changes) change,
             wal2json_v1(change),
@@ -139,30 +132,37 @@ loop
         )
         merge into blog.total_stat t
         using (
-            select * from sum where incr is not null
-        ) sum
+            select * from diff where incr is not null
+        ) diff
         on t.id = 'ncomments'
         when matched and t.lsn >= current_lsn then do nothing
         when matched and incr <> 0 then update
             set ncomments = ncomments + incr,
             lsn = current_lsn
-        when not matched then insert (id, ncomments, lsn) values ('ncomments', incr, current_lsn)
+        when not matched then insert
+            (id, ncomments, lsn) values
+            ('ncomments', incr, current_lsn)
         ;
-
     end loop;
+
     if current_lsn is not null then
         commit;
         raise notice 'committed %', current_lsn;
-        perform 1 / random(0, 5);
-        select end_lsn into current_lsn from pg_replication_slot_advance(current_setting('ivm.slot_name'), current_lsn);
-        raise notice 'advanced slot % to %', current_setting('ivm.slot_name'), current_lsn;
+        perform 1 / random(0, 5); -- chaos testing
+        select end_lsn into current_lsn from pg_replication_slot_advance(slot, current_lsn);
+        raise notice 'advanced slot % to %', slot, current_lsn;
     else
         perform pg_sleep(1);
         rollback;
     end if;
+
 end loop;
 
 end;
 $$;
 
-call ivm();
+select confirmed_flush_lsn lsn
+from pg_replication_slots
+where slot_name = :'slot_name' \gset
+
+call ivm(:'slot_name', :'lsn');

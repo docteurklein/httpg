@@ -52,6 +52,8 @@ create table if not exists comment (
     approved_at timestamptz default null
 );
 
+alter table comment replica identity full;
+
 create index if not exists fts on comment using gin (fts);
 create index if not exists post_id on comment (post_id);
 

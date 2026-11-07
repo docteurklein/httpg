@@ -120,6 +120,30 @@ with (security_invoker) as
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/jmeu/index.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
+
+        navigator.serviceWorker.register('/jmeu/sw.js', {type: 'module'});
+
+        navigator.serviceWorker.ready.then((registration) => {
+            if ('sync' in registration) {
+                registration.sync.register("sync-messages").catch(console.log).then(console.log);
+            }
+        });
+        Object.keys(localStorage).forEach(async i => {
+            let form = JSON.parse(i);
+            if (navigator.onLine) {
+                await fetch(form.url, {method: form.method, body: form.body, headers: {'Content-Type': 'application/x-www-form-urlencoded'}}).then((response) => {
+                    console.log(response);
+                    if (response.ok) {
+                        localStorage.removeItem(i);
+                    }
+                });
+            }
+        });
+        Object.keys(localStorage).forEach(i => {
+            let div = document.createElement('div');
+            div.appendChild(document.createTextNode(i));
+            document.body.appendChild(div);
+        });
         document.getElementById('all')?.addEventListener('click', (e) => {
             document.querySelectorAll('.animals input[type=checkbox]').forEach(n => {
                 n.checked = e.target.checked;
@@ -132,13 +156,27 @@ with (security_invoker) as
                 });
             });
         });
+        document.addEventListener('submit', event => {
+            //if (navigator.onLine) { return; }
+            if (event.target.method.toUpperCase() !== 'POST') {
+                return;
+            }
+            event.preventDefault();
+            console.log(event);
+            let item = {
+                url: event.target.getAttribute('action'),
+                method: event.target.method,
+                body: new URLSearchParams(new FormData(event.target, event.submitter)).toString(),
+            };
+            console.log(item);
+            localStorage.setItem(JSON.stringify(item), null);
+        });
+
     $$::text::xml)::text
     union all select xmlelement(name header,
         xmlelement(name h1, xmlelement(name a, xmlattributes(
             url('/jmeu/query', jsonb_build_object(
-                'redirect', url('/jmeu/query', jsonb_build_object(
-                    'sql', 'select * from jmeu.head'
-                ))
+                'sql', 'select * from jmeu.head'
             )) as href
         ), 'Jmeu')),
         (select xmlelement(name form, xmlattributes(
@@ -198,21 +236,18 @@ with (security_invoker) as
             -- @TODO tous les agnelages grouped by date avec filtre from et to
             -- @TODO tous les traitements (journal sanitaire)
         )
-        where current_role = 'jmeu'),
-        (
-            select xmlelement(name div, xmlattributes('flashes' as class),
-                xmlelement(name article, xmlattributes('red card' as class), error)
-            )
-            from httpg
-            where error is not null
-        ),
-        (
-            select xmlelement(name div, xmlattributes('flashes' as class),
-                xmlelement(name article, xmlattributes(format('%s card', key) as class), value)
-            )
-            from httpg, jsonb_each_text(qs->'flashes')
-        )
-)::text;
+        where current_role = 'jmeu')
+    )::text
+    union all select xmlelement(name div, xmlattributes('flashes' as class),
+        xmlelement(name article, xmlattributes('red card' as class), error)
+    )::text
+    from httpg
+    where error is not null
+    union all select xmlelement(name div, xmlattributes('flashes' as class),
+        xmlelement(name article, xmlattributes(format('%s card', key) as class), value)
+    )::text
+    from httpg, jsonb_each_text(qs->'flashes')
+;
 
 
 -- drop view if exists admin_html;
