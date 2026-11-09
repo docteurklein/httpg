@@ -617,7 +617,7 @@ async fn post_query(
                     None => rows,
                 };
                 tx.commit().await?;
-                let lsn = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?.try_get(0).ok();
+                let lsn = conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0).ok();
 
                 return Ok(response::HttpResult {
                     query,
@@ -728,7 +728,7 @@ async fn call_query(
                     },
                     None => rows,
                 };
-                let lsn = conn.query_one("select pg_current_wal_insert_lsn()", &[]).await?.try_get(0).ok();
+                let lsn = conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0).ok();
 
                 return Ok(response::HttpResult {
                     query,

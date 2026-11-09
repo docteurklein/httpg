@@ -666,9 +666,9 @@
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
                     # "auto_explain.log_parameter_max_length" = -1;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
                     output_plugin_libraries = "wal2json";
-                    # "pg_plan_advice.feedback_warnings" = true;
+                    "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
@@ -845,9 +845,9 @@
                     "auto_explain.log_verbose" = true;
                     "auto_explain.log_triggers" = true;
                     # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements";
+                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
                     output_plugin_libraries = "wal2json";
-                    # "pg_plan_advice.feedback_warnings" = true;
+                    "pg_plan_advice.feedback_warnings" = true;
                     max_connections = 100;
                     # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
                     # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
