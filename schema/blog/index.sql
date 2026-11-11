@@ -24,6 +24,8 @@ create table if not exists post (
     updated_at timestamptz default null
 );
 
+alter table post replica identity full;
+
 create index if not exists fts on post using gin (fts);
 create index if not exists published on post (published_at) where published_at is not null;
 
@@ -295,12 +297,28 @@ begin atomic
 end;
 
 grant execute on function search to anon;
--- drop materialized view if exists ts_stat cascade;
-create view ts_stat (word, nentry, ratio)
+
+
+grant select on table ts_stat_view to anon;
+
+drop table if exists ts_stat cascade;
+create table if not exists ts_stat (
+    word text primary key,
+    nentry int not null,
+    lsn pg_lsn not null default '0/0'
+);
+
+drop view if exists ts_stat_view cascade;
+create view ts_stat_view (word, nentry, ratio)
 as
     select word, nentry, nentry::numeric / max(nentry) over ()
-    from ts_stat('select fts from blog.post')
+    from blog.ts_stat
 ;
+
+insert into ts_stat
+select word, nentry
+from ts_stat('select fts from blog.post')
+on conflict (word) do nothing;
 
 grant select on table ts_stat to anon;
 
@@ -469,14 +487,14 @@ union all (
         from (
             with top as (
                 select *
-                from ts_stat
+                from ts_stat_view
                 order by nentry desc
                 limit 5
             ),
             rand as (
                 select *
-                from ts_stat
-                where not exists (select from top where ts_stat.word = top.word)
+                from ts_stat_view
+                where not exists (select from top where ts_stat_view.word = top.word)
                 order by random()
                 limit 5
             )

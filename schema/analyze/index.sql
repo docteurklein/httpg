@@ -146,7 +146,7 @@ union all select null, null, xmlelement(name form, xmlattributes(
 ),
     xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
     xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from plan.explain_html($1)' as value)),
-    xmlelement(name textarea, xmlattributes('params[0]' as name, 7 as rows), coalesce(query_, 'explain (format json, analyze, timing, costs, buffers, io, verbose)\n')),
+    xmlelement(name textarea, xmlattributes('params[0]' as name, 7 as rows), coalesce(query_, 'explain (format json, analyze, timing, costs, buffers, io, verbose, plan_advice)\n')),
     xmlelement(name input, xmlattributes('submit' as type))
 )::text
 from httpg

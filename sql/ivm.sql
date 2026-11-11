@@ -6,7 +6,7 @@ select * from pg_create_logical_replication_slot(:'slot_name', 'wal2json')
 where not exists (select from pg_replication_slots where slot_name = :'slot_name');
 
 -- drop function if exists debug;
-create or replace function debug(a anyelement, msg text default '', cond bool default true) returns anyelement
+create or replace function debug(a anyelement, msg text default '', cond bool default true, with_stack bool default false) returns anyelement
 language plpgsql
 stable parallel safe
 security definer
@@ -16,14 +16,17 @@ declare
 begin
     if cond then
         raise notice '% (%) -- %', a, pg_typeof(a), msg;
-        get diagnostics stack = pg_context;
-        raise notice '%', stack;
+        if with_stack then
+            get diagnostics stack = pg_context;
+            raise notice '%', stack;
+        end if;
     end if;
+
     return a;
 end
 $$;
 
-drop function if exists wal2json_v1(jsonb) cascade;
+-- drop function if exists wal2json_v1(jsonb) cascade;
 create or replace function wal2json_v1(change jsonb)
 returns table (old jsonb, new jsonb)
 language sql
@@ -68,6 +71,36 @@ create table if not exists blog.total_stat (
 
 set session characteristics as transaction isolation level serializable;
 
+create or replace procedure maintain_ts_stat(current_lsn pg_lsn, changes jsonb)
+security definer
+begin atomic
+    with diff (word, incr) as (
+        select coalesce(n.lexeme, o.lexeme), sum(coalesce(cardinality(n.positions), 0) - coalesce(cardinality(o.positions), 0))
+        from jsonb_array_elements(changes) change,
+        wal2json_v1(change),
+        jsonb_populate_record(null::blog.post, old) old,
+        jsonb_populate_record(null::blog.post, new) new
+        left join lateral unnest(new.fts) n on true
+        full outer join lateral unnest(old.fts) o using (lexeme)
+        where (change->>'schema', change->>'table') = ('blog', 'post')
+        and change->>'kind' in ('insert', 'update', 'delete')
+        and cardinality(n.positions) is distinct from cardinality(o.positions)
+        group by 1
+    )
+    merge into blog.ts_stat
+    using diff
+    on diff.word = ts_stat.word
+    when matched and ts_stat.lsn >= current_lsn then do nothing
+    when matched and nentry + incr <= 0 then delete
+    when matched and incr <> 0 then update set
+        nentry = nentry + incr,
+        lsn = current_lsn
+    when not matched and incr > 0 then insert
+        (word, nentry, lsn) values
+        (word, incr, current_lsn)
+    ;
+end;
+
 create or replace procedure maintain_comment_stat(current_lsn pg_lsn, changes jsonb)
 security definer
 begin atomic
@@ -84,7 +117,7 @@ begin atomic
     using diff
     on diff.post_id = stat.post_id
     when matched and stat.lsn >= current_lsn then do nothing
-    when matched and (ncomments + incr <= 0) then delete
+    when matched and ncomments + incr <= 0 then delete
     when matched and incr <> 0 then update
         set ncomments = ncomments + incr,
         lsn = current_lsn
@@ -94,7 +127,7 @@ begin atomic
     ;
 end;
 
-create or replace procedure maintain_blog_stat(current_lsn pg_lsn, changes jsonb)
+create or replace procedure maintain_total_stat(current_lsn pg_lsn, changes jsonb)
 security definer
 begin atomic
     with diff (incr) as (
@@ -119,13 +152,14 @@ begin atomic
     ;
 end;
 
--- drop procedure if exists backfill;
-create or replace procedure backfill(slot text, lock_duration text default '1s')
+-- drop procedure if exists populate;
+create or replace procedure populate(slot text, lock_duration text default '1s')
 language plpgsql
 as $$
 begin
     perform set_config('lock_timeout', lock_duration, false);
-    lock table blog.stat, blog.total_stat, blog.comment in share row exclusive mode; -- block app writes for a while
+    lock table blog.stat, blog.total_stat, blog.comment
+    in share row exclusive mode; -- block app writes for a while
 
     truncate blog.stat; -- block exclusive
     insert into blog.stat (post_id, ncomments)
@@ -158,11 +192,12 @@ loop
             'include-empty-transaction', 'false',
             'include-lsn', 'true',
             'include-types', 'false',
-            'add-tables', 'blog.comment,blog.stat'
+            'add-tables', 'blog.comment,blog.stat,blog.post'
         ) c
     loop
         call maintain_comment_stat(lsn, changes);
-        call maintain_blog_stat(lsn, changes);
+        call maintain_total_stat(lsn, changes);
+        call maintain_ts_stat(lsn, changes);
     end loop;
 
     if lsn is not null then
