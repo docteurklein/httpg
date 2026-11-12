@@ -11,6 +11,7 @@
   pre.cgv {
     text-wrap: wrap;
     break-inside: avoid;
+    font-family: Arial, Helvetica, sans-serif;
   }
 
 * {

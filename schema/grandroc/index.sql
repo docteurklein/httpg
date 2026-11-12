@@ -436,7 +436,7 @@ calendar (html) as (
         order by period asc, days(period) desc, booking.place)
     ), '')
     from httpg, day
-    left join booking on period @> d -- @TODO exclude last day
+    left join booking on lower(period) <= d::date and upper(period) > d::date + interval '1 day'
     where case when httpg.place is not null then booking.place = httpg.place else true end
     group by d
 ),
@@ -738,6 +738,10 @@ xmlelement(name html, xmlattributes(
             xmlelement(name strong, 
               xmltext('Durée: ')), 
             xmltext(format(' %s nuitée(s)', days(period)))), 
+          case when nb_emplacements > 0 then xmlelement(name p, 
+            xmlelement(name strong, 
+              xmltext('Emplacements: ')), 
+            xmltext(format('%s', nb_emplacements))) end, 
           xmlelement(name p, 
             xmlelement(name strong, 
               xmltext('Adultes: ')), 
