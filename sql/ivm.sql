@@ -47,6 +47,29 @@ begin atomic
     end;
 end;
 
+-- drop function if exists wal2json_v2(jsonb) cascade;
+create or replace function wal2json_v2(change jsonb)
+returns table (old jsonb, new jsonb)
+language sql
+immutable parallel safe leakproof
+security definer
+begin atomic
+    select case when change->>'action' in ('U', 'D') then
+        (select jsonb_object_agg(
+            c->>'name',
+            c->'value'
+        )
+        from jsonb_array_elements(change->'identity') c)
+    end,
+    case when change->>'action' in ('I', 'U') then
+        (select jsonb_object_agg(
+            c->>'name',
+            c->'value'
+        )
+        from jsonb_array_elements(change->'columns') c)
+    end;
+end;
+
 -- drop view if exists blog.stat_view;
 create or replace view blog.stat_view as
 select post_id, count(comment_id) ncomments
@@ -191,25 +214,26 @@ begin
 -- set log_min_messages to fatal; -- unfortunate but pg_logical_slot_peek_changes floods server logs
 loop
     for lsn, changes in
-        select c.lsn, data::jsonb->'change'
+        select c.lsn, data::jsonb
         from pg_logical_slot_peek_changes(slot, null, null,
-            'format-version', '1',
+            'format-version', '2',
             -- 'include-empty-transaction', 'false',
             'include-lsn', 'true',
             'include-types', 'false',
             'add-tables', 'blog.comment,blog.stat,blog.post,cpres.osm_auvergne'
         ) c
     loop
+        -- perform debug((wal2json_v2(changes)).old);
         call maintain_gis_network(lsn, changes);
-        call maintain_comment_stat(lsn, changes);
-        call maintain_total_stat(lsn, changes);
-        call maintain_ts_stat(lsn, changes);
+        -- call maintain_comment_stat(lsn, changes);
+        -- call maintain_total_stat(lsn, changes);
+        -- call maintain_ts_stat(lsn, changes);
     end loop;
 
     if lsn is not null then
         commit;
         -- perform 1 / random(0, 50); -- chaos testing
-        perform pg_replication_slot_advance(slot, lsn);
+        -- perform pg_replication_slot_advance(slot, lsn);
         raise notice 'advanced to %', lsn;
     else
         rollback;
@@ -238,6 +262,15 @@ create table if not exists network_iv (
 create or replace procedure maintain_gis_network(current_lsn pg_lsn, changes jsonb)
 security definer
 begin atomic
+    -- with change as (
+    --     select old, new, debug(c)
+    --     from jsonb_array_elements(changes) change,
+    --     wal2json_v2(change) c,
+    --     jsonb_populate_record(null::cpres.osm_auvergne, old) old,
+    --     jsonb_populate_record(null::cpres.osm_auvergne, new) new
+    --     where (change->>'schema', change->>'table') = ('cpres', 'osm_auvergne')
+    --     and change->>'kind' in ('insert', 'update', 'delete')
+    -- ),
     with way (osm_id, geog, speed) as (
         select new.osm_id, new.geog, coalesce(
             nullif(json_value(new.tags, '$.maxspeed' returning numeric null on error), 0),
@@ -273,31 +306,32 @@ begin atomic
                 else 30
             end
         )
-        from jsonb_array_elements(changes) change,
-        wal2json_v1(change),
+        -- from change
+        -- from jsonb_array_elements(changes) change,
+        from wal2json_v2(changes) c,
         jsonb_populate_record(null::cpres.osm_auvergne, old) old,
         jsonb_populate_record(null::cpres.osm_auvergne, new) new
-        where (change->>'schema', change->>'table') = ('cpres', 'osm_auvergne')
-        and change->>'kind' in ('insert', 'update', 'delete')
+        where (changes->>'schema', changes->>'table') = ('cpres', 'osm_auvergne')
+        and changes->>'action' in ('I', 'U', 'D')
         and new.osm_type = 'way'
-        -- and new.tags->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
-        --     'motorway',
-        --     'motorway_link',
-        --     'trunk',
-        --     'trunk_link',
-        --     'primary',
-        --     'primary_link',
-        --     'secondary',
-        --     'secondary_link',
-        --     'tertiary',
-        --     'tertiary_link',
-        --     -- 'track', --keep ?
-        --     'unclassified',
-        --     'service',
-        --     'living_street',
-        --     'residential'
-        -- )
-        -- and geometrytype(new.geog) = 'LINESTRING'
+        and new.tags->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
+            'motorway',
+            'motorway_link',
+            'trunk',
+            'trunk_link',
+            'primary',
+            'primary_link',
+            'secondary',
+            'secondary_link',
+            'tertiary',
+            'tertiary_link',
+            -- 'track', --keep ?
+            'unclassified',
+            'service',
+            'living_street',
+            'residential'
+        )
+        and geometrytype(new.geog) = 'LINESTRING'
     ),
     crossing (osm_id, geog, speed, point) as (
         select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry
@@ -339,15 +373,16 @@ begin atomic
     using (
         table split union table edge
     ) diff
-    on debug(diff.geog = network_iv.geog)
+    on diff.geog = network_iv.geog
     when matched and network_iv.lsn >= current_lsn then do nothing
     -- when matched and nentry +  then delete
     -- when matched and incr <> 0 then update set
     --     nentry = nentry + incr,
     --     lsn = current_lsn
+    when not matched by source then delete
     when not matched then insert
         (osm_id, geog, startpoint, endpoint, duration, distance, lsn) values
-        (osm_id, geog, startpoint, endpoint, duration, distance, debug(current_lsn))
+        (osm_id, geog, startpoint, endpoint, duration, distance, current_lsn)
     ;
     -- select
     --     osm_id,
@@ -358,7 +393,7 @@ begin atomic
     --     st_length(geog) / (speed / 3.6)
     --     -- st_length(geog)
     -- from split
-    ;
+    -- ;
     -- select osm_id, edge.id, edge.geog, source.id, target.id, edge.duration, edge.duration r
     -- from auvergne_network_edge edge
     -- join auvergne_network_node source on edge.startpoint = source.geom
