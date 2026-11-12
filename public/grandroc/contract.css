@@ -10,7 +10,7 @@
 
   pre.cgv {
     text-wrap: wrap;
-    break-before: page;
+    break-inside: avoid;
   }
 
 * {
@@ -35,10 +35,27 @@ body {
 }
 
 .header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
+
   justify-content: space-between;
   align-items: center;
-  border-bottom: 3px solid #89977a;
+  /* border-bottom: 3px solid #89977a; */
+}
+
+.bold {
+  font-weight: bold;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr 1fr;
+}
+
+.flex {
+  display: flex;
+  gap: 1rem;
 }
 
 .brand {
@@ -55,7 +72,7 @@ body {
 }
 
 .contract-title {
-  text-align: right;
+  text-align: center;
 }
 
 .contract-title h1 {
@@ -90,14 +107,18 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
-  margin-bottom: 0;
+  margin-bottom: 1rem;
 }
 
 .panel {
   background: #f5f5f0;
-  border-left: 4px solid #89977a;
+  border-left: 4px solid #f29b52;
   padding: 12px 14px;
   border-radius: 3px;
+
+  &.left > * {
+    padding-bottom: .5rem;
+  }
 }
 
 .panel h2 {
@@ -122,8 +143,8 @@ body {
   font-size: 13px;
   color: #536447;
   border-bottom: 1px solid #d9ded3;
-  padding-bottom: 6px;
-  margin: 0;
+  /* padding-bottom: 6px; */
+  margin-top: .5rem;
 }
 
 table {
@@ -133,7 +154,7 @@ table {
 }
 
 thead {
-  background: #536447;
+  background: #f29b52;
   color: #ffffff;
 }
 
@@ -184,10 +205,10 @@ tbody tr:nth-child(even) {
 }
 
 .payment-total {
-  color: #536447;
+  /* color: #536447; */
   font-size: 15px;
   font-weight: bold;
-  border-bottom: 2px solid #89977a;
+  border-bottom: 2px solid #f29b52;
 }
 
 .deposit {
@@ -235,7 +256,7 @@ tbody tr:nth-child(even) {
 }
 
 .signatures {
-  /* margin-top: 0; */
+  margin-top: .5rem;
 }
 
 .signature-box {
@@ -265,7 +286,7 @@ tbody tr:nth-child(even) {
 
 @media print {
   body {
-    background: #ffffff;
+    /* background: #ffffff; */
   }
 
   .page {

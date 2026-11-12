@@ -680,44 +680,30 @@ xmlelement(name html, xmlattributes(
       xmlelement(name header, xmlattributes(
         'header' as "class"
       ), 
-        xmlelement(name div, 
-          xmlelement(name div, xmlattributes(
-            'brand' as "class"
-          ), 
-            xmltext('LE GRAND ROC')), 
-          xmlelement(name div, xmlattributes(
-            'brand-subtitle' as "class"
-          ), 
-            xmltext('Gîtes • Camping • Logements insolites'))
-        ), 
         xmlelement(name div, xmlattributes(
           'contract-title' as "class"
         ), 
           xmlelement(name h1, 
-            xmltext('CONTRAT DE LOCATION')), 
-          xmlelement(name p, 
-            xmltext(place)), 
-          xmlelement(name p, 
-            xmltext('Ferrières-sur-Sichon'))
-          )
-        ), 
-      xmlelement(name section, xmlattributes(
-        'intro' as "class"
+            xmltext('CONTRAT DE LOCATION')
+          ),
+           xmltext('LE GRAND ROC'),
+          xmlelement(name div, xmlattributes(
+            'brand-subtitle' as "class"
+          ), 
+            xmltext('Gîtes • Camping • Logements insolites'))
+        ),
+        xmlelement(name div,
+          xmlelement(name div, xmlattributes(
+            'brand' as "class"
+          ), 
+            xmlelement(name img, xmlattributes('/grandroc/logo.png' as src, 'logo' as alt, '120' as width))
+        )) 
       ), 
-        xmlelement(name div, xmlattributes(
-          'eyebrow' as "class"
-        ), 
-          xmltext('Votre séjour au Grand Roc')), 
-        xmlelement(name p, 
-          xmltext('Nous vous remercions d''avoir choisi notre hébergement.')), 
-        xmlelement(name p, 
-          xmltext('Vous trouverez ci-dessous le récapitulatif de votre réservation et des prestations retenues.'))
-        ), 
       xmlelement(name section, xmlattributes(
         'info-grid' as "class"
       ), 
         xmlelement(name div, xmlattributes(
-          'panel' as "class"
+          'panel left' as "class"
         ), 
           xmlelement(name h2, 
             xmltext('Informations du locataire')), 
@@ -725,11 +711,18 @@ xmlelement(name html, xmlattributes(
             'client-name' as "class"
           ), 
             xmltext(occupant)), 
-          xmlelement(name p, 
-            xmltext(format('Téléphone: %s', tel))), 
-          xmlelement(name p, 
-            xmltext(format('E-mail: %s', email)))
-        ), 
+          xmlelement(name div, xmlattributes('flex' as class),
+            xmlelement(name p, xmlattributes('bold' as class),
+                xmltext('Téléphone: ')
+            ),
+            xmltext(tel)
+        ),
+          xmlelement(name div, xmlattributes('flex' as class),
+            xmlelement(name p, xmlattributes('bold' as class),
+                xmltext('E-mail: ')
+            ),
+            xmltext(email)
+        )), 
         xmlelement(name div, xmlattributes(
           'panel' as "class"
         ), 
@@ -758,17 +751,13 @@ xmlelement(name html, xmlattributes(
               xmltext('Date du contrat: ')), 
             xmltext(to_char(at, 'DD/MM/YYYY'))) 
         )), 
-      xmlelement(name h2, xmlattributes(
-        'section-title' as "class"
-      ), 
-        xmltext('Détail des prestations')), 
       xmlelement(name table, 
         xmlelement(name thead, 
           xmlelement(name tr, 
             xmlelement(name th, xmlattributes(
               'width: 43%' as "style"
             ), 
-              xmltext('Prestation')), 
+              xmltext('Prestations')), 
             xmlelement(name th, xmlattributes(
               'center' as "class"
 ,
@@ -843,11 +832,7 @@ xmlelement(name html, xmlattributes(
         xmlelement(name strong, 
           xmltext('Dépôt de garantie: 1 000 €')), 
         xmlelement(name p, 
-          xmltext('Le dépôt de garantie est distinct du montant total du séjour et n''est pas inclus dans le calcul ci-dessus.'))), 
-      xmlelement(name h2, xmlattributes(
-        'section-title' as "class"
-      ), 
-        xmltext('Informations pratiques')), 
+          xmltext('Le dépôt de garantie est distinct du montant total du séjour, n''est pas inclus dans le calcul ci-dessus et vous sera restitué 24h après votre départ.'))), 
       xmlelement(name section, xmlattributes(
         'practical' as "class"
       ), 
@@ -871,7 +856,7 @@ xmlelement(name html, xmlattributes(
         'conditions' as "class"
       ), 
         xmlelement(name p, 
-          xmltext('Le locataire reconnaît avoir pris connaissance des conditions de location applicables au séjour.')), 
+          xmltext('Le locataire reconnaît avoir pris connaissance des conditions de location ci-dessous applicables au séjour.')), 
         xmlelement(name p, 
           xmltext('Le locataire s''engage à respecter les lieux, les équipements et le voisinage, et à restituer l''hébergement dans les conditions prévues au contrat.')), 
         xmlelement(name p, 
@@ -897,8 +882,8 @@ xmlelement(name html, xmlattributes(
         xmltext('
     06 87 49 68 60 • contact@legrandroc.com • www.legrandroc.com
   ')),
-    xmlelement(name pre, xmlattributes('cgv' as class), cgv))
-    )
+    --),
+    xmlelement(name pre, xmlattributes('cgv' as class), cgv)))
 )
 ::text, booking_id
 from grand_total

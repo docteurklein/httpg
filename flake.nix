@@ -86,7 +86,7 @@
               owner = "asmjit";
               repo = "asmjit";
               rev = "master";
-              sha256 = "sha256-IXfwtENNddgUflVP4W6uEQVUQgIpvLoieFucP21hFNE=";
+              sha256 = "sha256-94vk+bFe+Fh0soyB5XNwxUtUkufh4G16cbIEQwRCWak=";
               name = "asmjit";
             })
             (pkgs.fetchFromGitHub {
@@ -523,7 +523,7 @@
                 };
 
                 systemd.services.httpg = {
-                  enable = true;
+                  enable = false;
                   wantedBy = [ "default.target" ];
                   serviceConfig = {
                     Type = "simple";
