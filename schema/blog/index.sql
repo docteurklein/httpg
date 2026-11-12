@@ -315,11 +315,6 @@ as
     from blog.ts_stat
 ;
 
-insert into ts_stat
-select word, nentry
-from ts_stat('select fts from blog.post')
-on conflict (word) do nothing;
-
 grant select on table ts_stat to anon;
 
 -- drop view if exists head cascade;

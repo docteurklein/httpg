@@ -127,13 +127,12 @@ where current_runner_id() is null;
 
 grant select on table head to anon;
 
-create table if not exists gebco (rast raster);
+-- create table if not exists gebco (rast raster);
 
 -- drop materialized view if exists gebco_geo cascade;
-create view gebco_geo (geom, rast) as
--- select null::geometry, null::raster;
+create materialized view if not exists gebco_geo (geom, rast) as
 select st_setsrid(st_extent(st_envelope(rast)), 4326), rast
-from gebco
+from public.gebco
 group by rast;
 
 grant select on table gebco_geo to anon;
@@ -477,12 +476,12 @@ begin
 
     open res for select
         303 status,
-        jsonb_build_object(array[
-            ['Location', url('/gps/query', jsonb_build_object(
+        jsonb_build_object(
+            'Location', url('/gps/query', jsonb_build_object(
                 'sql', 'select * from gps.list'
-            ))],
-            ['Set-Cookie', format('gps.current_runner_id=%s; HttpOnly; Secure; Path=/gps', runner_id_)]
-        ]) header
+            )),
+            'Set-Cookie', format('gps.current_runner_id=%s; HttpOnly; Secure; Path=/gps', runner_id_)
+        ) header
     ;
 exception when unique_violation then
     perform set_config('httpg.errors', jsonb_build_object('error', 'duplicate name')::text, true);

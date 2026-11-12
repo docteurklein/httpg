@@ -3,6 +3,7 @@ create schema if not exists cpres;
 
 set local search_path to cpres, pg_catalog, public;
 
+
 set neon.allow_unstable_extensions='true';
 -- drop extension if exists vector cascade;
 -- drop extension if exists rag cascade;

@@ -15,7 +15,6 @@ use axum_server::tls_rustls::RustlsConfig;
 use axum_macros::debug_handler;
 use conf::Conf;
 
-use cookie::time::{Duration, OffsetDateTime};
 use futures::{StreamExt, TryStreamExt};
 use http_cache::CACacheManager;
 use http_cache_tower_server::ServerCacheLayer;
@@ -24,10 +23,10 @@ use lettre::{
 };
 use serde_json::json;
 use tokio::sync::{broadcast::Sender};
-use tower::{builder::ServiceBuilder, util::option_layer};
+use tower::{builder::ServiceBuilder};
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer, compression::CompressionLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
-use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
+use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc, time::Duration};
 use std::collections::HashMap;
 use tokio_postgres::{Client, IsolationLevel, Notification, types::Type};
 use deadpool_postgres::Pool;
@@ -290,7 +289,7 @@ async fn logout(
                 .path(path.as_ref().map(|p| p.as_str()).unwrap_or("/"))
                 .secure(tls.is_some())
                 .same_site(cookie::SameSite::Lax)
-                .expires(OffsetDateTime::now_utc() - Duration::days(365))
+                .expires(cookie::time::OffsetDateTime::now_utc() - cookie::time::Duration::days(365))
                 .to_string()
             ),
         ],
@@ -617,7 +616,10 @@ async fn post_query(
                     None => rows,
                 };
                 tx.commit().await?;
-                let lsn = conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0).ok();
+                let lsn = match query.include_lsn {
+                    Some(_) =>  conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0)?,
+                    None => None,
+                };
 
                 return Ok(response::HttpResult {
                     query,
@@ -728,7 +730,10 @@ async fn call_query(
                     },
                     None => rows,
                 };
-                let lsn = conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0).ok();
+                let lsn = match query.include_lsn {
+                    Some(_) =>  conn.query_one("select pg_current_wal_lsn()", &[]).await?.try_get(0)?,
+                    None => None,
+                };
 
                 return Ok(response::HttpResult {
                     query,

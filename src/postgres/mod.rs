@@ -1,5 +1,5 @@
 
-use std::{fs, sync::Arc};
+use std::{fs, sync::Arc, time::Duration};
 
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
@@ -109,7 +109,20 @@ impl PostgresConfig {
 
         cfg.connect_timeout = Some(core::time::Duration::from_secs(1));
 
-        cfg.create_pool(Some(Runtime::Tokio1), tls).map_err(Into::into)
+        let pool = cfg.create_pool(Some(Runtime::Tokio1), tls)?;
+
+        let interval = Duration::from_secs(30);
+        let max_age = Duration::from_secs(60);
+
+        let pc = pool.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                pc.retain(|_, metrics| metrics.last_used() < max_age);
+            }
+        });
+
+        Ok(pool)
     }
 }
 

@@ -256,6 +256,7 @@
             comrak
             multimarkdown
             postgresql_19
+            postgresql_19.debug
             postgresql_19.pg_config
             postgresql19Packages.postgis
             openssl.dev pkg-config
@@ -656,8 +657,8 @@
                     log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
-                    log_statement = "all";
-                    "auto_explain.log_min_duration" = 0;
+                    log_statement = "none";
+                    "auto_explain.log_min_duration" = -1;
                     "auto_explain.log_nested_statements" = true;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;
@@ -835,8 +836,8 @@
                     log_destination = nixpkgs.lib.mkForce "stderr";
                     track_functions = "all";
                     # log_min_messages = "DEBUG1";
-                    log_statement = "all";
-                    "auto_explain.log_min_duration" = 0;
+                    log_statement = "none";
+                    "auto_explain.log_min_duration" = -1;
                     "auto_explain.log_nested_statements" = true;
                     "auto_explain.log_format" = "json";
                     "auto_explain.log_analyze" = true;

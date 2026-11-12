@@ -172,14 +172,14 @@ select
         )::text
     )
 from palette, pgr_dijkstra(
-    'select id, source, target, cost, reverse_cost from auvergne_network', 
+    'select id, source, target, cost, reverse_cost from cpres.auvergne_network', 
     array(select vid from start),
     array(select vid from "end"),
     directed => true
 ) path
 join auvergne_network edge on (path.edge = edge.id)
 join auvergne_network_node node on (path.node = node.id)
-join auvergne_highway a on (a.osm_id = edge.osm_id)
+-- join auvergne_highway a on (a.osm_id = edge.osm_id)
 ;
 
 grant select on table route to person, anon;
@@ -832,7 +832,7 @@ select sort, good_id, location, xmlelement(name article, xmlattributes('card' as
 from q, result
 join "good_detail" d using (good_id)
 where rerank_distance < 0
-and bird_distance_km < coalesce(nullif(qs->>'distance', '')::int, 50)
+and (bird_distance_km is null or bird_distance_km < coalesce(nullif(qs->>'distance', '')::int, 50))
 and not exists (
     select from interest
     where good_id = d.good_id
@@ -1066,8 +1066,8 @@ map (html) as (
 select html::text from control
 union all select xmlelement(name div, format(_('%s results'), count(*)))::text from finding_list
 union all select xmlelement(name div, xmlattributes('grid search-results' as class),
-    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list)),
-    xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1)))
+    xmlelement(name div, xmlattributes('list' as class), (select xmlagg(html order by sort) from finding_list), ''),
+    xmlelement(name div, (select xmlagg(html) from map where exists (select from finding_list limit 1)), '')
 )::text
 ;
 
