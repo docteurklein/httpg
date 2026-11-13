@@ -94,13 +94,14 @@ create table if not exists blog.total_stat (
 
 set session characteristics as transaction isolation level serializable;
 
-create or replace procedure maintain_ts_stat(current_lsn pg_lsn, changes jsonb)
+-- drop procedure if exists maintain_ts_stat;
+create or replace procedure maintain_ts_stat(current_lsn pg_lsn, change jsonb)
 security definer
 begin atomic
     with diff (word, incr) as (
         select coalesce(n.lexeme, o.lexeme), sum(coalesce(cardinality(n.positions), 0) - coalesce(cardinality(o.positions), 0))
-        from jsonb_array_elements(changes) change,
-        wal2json_v1(change),
+        -- from jsonb_array_elements(changes) change,
+        from wal2json_v2(change),
         jsonb_populate_record(null::blog.post, old) old,
         jsonb_populate_record(null::blog.post, new) new
         left join lateral unnest(new.fts) n on true
@@ -124,13 +125,14 @@ begin atomic
     ;
 end;
 
-create or replace procedure maintain_comment_stat(current_lsn pg_lsn, changes jsonb)
+-- drop procedure if exists maintain_comment_stat;
+create or replace procedure maintain_comment_stat(current_lsn pg_lsn, change jsonb)
 security definer
 begin atomic
     with diff (post_id, incr) as (
         select post_id, count(1) filter (where change->>'kind' = 'insert') - count(1) filter (where change->>'kind' = 'delete')
-        from jsonb_array_elements(changes) change,
-        wal2json_v1(change),
+        -- from jsonb_array_elements(changes) change,
+        from wal2json_v2(change),
         jsonb_populate_record(null::blog.comment, coalesce(new, old)) comment
         where (change->>'schema', change->>'table') = ('blog', 'comment')
         and change->>'kind' in ('insert', 'delete')
@@ -150,13 +152,14 @@ begin atomic
     ;
 end;
 
-create or replace procedure maintain_total_stat(current_lsn pg_lsn, changes jsonb)
+-- drop procedure if exists maintain_total_stat;
+create or replace procedure maintain_total_stat(current_lsn pg_lsn, change jsonb)
 security definer
 begin atomic
     with diff (incr) as (
         select sum(coalesce(new.ncomments, 0) - coalesce(old.ncomments, 0))
-        from jsonb_array_elements(changes) change,
-        wal2json_v1(change),
+        -- from jsonb_array_elements(changes) change,
+        from wal2json_v2(change),
         jsonb_populate_record(null::blog.stat, old) old,
         jsonb_populate_record(null::blog.stat, new) new
         where (change->>'schema', change->>'table') = ('blog', 'stat')
@@ -208,12 +211,13 @@ create or replace procedure ivm(slot text)
 language plpgsql
 as $$
 declare
+    i int = 0;
     lsn pg_lsn;
-    changes jsonb;
+    change jsonb;
 begin
 -- set log_min_messages to fatal; -- unfortunate but pg_logical_slot_peek_changes floods server logs
 loop
-    for lsn, changes in
+    for lsn, change in
         select c.lsn, data::jsonb
         from pg_logical_slot_peek_changes(slot, null, null,
             'format-version', '2',
@@ -223,17 +227,25 @@ loop
             'add-tables', 'blog.comment,blog.stat,blog.post,cpres.osm_auvergne'
         ) c
     loop
-        -- perform debug((wal2json_v2(changes)).old);
-        call maintain_gis_network(lsn, changes);
-        -- call maintain_comment_stat(lsn, changes);
-        -- call maintain_total_stat(lsn, changes);
-        -- call maintain_ts_stat(lsn, changes);
+        i = i + 1;
+
+        call maintain_gis_network(lsn, change);
+        -- call maintain_comment_stat(lsn, change);
+        -- call maintain_total_stat(lsn, change);
+        -- call maintain_ts_stat(lsn, change);
+
+        if i > 1000 then
+            commit;
+            perform pg_replication_slot_advance(slot, lsn);
+            raise notice 'advanced to %', lsn;
+            i = 0;
+        end if;
     end loop;
 
     if lsn is not null then
         commit;
         -- perform 1 / random(0, 50); -- chaos testing
-        -- perform pg_replication_slot_advance(slot, lsn);
+        perform pg_replication_slot_advance(slot, lsn);
         raise notice 'advanced to %', lsn;
     else
         rollback;
@@ -256,25 +268,19 @@ create table if not exists network_iv (
     lsn pg_lsn not null default '0/0'
 );
 
+create index if not exists network_iv_geog on network_iv using gist (geog);
+
 -- insert into network_edge_iv
 -- select id, osm_id, geog, startpoint, endpoint, duration, st_length(geog::geometry) from auvergne_network_edge;
 
-create or replace procedure maintain_gis_network(current_lsn pg_lsn, changes jsonb)
+drop procedure if exists maintain_gis_network;
+create or replace procedure maintain_gis_network(current_lsn pg_lsn, change jsonb)
 security definer
 begin atomic
-    -- with change as (
-    --     select old, new, debug(c)
-    --     from jsonb_array_elements(changes) change,
-    --     wal2json_v2(change) c,
-    --     jsonb_populate_record(null::cpres.osm_auvergne, old) old,
-    --     jsonb_populate_record(null::cpres.osm_auvergne, new) new
-    --     where (change->>'schema', change->>'table') = ('cpres', 'osm_auvergne')
-    --     and change->>'kind' in ('insert', 'update', 'delete')
-    -- ),
     with way (osm_id, geog, speed) as (
-        select new.osm_id, new.geog, coalesce(
-            nullif(json_value(new.tags, '$.maxspeed' returning numeric null on error), 0),
-            case new.tags->>'highway'
+        select n.osm_id, n.geog, coalesce(
+            nullif(json_value(n.tags::jsonb, '$.maxspeed' returning numeric null on error), 0),
+            case n.tags::jsonb->>'highway'
                 when 'motorway'
                     then 130
                 when 'motorway_link'
@@ -306,15 +312,13 @@ begin atomic
                 else 30
             end
         )
-        -- from change
-        -- from jsonb_array_elements(changes) change,
-        from wal2json_v2(changes) c,
-        jsonb_populate_record(null::cpres.osm_auvergne, old) old,
-        jsonb_populate_record(null::cpres.osm_auvergne, new) new
-        where (changes->>'schema', changes->>'table') = ('cpres', 'osm_auvergne')
-        and changes->>'action' in ('I', 'U', 'D')
-        and new.osm_type = 'way'
-        and new.tags->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
+        from wal2json_v2(change) c,
+        jsonb_populate_record(null::cpres.osm_auvergne, old) o,
+        jsonb_populate_record(null::cpres.osm_auvergne, new) n
+        where (change->>'schema', change->>'table') = ('cpres', 'osm_auvergne')
+        and change->>'action' in ('I', 'U', 'D')
+        and n.osm_type = 'way'
+        and n.tags::jsonb->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
             'motorway',
             'motorway_link',
             'trunk',
@@ -331,17 +335,17 @@ begin atomic
             'living_street',
             'residential'
         )
-        and geometrytype(new.geog) = 'LINESTRING'
+        and geometrytype(n.geog) = 'LINESTRING'
     ),
     crossing (osm_id, geog, speed, point) as (
         select e1.osm_id, e1.geog, e1.speed, st_intersection(e1.geog, e2.geog)::geometry
         from way e1
-        join cpres.network_iv e2 on st_intersects(e1.geog, e2.geog)
+        join ivm.network_iv e2 on st_intersects(e1.geog, e2.geog) 
         where e1.osm_id <> e2.osm_id
         -- or e2 is null
         -- and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
     ),
-    edge as (
+    edge (osm_id, geog, startpoint, endpoint, speed, duration, distance) as (
         select
             osm_id,
             geog,
@@ -371,19 +375,20 @@ begin atomic
     )
     merge into ivm.network_iv
     using (
-        table split union table edge
+        table split union select * from edge where not exists (select from split where split.osm_id = edge.osm_id)
     ) diff
     on diff.geog = network_iv.geog
-    when matched and network_iv.lsn >= current_lsn then do nothing
+    when matched and network_iv.lsn >= debug(current_lsn) then do nothing
     -- when matched and nentry +  then delete
     -- when matched and incr <> 0 then update set
     --     nentry = nentry + incr,
     --     lsn = current_lsn
-    when not matched by source then delete
+    -- when not matched by source then delete
     when not matched then insert
         (osm_id, geog, startpoint, endpoint, duration, distance, lsn) values
-        (osm_id, geog, startpoint, endpoint, duration, distance, current_lsn)
+        (osm_id, geog, startpoint, endpoint, duration, distance, debug(current_lsn))
     ;
+    -- commit;
     -- select
     --     osm_id,
     --     row_number() over (order by geog),
@@ -399,6 +404,7 @@ begin atomic
     -- join auvergne_network_node source on edge.startpoint = source.geom
     -- join auvergne_network_node target on edge.endpoint = target.geom
 end;
+-- $$;
 
 
 call ivm(:'slot_name');

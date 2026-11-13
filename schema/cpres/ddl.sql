@@ -1,4 +1,5 @@
 -- require: extensions.sql
+drop schema if exists cpres cascade;
 create schema if not exists cpres;
 
 set local search_path to cpres, pg_catalog, public;

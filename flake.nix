@@ -3,14 +3,14 @@
 
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
-    nixpkgs.url = "github:NixOS/nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     crane.url = "github:ipetkov/crane";
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     extra-container = {
-      url = "github:stevelr/extra-container";
+      url = "github:extra-container/extra-container";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -18,6 +18,158 @@
   outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
       systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
+
+      flake = {
+        nixosModules.postgres = ({ config, pkgs, lib, ... }: {
+          options = with lib; {
+            # ip = mkOption {
+            #   type = types.str;
+            # };
+            # primary_ip = lib.mkOption {
+            #   type = types.nullOr types.str;
+            #   default = null;
+            # };
+          };
+          config = {
+            boot.isNspawnContainer = true;
+  
+            system.stateVersion = "25.11";
+
+            networking.firewall.allowedTCPPorts = [ 5432 ];
+            networking.useDHCP = false;
+            networking.enableIPv6 = true;
+
+            users.users.postgres = {
+              name = "postgres";
+              group = "postgres";
+              isSystemUser = true;
+            };
+
+            users.groups.postgres = { };
+
+            services.pgbouncer = {
+              enable = true;
+              openFirewall = true;
+              settings = {
+                databases = {
+                  httpg = "host=127.0.0.1 user=httpg";
+                };
+                pgbouncer = {
+                  auth_type = "any";
+                  listen_addr = "0.0.0.0";
+                  pool_mode = "transaction";
+                };
+              };
+            };
+
+            services.postgresql = {
+              enable = true;
+              # enableJIT = true;
+              package = pkgs.postgresql_19;
+              extensions = with pkgs.postgresql19Packages; [
+                (wal2json.overrideAttrs (prev: {
+                  # version = "git";
+                  src = pkgs.fetchFromGitHub {
+                    owner = "eulerto";
+                    repo = "wal2json";
+                    rev = "master";
+                    sha256 = "sha256-zRvMZbLOx6YAvNdAnKKRAcWamnCXsdGKrJtuwrkhq4M=";
+                  };
+                }))
+                pg_ivm
+                # pg_hint_plan
+                # plv8
+                pgvector
+                pgsql-http
+                postgis
+                pgrouting
+                h3-pg
+                (plpython3.withPackages (p: []))
+                # self'.packages.pg_jitter
+                # self'.packages.pg-trickle
+              ];
+
+              enableTCPIP = true;
+              ensureDatabases = [ "postgres" "httpg" ];
+              ensureUsers = [
+                {
+                  name = "postgres";
+                  ensureDBOwnership = true;
+                  ensureClauses = {
+                    superuser = true;
+                    createdb = true;
+                  };
+                }
+                {
+                  name = "httpg";
+                  ensureDBOwnership = true;
+                }
+              ];
+
+              authentication = pkgs.lib.mkForce ''
+                local all         all               trust
+                host  all         all   0.0.0.0/0   trust
+                host  replication all   0.0.0.0/0   trust
+              '';
+
+              settings = {
+                allow_alter_system = false;
+                wal_level = "logical";
+                log_connections = true;
+                log_lock_waits = true;
+                log_disconnections = true;
+                log_temp_files = 0;
+                log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
+                # logging_collector = true;
+                log_destination = nixpkgs.lib.mkForce "stderr";
+                track_functions = "all";
+                # log_min_messages = "DEBUG1";
+                log_statement = "none";
+                "auto_explain.log_min_duration" = -1;
+                "auto_explain.log_nested_statements" = true;
+                "auto_explain.log_format" = "json";
+                "auto_explain.log_analyze" = true;
+                "auto_explain.log_timing" = true; # perf hit
+                "auto_explain.log_buffers" = true;
+                "auto_explain.log_verbose" = true;
+                "auto_explain.log_triggers" = true;
+                # "auto_explain.log_parameter_max_length" = -1;
+                shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
+                output_plugin_libraries = "wal2json";
+                "pg_plan_advice.feedback_warnings" = true;
+                max_connections = 100;
+                # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
+                # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
+                # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
+                # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
+                work_mem = "20MB";
+                maintenance_work_mem = "1GB";
+                checkpoint_completion_target = 0.9;
+                wal_buffers = "16MB";
+                default_statistics_target = 100;
+                random_page_cost = 1.1;
+                effective_io_concurrency = 200;
+                min_wal_size = "1GB";
+                max_wal_size = "4GB";
+                max_wal_senders = 6;
+                max_worker_processes = 6;
+                max_parallel_workers_per_gather = 3;
+                max_parallel_workers = 6;
+                max_parallel_maintenance_workers = 3;
+                client_connection_check_interval = "2s";
+                jit = "off";
+                jit_above_cost = 200;
+                jit_inline_above_cost = 2000;
+                # jit_provider = "pg_jitter";
+                # "pg_jitter.backend" = "sljit";
+                io_method = "io_uring";
+
+                # "pg_trickle.cdc_mode" = "auto";
+              };
+            };
+          };
+        });
+      };
 
       perSystem = { config, self', inputs', pkgs, lib, system, ... }: let
         n2c = inputs.nix2container.packages.${system};
@@ -147,44 +299,6 @@
           '';
         };
 
-        # packages.pg_wait_tracer = pkgs.stdenv.mkDerivation {
-        #   pname = "pg_wait_tracer";
-        #   version = "master";
-
-        #   src = pkgs.fetchFromGitHub {
-        #     owner = "DmitryNFomin";
-        #     repo = "pg_wait_tracer";
-        #     rev = "master";
-        #     sha256 = "sha256-ysVWeevQQJHPkPKzGTejkx+MSC/Z5F8d4y5cn/q3f5Y=";
-        #     name = "pg_wait_tracer";
-        #   };
-
-        #   buildInputs = with pkgs; [
-        #     gcc clang llvm cmake
-        #     postgresql_19.pg_config
-        #     libbpf bpftools libelf libcap zlib lz4
-        #     llvmPackages.clang-unwrapped
-        #     llvmPackages.bintools-unwrapped
-        #     git
-        #     cacert
-        #     pkg-config
-        #   ];
-
-        #   hardeningDisable = [ "zerocallusedregs" "stackprotector" ];
-
-
-        #   preBuild = ''
-        #     echo 'echo yes' > scripts/detect_libbpf_usdt.sh
-        #   '';
-
-        #   dontConfigure = true;
-
-        #   installPhase = ''
-        #     mkdir -p $out/bin
-        #     cp -rv {pg_wait_tracer,pgwt-server} $out/bin
-        #   '';
-        # };
-
         packages.pgmt = pkgs.rustPlatform.buildRustPackage rec {
           pname = "pgmt";
           version = "main";
@@ -272,6 +386,7 @@
               gke-gcloud-auth-plugin
             ]))
             osmium-tool
+            perf
           ];
           PSQLRC = "./.psqlrc";
           PGHOST = "10.250.1.2";
@@ -325,11 +440,6 @@
             };
             spec = {
               template = {
-                metadata = {
-                  annotations = {
-                    # "run.googleapis.com/container-dependencies" = "{nginx = [httpg]}";
-                  };
-                };
                 spec = {
                   containers = [
                     {
@@ -471,7 +581,6 @@
           '');
         };
 
-
         packages.container = extra-container.lib.buildContainers {
           inherit system;
           nixpkgs = inputs.nixpkgs;
@@ -566,141 +675,22 @@
                 "--private-users-ownership=chown"
               ];
 
-              # bindMounts = {
-              #   "/var/lib/postgresql/19" = {
-              #     isReadOnly = false;
-              #     hostPath = "/mnt";
-              #   };
-              # };
-
               privateNetwork = true;
               hostBridge = "br0";
               localAddress = "10.250.1.2/16";
 
-              config = ({ pkgs, ... }: {
+              config = {
+                imports = [
+                  self.nixosModules.postgres
+                ];
                 boot.isNspawnContainer = true;
-        
-                system.stateVersion = "25.11";
-
-                networking.firewall.allowedTCPPorts = [ 5432 ];
-                networking.useDHCP = false;
-                networking.enableIPv6 = true;
-
-                users.users.postgres = {
-                  name = "postgres";
-                  group = "postgres";
-                  isSystemUser = true;
-                };
-
-                users.groups.postgres = { };
 
                 services.postgresql = {
-                  enable = true;
-                  # enableJIT = true;
-                  package = pkgs.postgresql_19;
-                  extensions = with pkgs.postgresql19Packages; [
-                    (wal2json.overrideAttrs (prev: {
-                      # version = "git";
-                      src = pkgs.fetchFromGitHub {
-                        owner = "eulerto";
-                        repo = "wal2json";
-                        rev = "master";
-                        sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
-                      };
-                    }))
-                    pg_ivm
-                    # pg_hint_plan
-                    # plv8
-                    pgvector
-                    pgsql-http
-                    postgis
-                    pgrouting
-                    h3-pg
-                    (plpython3.withPackages (p: []))
-                    self'.packages.pg_jitter
-                    # self'.packages.pg-trickle
-                  ];
-
-                  enableTCPIP = true;
-                  ensureDatabases = [ "postgres" "httpg" ];
-                  ensureUsers = [
-                    {
-                      name = "postgres";
-                      ensureDBOwnership = true;
-                    }
-                    {
-                      name = "httpg";
-                      ensureDBOwnership = true;
-                    }
-                  ];
                   initialScript = pkgs.writeText "backend-init-script" ''
-                    CREATE ROLE postgres WITH SUPERUSER LOGIN CREATEDB;
-                    CREATE USER httpg;
                     SELECT * FROM pg_create_physical_replication_slot('replica1');
                   '';
-
-                  authentication = pkgs.lib.mkForce ''
-                    local all         all               trust
-                    host  all         all   0.0.0.0/0   trust
-                    host  replication all   0.0.0.0/0   trust
-                  '';
-
-                  settings = {
-                    allow_alter_system = false;
-                    wal_level = "logical";
-                    log_connections = true;
-                    log_lock_waits = true;
-                    log_disconnections = true;
-                    log_temp_files = 0;
-                    log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
-                    # logging_collector = true;
-                    log_destination = nixpkgs.lib.mkForce "stderr";
-                    track_functions = "all";
-                    # log_min_messages = "DEBUG1";
-                    log_statement = "none";
-                    "auto_explain.log_min_duration" = -1;
-                    "auto_explain.log_nested_statements" = true;
-                    "auto_explain.log_format" = "json";
-                    "auto_explain.log_analyze" = true;
-                    "auto_explain.log_timing" = true; # perf hit
-                    "auto_explain.log_buffers" = true;
-                    "auto_explain.log_verbose" = true;
-                    "auto_explain.log_triggers" = true;
-                    # "auto_explain.log_parameter_max_length" = -1;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
-                    output_plugin_libraries = "wal2json";
-                    "pg_plan_advice.feedback_warnings" = true;
-                    max_connections = 100;
-                    # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
-                    # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
-                    # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
-                    # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
-                    work_mem = "20MB";
-                    maintenance_work_mem = "1GB";
-                    checkpoint_completion_target = 0.9;
-                    wal_buffers = "16MB";
-                    default_statistics_target = 100;
-                    random_page_cost = 1.1;
-                    effective_io_concurrency = 200;
-                    min_wal_size = "1GB";
-                    max_wal_size = "4GB";
-                    max_wal_senders = 6;
-                    max_worker_processes = 6;
-                    max_parallel_workers_per_gather = 3;
-                    max_parallel_workers = 6;
-                    max_parallel_maintenance_workers = 3;
-                    client_connection_check_interval = "2s";
-                    jit = "on";
-                    jit_above_cost = 200;
-                    jit_inline_above_cost = 2000;
-                    jit_provider = "pg_jitter";
-                    "pg_jitter.backend" = "sljit";
-                    io_method = "io_uring";
-
-                    # "pg_trickle.cdc_mode" = "auto";
-                  };
                 };
-              });
+              };
             };
 
             containers.pgreplica = {
@@ -720,21 +710,23 @@
               localAddress6 = "fdfd:b3f0:482::1";
 
               config = ({ pkgs, ... }: {
+
+                imports = [
+                  self.nixosModules.postgres
+                ];
                 boot.isNspawnContainer = true;
         
-                system.stateVersion = "25.11";
-
                 networking.firewall.allowedTCPPorts = [ 5432 6432 ];
-                networking.useDHCP = false;
-                networking.enableIPv6 = true;
 
-                users.users.postgres = {
-                  name = "postgres";
-                  group = "postgres";
-                  isSystemUser = true;
+                services.postgresql = {
+                  initialScript = null;
+                  settings = {
+                    listen_addresses = "*";
+                    primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
+                    # recovery_min_apply_delay = "10s";
+                    primary_slot_name = "replica1";
+                  };
                 };
-
-                users.groups.postgres = { };
 
                 systemd.services.pg_basebackup = {
                   enable = true;
@@ -742,7 +734,8 @@
                   before = [ "postgresql.service" "postgresql-setup.service" ];
                   serviceConfig = {
                     Type = "oneshot";
-                    ExecStart = pkgs.lib.getExe (pkgs.writeShellScriptBin "init" ''
+                    RemainAfterExit = true;
+                    script = ''
                       set -exu
                       if test -e /var/lib/postgresql/19/PG_VERSION; then
                         exit
@@ -753,127 +746,7 @@
                       ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
                       touch /var/lib/postgresql/19/standby.signal
                       chown -R postgres: /var/lib/postgresql/19
-                    '');
-                    # User = "postgres";
-                    # Group = "postgres";
-                  };
-                };
-
-                services.pgbouncer = {
-                  enable = true;
-                  openFirewall = true;
-                  settings = {
-                    databases = {
-                      httpg = "host=10.250.2.2 user=httpg";
-                    };
-                    pgbouncer = {
-                      auth_type = "any";
-                      listen_addr = "10.250.2.2";
-                      pool_mode = "transaction";
-                    };
-                  };
-                };
-
-                services.postgresql = {
-                  enable = true;
-                  # enableJIT = true;
-                  package = pkgs.postgresql_19;
-                  extensions = with pkgs.postgresql19Packages; [
-                    (wal2json.overrideAttrs (prev: {
-                      # version = "git";
-                      src = pkgs.fetchFromGitHub {
-                        owner = "eulerto";
-                        repo = "wal2json";
-                        rev = "master";
-                        sha256 = "sha256-nSkpC3Xqt2c+6yMrz4eMuIgUvas2pXug+x4xwORp1kg=";
-                      };
-                    }))
-                    pg_ivm
-                    # pg_hint_plan
-                    # plv8
-                    pgvector
-                    pgsql-http
-                    postgis
-                    pgrouting
-                    h3-pg
-                    (plpython3.withPackages (p: []))
-                    self'.packages.pg_jitter
-                  ];
-
-                  enableTCPIP = true;
-                  ensureDatabases = [ "postgres" "httpg" ];
-                  ensureUsers = [
-                    {
-                      name = "postgres";
-                      ensureDBOwnership = true;
-                    }
-                    {
-                      name = "httpg";
-                      ensureDBOwnership = true;
-                    }
-                  ];
-                  initialScript = null;
-
-                  authentication = pkgs.lib.mkForce ''
-                    local all      all               trust
-                    host  all      all   0.0.0.0/0   trust
-                    host  all      all   ::/0        trust
-                  '';
-
-                  settings = {
-                    listen_addresses = "*";
-                    primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
-                    # recovery_min_apply_delay = "10s";
-                    primary_slot_name = "replica1";
-                    allow_alter_system = false;
-                    wal_level = "logical";
-                    log_connections = true;
-                    log_lock_waits = true;
-                    log_disconnections = true;
-                    log_temp_files = 0;
-                    log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
-                    # logging_collector = true;
-                    log_destination = nixpkgs.lib.mkForce "stderr";
-                    track_functions = "all";
-                    # log_min_messages = "DEBUG1";
-                    log_statement = "none";
-                    "auto_explain.log_min_duration" = -1;
-                    "auto_explain.log_nested_statements" = true;
-                    "auto_explain.log_format" = "json";
-                    "auto_explain.log_analyze" = true;
-                    "auto_explain.log_timing" = true;
-                    "auto_explain.log_buffers" = true;
-                    "auto_explain.log_verbose" = true;
-                    "auto_explain.log_triggers" = true;
-                    # "auto_explain.log_parameter_values" = true;
-                    shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
-                    output_plugin_libraries = "wal2json";
-                    "pg_plan_advice.feedback_warnings" = true;
-                    max_connections = 100;
-                    # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
-                    # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
-                    # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
-                    # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
-                    work_mem = "20MB";
-                    maintenance_work_mem = "1GB";
-                    checkpoint_completion_target = 0.9;
-                    wal_buffers = "16MB";
-                    default_statistics_target = 100;
-                    random_page_cost = 1.1;
-                    effective_io_concurrency = 200;
-                    min_wal_size = "1GB";
-                    max_wal_size = "4GB";
-                    max_worker_processes = 6;
-                    max_parallel_workers_per_gather = 3;
-                    max_parallel_workers = 6;
-                    max_parallel_maintenance_workers = 3;
-                    client_connection_check_interval = "2s";
-                    jit = "on";
-                    jit_above_cost = 200;
-                    jit_inline_above_cost = 2000;
-                    jit_provider = "pg_jitter";
-                    "pg_jitter.backend" = "sljit";
-                    io_method = "io_uring";
+                    '';
                   };
                 };
               });

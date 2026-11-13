@@ -1,30 +1,35 @@
 -- require: url/url.sql
-set local search_path to "plan", url, pg_catalog, public;
-
+drop schema if exists plan cascade;
 create schema "plan";
 
-create function exec(sql text, params jsonb = '{}'::jsonb)
+set local search_path to "plan", url, pg_catalog, public;
+
+create function exec(sql text)
 returns setof record
 language plpgsql strict volatile
 security definer
 as $$
 begin
-    return query execute sql using params;
+    return query execute sql;
 end;
 $$;
 
-create function explain_html(query_ text default null) returns table (status int, header jsonb, body text)
+create function explain_html(query_ text default null, queryid_ bigint default null) returns table (status int, header jsonb, body text)
 language sql
 stable parallel safe -- leakproof
-security invoker
+security definer
 begin atomic
 with recursive httpg (query) as (
     select nullif(current_setting('httpg.query', true), '')::jsonb
 ),
+stat_statement (query) as (
+    select format('explain (format json, verbose, costs, plan_advice, generic_plan) %s', query)
+    from pg_stat_statements
+    where queryid_ = queryid limit 1
+),
 plan (plan) as materialized (
     select plans::jsonb->0
-    from exec(query_) _(plans json)
-    where nullif(query_, '') is not null
+    from exec(coalesce(query_, (select query from stat_statement))) _(plans json)
     union all
     select (query->'qs'->>'plan')::jsonb->0
     from httpg
@@ -69,7 +74,7 @@ node (plan, type, cost, time, loops, planned_rows, actual_rows, row_ratio, filte
     jsonb_array_elements(plan->'Plans') sub
 )
 select 200, null::jsonb, '<!DOCTYPE html>'::text
--- union all select null, null, xmlelement(name pre, jsonb_pretty(current_setting('httpg.query')::jsonb))::text
+-- union all select null, null, xmlelement(name pre, jsonb_pretty(current_setting('httpg.query')::jsonb))::text -- debug
 union all select null, null, $$
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Dosis">
 <style>
@@ -145,12 +150,35 @@ union all select null, null, xmlelement(name form, xmlattributes(
     '/query' as action
 ),
     xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
-    xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select * from plan.explain_html($1)' as value)),
-    xmlelement(name textarea, xmlattributes('params[0]' as name, 7 as rows), coalesce(query_, 'explain (format json, analyze, timing, costs, buffers, io, verbose, plan_advice)\n')),
+    xmlelement(name input, xmlattributes(
+        'hidden' as type,
+        'sql' as name,
+        $$select * from plan.explain_html(nullif($1, ''), nullif($2, '')::bigint)$$ as value
+    )),
+    xmlelement(name textarea, xmlattributes('params[0]' as name, 7 as rows),
+        coalesce(
+            query_,
+            (select query from stat_statement),
+            case when queryid_ is null then 'explain (format json, analyze, timing, costs, buffers, io, verbose, plan_advice) ' end
+        ), ''
+    ),
+    xmlelement(name label, 'stat_statements', xmlelement(name select, xmlattributes('params[1]' as name),
+        xmlelement(name option, xmlattributes(''as value)),
+        (select xmlagg(xmlelement(name option, xmlattributes(
+            s.queryid as value,
+            case when queryid_ = s.queryid then 'selected' end as selected
+        ), query) order by max_exec_time) from pg_stat_statements s),
+        ''
+    )),
     xmlelement(name input, xmlattributes('submit' as type))
 )::text
 from httpg
-union all select null, null, xmlelement(name details, xmlelement(name pre, jsonb_pretty(plan - 'Plan')))::text from plan
+-- left join stat_statement s on true
+union all select null, null, xmlelement(name details,
+    xmlelement(name pre, jsonb_pretty(plan - 'Plan' - 'Generated Plan Advice')),
+    xmlelement(name pre, plan->>'Generated Plan Advice')
+)::text
+from plan
 union all
 select null, null, xmlelement(name table, xmlattributes('1' as border),
     xmlelement(name thead,

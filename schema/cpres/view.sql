@@ -5,8 +5,10 @@ set  search_path to cpres, url, pg_catalog, public;
 
 grant execute on all routines in schema cpres to anon, person;
 grant execute on all routines in schema public to anon, person;
-grant execute on function url.url to anon, person, httpg;
-grant execute on function url.encode to anon, person, httpg;
+grant execute on function url.url to anon, person;
+grant execute on function url.encode to anon, person;
+
+grant select on table ivm.network_iv to anon, person;
 
 create or replace function max_interest_price(good good) returns xml
 language sql
@@ -129,17 +131,17 @@ location (point) as (
     where person_id = current_person_id()
 ),
 start (vid) as (
-    select source
-    from auvergne_network, location
+    select startpoint
+    from ivm.network_iv, location
     order by geog <-> point::geometry
     limit 5
 ),
 "end" (vid) as (
-    select unnest(array[source, target])
+    select unnest(array[startpoint, endpoint])
     from q, good,
     lateral (
-        select source, target
-        from auvergne_network
+        select startpoint, endpoint
+        from ivm.network_iv
         where case when nullif(qs->>'target', '') is null
             then true
             else good_id =  nullif(qs->>'target', '')::uuid
@@ -149,36 +151,36 @@ start (vid) as (
     )
 )
 select
-    distinct on (node.geom) ST_LineMerge(edge.geog::geometry, true),
-    node.geom,
+    distinct on (edge.geog) ST_LineMerge(edge.geog::geometry, true),
+    edge.geog,
     path.agg_cost,
     null, -- format('%s-%s', start.vid, "end".vid),
     'route',
     jsonb_build_object(
-        'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
+        -- 'color', palette[width_bucket(speed + 1, 0, max(speed) over () + 1, 0xff)]
     ),
     jsonb_build_object(
         'content',  jsonb_build_object(
             'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
-            'duration', path.cost::int * interval '1 sec',
-            'speed', speed
+            'duration', path.cost::int * interval '1 sec'
+            -- 'speed', speed
         )::text
     ),
     jsonb_build_object(
         'content',  jsonb_build_object(
             'total_duration', max(path.agg_cost) over ()::int * interval '1 sec',
-            'duration', path.cost::int * interval '1 sec',
-            'speed', speed
+            'duration', path.cost::int * interval '1 sec'
+            -- 'speed', speed
         )::text
     )
 from palette, pgr_dijkstra(
-    'select id, source, target, cost, reverse_cost from cpres.auvergne_network', 
+    'select id, startpoint source, endpoint target, distance cost, distance reverse_cost from ivm.network_iv', 
     array(select vid from start),
     array(select vid from "end"),
     directed => true
 ) path
-join auvergne_network edge on (path.edge = edge.id)
-join auvergne_network_node node on (path.node = node.id)
+join ivm.network_iv edge on (path.edge = edge.id)
+-- join auvergne_network_node node on (path.node = node.id)
 -- join auvergne_highway a on (a.osm_id = edge.osm_id)
 ;
 
@@ -1047,8 +1049,8 @@ map (html) as (
                 select ST_AsGeoJSON(route)::jsonb from route
                 union all
                 select ST_AsGeoJSON(good_marker, id_column => 'id', geom_column => 'geom')::jsonb from good_marker
-                union all
-                select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
+                -- union all
+                -- select ST_AsGeoJSON(b)::jsonb from auvergne_boundary b
                 -- union all
                 -- select ST_AsGeoJSON(step, geom_column => 'node')::jsonb from (select node, jsonb_build_object('content', st_astext(node)) popup, 'route' "group" from route) step
             ) _ (feature)
