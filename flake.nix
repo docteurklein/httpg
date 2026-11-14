@@ -17,155 +17,177 @@
 
   outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
     flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [ "x86_64-linux" "i686-linux" "x86_64-darwin" "aarch64-linux" "aarch64-darwin" ];
+      systems = ["x86_64-linux"];
 
       flake = {
-        nixosModules.postgres = ({ config, pkgs, lib, ... }: {
-          options = with lib; {
-            # ip = mkOption {
-            #   type = types.str;
-            # };
-            # primary_ip = lib.mkOption {
-            #   type = types.nullOr types.str;
-            #   default = null;
-            # };
+
+        gcs = let
+          group = {
+            "secretmanager.googleapis.com/Secret" = "secrets";
+            "iam.googleapis.com/ServiceAccount" = "service-accounts";
+            "run.googleapis.com/Service" = "services";
+            "storage.googleapis.com/Bucket" = "storage buckets";
           };
-          config = {
-            boot.isNspawnContainer = true;
-  
-            system.stateVersion = "25.11";
+          res_prefix = {
+            "storage.googleapis.com/Bucket" = "gs://";
+          };
+        in rec {
+          service = (import ./gcs/service.nix (self.packages."x86_64-linux".httpg-oci.imageRefUnsafe));
+          resources = (builtins.fromJSON (builtins.readFile ./gcs/resources.json));
+          iam-bindings = with nixpkgs; lib.flatten (lib.map
+            (x: let
+              r = lib.findFirst (r: r.name == x.name) null resources;
+            in lib.map
+              (binding: lib.map
+                (member: ''
+                  gcloud ${group."${x.assetType}"} add-iam-policy-binding \
+                    "${res_prefix."${x.assetType}" or ""}${r.resource.data.name or r.resource.data.metadata.name}" \
+                    --member "${member}" \
+                    --role "${binding.role}"
+                '')
+                binding.members
+              )
+              x.iamPolicy.bindings 
+            )
+            (builtins.fromJSON (builtins.readFile ./gcs/iam-policies.json))
+          );
+        };
 
-            networking.firewall.allowedTCPPorts = [ 5432 ];
-            networking.useDHCP = false;
-            networking.enableIPv6 = true;
+        nixosModules.postgres = ({ config, pkgs, lib, ... }: {
+          boot.isNspawnContainer = true;
 
-            users.users.postgres = {
-              name = "postgres";
-              group = "postgres";
-              isSystemUser = true;
-            };
+          system.stateVersion = "25.11";
 
-            users.groups.postgres = { };
+          networking.firewall.allowedTCPPorts = [ 5432 ];
+          networking.useDHCP = false;
+          networking.enableIPv6 = true;
 
-            services.pgbouncer = {
-              enable = true;
-              openFirewall = true;
-              settings = {
-                databases = {
-                  httpg = "host=127.0.0.1 user=httpg";
-                };
-                pgbouncer = {
-                  auth_type = "any";
-                  listen_addr = "0.0.0.0";
-                  pool_mode = "transaction";
-                };
+          users.users.postgres = {
+            name = "postgres";
+            group = "postgres";
+            isSystemUser = true;
+          };
+
+          users.groups.postgres = { };
+
+          services.pgbouncer = {
+            enable = true;
+            openFirewall = true;
+            settings = {
+              databases = {
+                httpg = "host=127.0.0.1 user=httpg";
+              };
+              pgbouncer = {
+                auth_type = "any";
+                listen_addr = "0.0.0.0";
+                pool_mode = "transaction";
               };
             };
+          };
 
-            services.postgresql = {
-              enable = true;
-              # enableJIT = true;
-              package = pkgs.postgresql_19;
-              extensions = with pkgs.postgresql19Packages; [
-                (wal2json.overrideAttrs (prev: {
-                  # version = "git";
-                  src = pkgs.fetchFromGitHub {
-                    owner = "eulerto";
-                    repo = "wal2json";
-                    rev = "master";
-                    sha256 = "sha256-zRvMZbLOx6YAvNdAnKKRAcWamnCXsdGKrJtuwrkhq4M=";
-                  };
-                }))
-                pg_ivm
-                # pg_hint_plan
-                # plv8
-                pgvector
-                pgsql-http
-                postgis
-                pgrouting
-                h3-pg
-                (plpython3.withPackages (p: []))
-                # self'.packages.pg_jitter
-                # self'.packages.pg-trickle
-              ];
+          services.postgresql = {
+            enable = true;
+            # enableJIT = true;
+            package = pkgs.postgresql_19;
+            extensions = with pkgs.postgresql19Packages; [
+              (wal2json.overrideAttrs (prev: {
+                # version = "git";
+                src = pkgs.fetchFromGitHub {
+                  owner = "eulerto";
+                  repo = "wal2json";
+                  rev = "master";
+                  sha256 = "sha256-zRvMZbLOx6YAvNdAnKKRAcWamnCXsdGKrJtuwrkhq4M=";
+                };
+              }))
+              pg_ivm
+              # pg_hint_plan
+              # plv8
+              pgvector
+              pgsql-http
+              postgis
+              pgrouting
+              h3-pg
+              (plpython3.withPackages (p: []))
+              # self'.packages.pg_jitter
+              # self'.packages.pg-trickle
+            ];
 
-              enableTCPIP = true;
-              ensureDatabases = [ "postgres" "httpg" ];
-              ensureUsers = [
-                {
-                  name = "postgres";
-                  ensureDBOwnership = true;
-                  ensureClauses = {
-                    superuser = true;
-                    createdb = true;
-                  };
-                }
-                {
-                  name = "httpg";
-                  ensureDBOwnership = true;
-                }
-              ];
+            enableTCPIP = true;
+            ensureDatabases = [ "postgres" "httpg" ];
+            ensureUsers = [
+              {
+                name = "postgres";
+                ensureDBOwnership = true;
+                ensureClauses = {
+                  superuser = true;
+                  createdb = true;
+                };
+              }
+              {
+                name = "httpg";
+                ensureDBOwnership = true;
+              }
+            ];
 
-              authentication = pkgs.lib.mkForce ''
-                local all         all               trust
-                host  all         all   0.0.0.0/0   trust
-                host  replication all   0.0.0.0/0   trust
-              '';
+            authentication = pkgs.lib.mkForce ''
+              local all         all               trust
+              host  all         all   0.0.0.0/0   trust
+              host  replication all   0.0.0.0/0   trust
+            '';
 
-              settings = {
-                allow_alter_system = false;
-                wal_level = "logical";
-                log_connections = true;
-                log_lock_waits = true;
-                log_disconnections = true;
-                log_temp_files = 0;
-                log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
-                # logging_collector = true;
-                log_destination = nixpkgs.lib.mkForce "stderr";
-                track_functions = "all";
-                # log_min_messages = "DEBUG1";
-                log_statement = "none";
-                "auto_explain.log_min_duration" = -1;
-                "auto_explain.log_nested_statements" = true;
-                "auto_explain.log_format" = "json";
-                "auto_explain.log_analyze" = true;
-                "auto_explain.log_timing" = true; # perf hit
-                "auto_explain.log_buffers" = true;
-                "auto_explain.log_verbose" = true;
-                "auto_explain.log_triggers" = true;
-                # "auto_explain.log_parameter_max_length" = -1;
-                shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
-                output_plugin_libraries = "wal2json";
-                "pg_plan_advice.feedback_warnings" = true;
-                max_connections = 100;
-                # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
-                # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
-                # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
-                # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
-                work_mem = "20MB";
-                maintenance_work_mem = "1GB";
-                checkpoint_completion_target = 0.9;
-                wal_buffers = "16MB";
-                default_statistics_target = 100;
-                random_page_cost = 1.1;
-                effective_io_concurrency = 200;
-                min_wal_size = "1GB";
-                max_wal_size = "4GB";
-                max_wal_senders = 6;
-                max_worker_processes = 6;
-                max_parallel_workers_per_gather = 3;
-                max_parallel_workers = 6;
-                max_parallel_maintenance_workers = 3;
-                client_connection_check_interval = "2s";
-                jit = "off";
-                jit_above_cost = 200;
-                jit_inline_above_cost = 2000;
-                # jit_provider = "pg_jitter";
-                # "pg_jitter.backend" = "sljit";
-                io_method = "io_uring";
+            settings = {
+              allow_alter_system = false;
+              wal_level = "logical";
+              log_connections = true;
+              log_lock_waits = true;
+              log_disconnections = true;
+              log_temp_files = 0;
+              log_line_prefix = "%m [%p] %q%u@%d (%a) %e: ";
+              # logging_collector = true;
+              log_destination = nixpkgs.lib.mkForce "stderr";
+              track_functions = "all";
+              # log_min_messages = "DEBUG1";
+              log_statement = "none";
+              "auto_explain.log_min_duration" = -1;
+              "auto_explain.log_nested_statements" = true;
+              "auto_explain.log_format" = "json";
+              "auto_explain.log_analyze" = true;
+              "auto_explain.log_timing" = true; # perf hit
+              "auto_explain.log_buffers" = true;
+              "auto_explain.log_verbose" = true;
+              "auto_explain.log_triggers" = true;
+              # "auto_explain.log_parameter_max_length" = -1;
+              shared_preload_libraries = "auto_explain,pg_stat_statements,pg_plan_advice,pg_stash_advice";
+              output_plugin_libraries = "wal2json";
+              "pg_plan_advice.feedback_warnings" = true;
+              max_connections = 100;
+              # shared_buffers = "${toString (builtins.ceil (ram / 4) / 1000 / 1000)} GB"; # 1/4th of RAM
+              # work_mem =  builtins.ceil ((ram / max_connections) / 4); # 1/4th of RAM / max_connections
+              # effective_cache_size = builtins.ceil(ram * 0.75); # 75% of total RAM
+              # effective_cache_size = "${toString (builtins.ceil (ram * 0.75) / 1000 / 1000)} GB"; # 1/4th of RAM
+              work_mem = "20MB";
+              maintenance_work_mem = "1GB";
+              checkpoint_completion_target = 0.9;
+              wal_buffers = "16MB";
+              default_statistics_target = 100;
+              random_page_cost = 1.1;
+              effective_io_concurrency = 200;
+              min_wal_size = "1GB";
+              max_wal_size = "4GB";
+              max_wal_senders = 6;
+              max_worker_processes = 6;
+              max_parallel_workers_per_gather = 3;
+              max_parallel_workers = 6;
+              max_parallel_maintenance_workers = 3;
+              client_connection_check_interval = "2s";
+              jit = "off";
+              jit_above_cost = 200;
+              jit_inline_above_cost = 2000;
+              # jit_provider = "pg_jitter";
+              # "pg_jitter.backend" = "sljit";
+              io_method = "io_uring";
 
-                # "pg_trickle.cdc_mode" = "auto";
-              };
+              # "pg_trickle.cdc_mode" = "auto";
             };
           };
         });
@@ -365,6 +387,12 @@
           };
         };
 
+        packages.gcloud = (pkgs.google-cloud-sdk.withExtraComponents (with pkgs.google-cloud-sdk.components; [
+          alpha
+          config-connector
+          gke-gcloud-auth-plugin
+        ]));
+
         devShells.default = pkgs.mkShell {
           packages = with pkgs; [
             comrak
@@ -380,11 +408,7 @@
             mold clang
             biscuit-cli
             pkgs.extra-container
-            (pkgs.google-cloud-sdk.withExtraComponents (with pkgs.google-cloud-sdk.components; [
-              alpha
-              config-connector
-              gke-gcloud-auth-plugin
-            ]))
+            self'.packages.gcloud
             osmium-tool
             perf
           ];
@@ -419,165 +443,16 @@
             "nix run --impure .#container -- create --update-changed --restart-changed --start"
           );
         };
-        apps.deploy = let
-          gcloud = pkgs.lib.getExe (pkgs.google-cloud-sdk.withExtraComponents (with pkgs.google-cloud-sdk.components; [
-              alpha
-              config-connector
-              gke-gcloud-auth-plugin
-          ]));
-          yaml = builtins.toFile "service.yaml" (lib.generators.toYAML {} {
-            apiVersion = "serving.knative.dev/v1";
-            kind = "Service";
-            metadata = {
-              name = "httpg";
-              labels = {
-                "cloud.googleapis.com/location" = "europe-west1";
-              };
-              annotations = {
-                "run.googleapis.com/ingress" = "all";
-                "run.googleapis.com/invoker-iam-disabled" = "true";
-              };
-            };
-            spec = {
-              template = {
-                spec = {
-                  containers = [
-                    {
-                      image = "europe-docker.pkg.dev/artifact-registry-docker-cache/virtual-docker/${self'.packages.httpg-oci.imageRefUnsafe}";
-                      name = "httpg";
-                      ports = [
-                        {name = "h2c"; containerPort = "3000";}
-                      ];
-                      env = [
-                        {name = "HTTPG_CACHE_DIR"; value = "/httpg-cache";}
-                        {name = "HTTPG_ANON_ROLE"; value = "anon";}
-                        {name = "HTTPG_INDEX_SQL"; value = "table cpres.head union all table cpres.\"findings\"";}
-                        {name = "HTTPG_LOGIN_QUERY"; value = "select public.login($1)";}
-                        {name = "HTTPG_SMTP_USER"; value = "sideral.underground@gmail.com";}
-                        {name = "HTTPG_PG_DBNAME"; value = "neondb";}
-                        {name = "HTTPG_PG_PASSWORD_FILE"; value = "/secrets/pg_password/pg_password";}
-                        {name = "HTTPG_PG_READ_HOST"; value = "ep-divine-unit-as9eonvl-pooler.c-4.eu-central-1.aws.neon.tech";}
-                        {name = "HTTPG_PG_SSLMODE"; value = "require";}
-                        {name = "HTTPG_PG_USER"; value = "httpg";}
-                        {name = "HTTPG_PG_WRITE_HOST"; value = "ep-withered-thunder-as96ubou-pooler.c-4.eu-central-1.aws.neon.tech";}
-                        {name = "HTTPG_PRIVATE_KEY_FILE"; value = "/secrets/private-key-file";}
-                        {name = "HTTPG_SMTP_PASSWORD_FILE"; value = "/secrets/smtp_password/smtp_password";}
-                        {name = "HTTPG_SMTP_RELAY"; value = "smtp://smtp.gmail.com?tls=required";}
-                        {name = "HTTPG_SMTP_SENDER"; value = "sideral.underground@gmail.com";}
-                        {name = "HTTPG_WEBPUSH_PRIVATE_KEY_FILE"; value = "/secrets/webpush.pem/webpush-pem";}
-                        {name = "PG_HOST"; value = "ep-divine-unit-as9eonvl.c-4.eu-central-1.aws.neon.tech";}
-                        {name = "PG_CHANNELBINDING"; value = "require";}
-                        {name = "RUST_LOG"; value = "tokio_postgres=debug,httpg=debug";}
-                      ];
-                      resources = {
-                         limits = {
-                           cpu = "1000m";
-                           memory = "512Mi";
-                        };
-                      };
-                      startupProbe = {
-                        failureThreshold = "1";
-                        periodSeconds = "240";
-                        tcpSocket = {
-                          port = "3000";
-                        };
-                        timeoutSeconds = "240";
-                      };
-                      volumeMounts = [
-                        {
-                          mountPath = "/secrets";
-                          name = "secret-volume";
-                        }
-                        {
-                          mountPath = "/secrets/webpush.pem";
-                          name = "secret-1";
-                        }
-                        {
-                          mountPath = "/secrets/pg_password";
-                          name = "secret-2";
-                        }
-                        {
-                          mountPath = "/secrets/smtp_password";
-                          name = "secret-3";
-                        }
-                        {
-                          mountPath = "/httpg-cache";
-                          name = "gcs";
-                        }
-                      ];
-                    }
-                  ];
-                  volumes = [
-                    {
-                      name = "gcs";
-                      csi = {
-                        driver = "gcsfuse.run.googleapis.com";
-                        readOnly = false;
-                        volumeAttributes = {
-                          bucketName = "httpg-nginx";
-                          mountOptions = "uid=1000,gid=1000";
-                        };
-                      };
-                    }
-                    {
-                      name = "secret-volume";
-                      secret = {
-                        items = [
-                          {
-                            key = "1";
-                            path = "private-key-file";
-                          }
-                        ];
-                        secretName = "secret-1";
-                      };
-                    }
-                    {
-                      name = "secret-1";
-                      secret = {
-                        items = [
-                          {
-                            key = "latest";
-                            path = "webpush-pem";
-                          }
-                        ];
-                        secretName = "webpush-pem";
-                      };
-                    }
-                    {
-                      name = "secret-2";
-                      secret = {
-                        items = [
-                          {
-                            key = "latest";
-                            path = "pg_password";
-                          }
-                        ];
-                        secretName = "pg_password";
-                      };
-                    }
-                    {
-                      name = "secret-3";
-                      secret = {
-                        items = [
-                          {
-                            key = "latest";
-                            path = "smtp_password";
-                          }
-                        ];
-                        secretName = "smtp_password";
-                      };
-                    }
-                  ];
-                };
-              };
-            };
-          });
-        in {
+        apps.deploy = {
           type = "app";
           program = pkgs.lib.getExe (pkgs.writeShellScriptBin "httpg" ''
             nix run .#httpg-oci.copyToRegistry
-            ${gcloud} run --project gieze-421708 services --region europe-west1 \
-              replace "${yaml}"
+            nix eval .#gcs.service --json \
+              | nix run .#gcloud -- run --project gieze-421708 \
+                 services --region europe-west1 \
+              replace -
+
+            ${self.gcs.iam-bindings}
           '');
         };
 
@@ -657,7 +532,7 @@
                       "HTTPG_PG_WRITE_HOST=10.250.1.2"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
-                      "RUST_BACKTRACE=1"
+                      "RUST_BACKTRACE=0"
                     ];
                   };
                 };
@@ -684,6 +559,8 @@
                   self.nixosModules.postgres
                 ];
                 boot.isNspawnContainer = true;
+
+                services.pgbouncer.settings.pgbouncer.pool_mode = lib.mkForce "session";
 
                 services.postgresql = {
                   initialScript = pkgs.writeText "backend-init-script" ''
