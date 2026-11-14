@@ -1,5 +1,5 @@
 
-use std::{fs, sync::Arc, time::Duration};
+use std::{fs, str::FromStr, sync::Arc, time::Duration};
 
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
@@ -11,30 +11,10 @@ use crate::{HttpgError};
 
 #[derive(Clone, Debug, Conf)]
 pub struct PostgresConfig {
-    #[conf(long, env, default_value="")]
+    #[conf(long="read-url", env="READ_URL", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file).unwrap_or(file.to_string())) })]
     read_url: String,
-    #[conf(long, env)]
-    read_host: String,
-    #[conf(long, env, default_value="5432")]
-    read_port: u16,
-    #[conf(long, env, default_value="")]
+    #[conf(long="write-url", env="WRITE_URL", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file).unwrap_or(file.to_string())) })]
     write_url: String,
-    #[conf(long, env)]
-    write_host: String,
-    #[conf(long, env, default_value="5432")]
-    write_port: u16,
-    #[conf(long, env)]
-    user: String,
-    #[conf(long="password-file", env="PASSWORD_FILE", value_parser = |file: &str| -> Result<_, HttpgError> { Ok(fs::read_to_string(file)?) })]
-    password: String,
-    #[conf(long, env)]
-    dbname: String,
-    #[conf(long, env)]
-    channel_binding: Option<String>,
-    #[conf(long, env)]
-    ssl_mode: Option<String>,
-    #[conf(long, env, default_value="httpg")]
-    application_name: String,
 }
 
 impl PostgresConfig {
@@ -42,8 +22,6 @@ impl PostgresConfig {
         let mut cfg = deadpool_postgres::Config::new();
 
         cfg.url = Some(self.read_url.clone());
-        cfg.host = Some(self.read_host.clone());
-        cfg.port = Some(self.read_port);
         self.rest(&mut cfg)
     }
 
@@ -51,29 +29,11 @@ impl PostgresConfig {
         let mut cfg = deadpool_postgres::Config::new();
 
         cfg.url = Some(self.write_url.clone());
-        cfg.host = Some(self.write_host.clone());
-        cfg.port = Some(self.write_port);
         self.rest(&mut cfg)
     }
 
     pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream + use<>>), HttpgError> {
-        let cfg = tokio_postgres::Config::new()
-            .user(self.user.clone())
-            .password(self.password.clone())
-            .dbname(self.dbname.clone())
-            .host(self.write_host.clone())
-            .port(self.write_port)
-            .ssl_mode(match self.ssl_mode.as_deref() {
-                Some("require") => tokio_postgres::config::SslMode::Require,
-                _ => tokio_postgres::config::SslMode::Prefer,
-            })
-            .channel_binding(match self.channel_binding.as_deref() {
-                Some("require") => tokio_postgres::config::ChannelBinding::Require,
-                _ => tokio_postgres::config::ChannelBinding::Prefer,
-            })
-            .application_name(self.application_name.to_owned())
-            .to_owned()
-        ;
+        let cfg = tokio_postgres::Config::from_str(&self.write_url)?;
 
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()
@@ -85,21 +45,6 @@ impl PostgresConfig {
     }
 
     fn rest(&self, cfg: &mut deadpool_postgres::Config) -> Result<Pool, HttpgError> {
-        cfg.user = Some(self.user.clone());
-        cfg.password = Some(self.password.clone());
-        cfg.dbname = Some(self.dbname.clone());
-        cfg.ssl_mode = Some(match self.ssl_mode.as_deref() {
-            Some("require") => deadpool_postgres::SslMode::Require,
-            _ => deadpool_postgres::SslMode::Prefer,
-        });
-        cfg.channel_binding = Some(match self.channel_binding.as_deref() {
-            Some("require") => deadpool_postgres::ChannelBinding::Require,
-            _ => deadpool_postgres::ChannelBinding::Prefer,
-        });
-        cfg.application_name = Some(self.application_name.to_owned());
-
-        // cfg.options = Some("-c statement_timeout=600ms".into());
-
         let tls_config = rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))

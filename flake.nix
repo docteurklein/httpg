@@ -426,12 +426,8 @@
           HTTPG_SMTP_USER = "florian.klein@free.fr";
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
-          HTTPG_PG_USER = "httpg";
-          HTTPG_PG_PASSWORD_FILE = "pg-password";
-          HTTPG_PG_DBNAME = "httpg";
-          HTTPG_PG_READ_HOST = "10.250.2.2";
-          HTTPG_PG_READ_PORT = "6432";
-          HTTPG_PG_WRITE_HOST = "10.250.1.2";
+          HTTPG_PG_WRITE_URL = "postgresql://httpg@10.250.1.2:6432/httpg?application_name=httpg";
+          HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg?application_name=httpg";
           PORT = "3000";
           RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
           RUST_BACKTRACE = "0";
@@ -524,12 +520,8 @@
                       "HTTPG_SMTP_USER=florian.klein@free.fr"
                       "HTTPG_SMTP_RELAY=smtp://127.0.0.1:1025?tls=opportunistic"
                       "HTTPG_PUBLIC_DIR=${builtins.getEnv "PWD"}/public"
-                      "HTTPG_PG_USER=httpg"
-                      "HTTPG_PG_PASSWORD_FILE=${builtins.getEnv "PWD"}/pg-password"
-                      "HTTPG_PG_DBNAME=httpg"
-                      "HTTPG_PG_READ_HOST=10.250.2.2"
-                      "HTTPG_PG_READ_PORT=6432"
-                      "HTTPG_PG_WRITE_HOST=10.250.1.2"
+                      "HTTPG_PG_READ_URL=${builtins.getEnv "PWD"}/pg_write_url"
+                      "HTTPG_PG_WRITE_URL=${builtins.getEnv "PWD"}/pg_read_url"
                       "PORT=3000"
                       "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
                       "RUST_BACKTRACE=0"
