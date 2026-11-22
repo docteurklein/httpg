@@ -116,23 +116,7 @@ begin atomic
 end;
 grant execute on procedure mark_late_interests to person;
 
-create or replace function public.login(name text) returns setof text
-volatile strict parallel safe -- leakproof
-language plpgsql
-security definer
-set search_path to cpres, gieze, pg_catalog
-as $$
-begin
-    case name
-        when 'cpres' then return query select * from login_cpres();
-        when 'gieze' then return query select * from gieze.login();
-        when 'grandroc' then return query select * from grandroc.login();
-        when 'jmeu' then return query select * from jmeu.login();
-    end case;
-end;
-$$;
-
-create or replace function login_cpres() returns setof text
+create or replace function login() returns setof text
 volatile strict parallel safe -- leakproof
 language sql
 security definer
@@ -154,8 +138,7 @@ begin atomic
     from "user";
 end;
 
-grant execute on function login(text) to person, httpg, anon;
-grant execute on function login_cpres() to person;
+grant execute on function login() to person;
 
 create or replace procedure delete_account()
 language sql

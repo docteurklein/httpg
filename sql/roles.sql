@@ -1,5 +1,5 @@
 do $$ begin
-    create role anon noinherit;
+    create role anon;
     exception when duplicate_object then raise notice '%, skipping', sqlerrm using errcode = sqlstate;
 end $$;
 do $$ begin

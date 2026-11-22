@@ -84,3 +84,12 @@ r
 v
 c
 ```
+
+## gcs
+
+```
+gcloud asset list --project=$(gcloud config get project) \
+  --asset-types 'run.googleapis.com/Service,storage.googleapis.com/Bucket,secretmanager.googleapis.com/Secret,iam.googleapis.com/ServiceAccount' \
+  --content-type 'resource' \
+  --format json
+```

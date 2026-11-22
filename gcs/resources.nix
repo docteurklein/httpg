@@ -1,0 +1,451 @@
+[
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "iam.googleapis.com/ServiceAccount";
+    name = "//iam.googleapis.com/projects/gieze-421708/serviceAccounts/104798687631732191544";
+    resource = {
+      data = {
+        displayName = "Compute Engine default service account";
+        email = "278563930937-compute@developer.gserviceaccount.com";
+        name = "projects/gieze-421708/serviceAccounts/278563930937-compute@developer.gserviceaccount.com";
+        oauth2ClientId = "104798687631732191544";
+        projectId = "gieze-421708";
+        uniqueId = "104798687631732191544";
+      };
+      discoveryDocumentUri = "https://iam.googleapis.com/$discovery/rest";
+      discoveryName = "ServiceAccount";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2024-04-28T08:26:34Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "iam.googleapis.com/ServiceAccount";
+    name = "//iam.googleapis.com/projects/gieze-421708/serviceAccounts/113038718687677034241";
+    resource = {
+      data = {
+        description = "Firebase Admin SDK Service Agent";
+        displayName = "firebase-adminsdk";
+        email = "firebase-adminsdk-fbsvc@gieze-421708.iam.gserviceaccount.com";
+        name = "projects/gieze-421708/serviceAccounts/firebase-adminsdk-fbsvc@gieze-421708.iam.gserviceaccount.com";
+        oauth2ClientId = "113038718687677034241";
+        projectId = "gieze-421708";
+        uniqueId = "113038718687677034241";
+      };
+      discoveryDocumentUri = "https://iam.googleapis.com/$discovery/rest";
+      discoveryName = "ServiceAccount";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2025-12-13T09:59:08.535766364Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "run.googleapis.com/Service";
+    name = "//run.googleapis.com/projects/gieze-421708/locations/europe-west1/services/httpg";
+    resource = {
+      data = {
+        apiVersion = "serving.knative.dev/v1";
+        kind = "Service";
+        metadata = {
+          annotations = {
+            "run.googleapis.com/ingress" = "all";
+            "run.googleapis.com/ingress-status" = "all";
+            "run.googleapis.com/invoker-iam-disabled" = "true";
+            "run.googleapis.com/operation-id" = "ae43e1aa-c34b-4c7e-911d-9feb3b6ebce7";
+            "run.googleapis.com/urls" =
+              "[\"https://httpg-278563930937.europe-west1.run.app\",\"https://httpg-t23nl6w2qq-ew.a.run.app\"]";
+            "serving.knative.dev/creator" = "sideral.underground@gmail.com";
+            "serving.knative.dev/lastModifier" = "278563930937-compute@developer.gserviceaccount.com";
+          };
+          creationTimestamp = "2024-11-20T16:14:27.161878Z";
+          generation = 201;
+          labels = {
+            "cloud.googleapis.com/location" = "europe-west1";
+          };
+          name = "httpg";
+          namespace = "278563930937";
+          resourceVersion = "AAZgFkSKAOk";
+          selfLink = "/apis/serving.knative.dev/v1/namespaces/278563930937/services/httpg";
+          uid = "d6d32980-608b-4114-8749-e9d8efc1707e";
+        };
+        spec = {
+          template = {
+            metadata = {
+              labels = {
+                "run.googleapis.com/startupProbeType" = "Default";
+              };
+            };
+            spec = {
+              containerConcurrency = 80;
+              containers = [
+                {
+                  env = [
+                    {
+                      name = "HTTPG_CACHE_DIR";
+                      value = "/httpg-cache";
+                    }
+                    {
+                      name = "HTTPG_ANON_ROLE";
+                      value = "anon";
+                    }
+                    {
+                      name = "HTTPG_INDEX_SQL";
+                      value = "table cpres.head union all table cpres.\"findings\"";
+                    }
+                    {
+                      name = "HTTPG_LOGIN_QUERY";
+                      value = "select public.login($1)";
+                    }
+                    {
+                      name = "HTTPG_SMTP_USER";
+                      value = "sideral.underground@gmail.com";
+                    }
+                    {
+                      name = "HTTPG_PG_DBNAME";
+                      value = "neondb";
+                    }
+                    {
+                      name = "HTTPG_PG_PASSWORD_FILE";
+                      value = "/secrets/pg_password/pg_password";
+                    }
+                    {
+                      name = "HTTPG_PG_READ_HOST";
+                      value = "ep-divine-unit-as9eonvl-pooler.c-4.eu-central-1.aws.neon.tech";
+                    }
+                    {
+                      name = "HTTPG_PG_SSLMODE";
+                      value = "require";
+                    }
+                    {
+                      name = "HTTPG_PG_USER";
+                      value = "httpg";
+                    }
+                    {
+                      name = "HTTPG_PG_WRITE_HOST";
+                      value = "ep-withered-thunder-as96ubou-pooler.c-4.eu-central-1.aws.neon.tech";
+                    }
+                    {
+                      name = "HTTPG_PRIVATE_KEY_FILE";
+                      value = "/secrets/private-key-file";
+                    }
+                    {
+                      name = "HTTPG_SMTP_PASSWORD_FILE";
+                      value = "/secrets/smtp_password/smtp_password";
+                    }
+                    {
+                      name = "HTTPG_SMTP_RELAY";
+                      value = "smtp://smtp.gmail.com?tls=required";
+                    }
+                    {
+                      name = "HTTPG_SMTP_SENDER";
+                      value = "sideral.underground@gmail.com";
+                    }
+                    {
+                      name = "HTTPG_WEBPUSH_PRIVATE_KEY_FILE";
+                      value = "/secrets/webpush.pem/webpush-pem";
+                    }
+                    {
+                      name = "PG_HOST";
+                      value = "ep-divine-unit-as9eonvl.c-4.eu-central-1.aws.neon.tech";
+                    }
+                    {
+                      name = "PG_CHANNELBINDING";
+                      value = "require";
+                    }
+                    {
+                      name = "RUST_LOG";
+                      value = "tokio_postgres=debug,httpg=debug";
+                    }
+                  ];
+                  image = "europe-docker.pkg.dev/artifact-registry-docker-cache/virtual-docker/docteurklein/httpg:xav4laqxc93jj5n608g3b0iv22395bhb";
+                  name = "httpg";
+                  ports = [
+                    {
+                      containerPort = 3000;
+                      name = "h2c";
+                    }
+                  ];
+                  resources = {
+                    limits = {
+                      cpu = "1000m";
+                      memory = "512Mi";
+                    };
+                  };
+                  startupProbe = {
+                    failureThreshold = 1;
+                    periodSeconds = 240;
+                    tcpSocket = {
+                      port = 3000;
+                    };
+                    timeoutSeconds = 240;
+                  };
+                  volumeMounts = [
+                    {
+                      mountPath = "/secrets";
+                      name = "secret-volume";
+                    }
+                    {
+                      mountPath = "/secrets/webpush.pem";
+                      name = "secret-1";
+                    }
+                    {
+                      mountPath = "/secrets/pg_password";
+                      name = "secret-2";
+                    }
+                    {
+                      mountPath = "/secrets/smtp_password";
+                      name = "secret-3";
+                    }
+                    {
+                      mountPath = "/httpg-cache";
+                      name = "gcs";
+                    }
+                  ];
+                }
+              ];
+              serviceAccountName = "278563930937-compute@developer.gserviceaccount.com";
+              timeoutSeconds = 300;
+              volumes = [
+                {
+                  csi = {
+                    driver = "gcsfuse.run.googleapis.com";
+                    volumeAttributes = {
+                      bucketName = "httpg-nginx";
+                      mountOptions = "uid=1000,gid=1000";
+                    };
+                  };
+                  name = "gcs";
+                }
+                {
+                  name = "secret-volume";
+                  secret = {
+                    items = [
+                      {
+                        key = "1";
+                        path = "private-key-file";
+                      }
+                    ];
+                    secretName = "secret-1";
+                  };
+                }
+                {
+                  name = "secret-1";
+                  secret = {
+                    items = [
+                      {
+                        key = "latest";
+                        path = "webpush-pem";
+                      }
+                    ];
+                    secretName = "webpush-pem";
+                  };
+                }
+                {
+                  name = "secret-2";
+                  secret = {
+                    items = [
+                      {
+                        key = "latest";
+                        path = "pg_password";
+                      }
+                    ];
+                    secretName = "pg_password";
+                  };
+                }
+                {
+                  name = "secret-3";
+                  secret = {
+                    items = [
+                      {
+                        key = "latest";
+                        path = "smtp_password";
+                      }
+                    ];
+                    secretName = "smtp_password";
+                  };
+                }
+              ];
+            };
+          };
+          traffic = [
+            {
+              latestRevision = true;
+              percent = 100;
+            }
+          ];
+        };
+        status = {
+          address = {
+            url = "https://httpg-t23nl6w2qq-ew.a.run.app";
+          };
+          conditions = [
+            {
+              lastTransitionTime = "2026-11-12T15:50:15.705833Z";
+              status = "True";
+              type = "Ready";
+            }
+            {
+              lastTransitionTime = "2026-11-12T15:50:11.562281Z";
+              status = "True";
+              type = "ConfigurationsReady";
+            }
+            {
+              lastTransitionTime = "2026-11-12T15:50:15.671819Z";
+              status = "True";
+              type = "RoutesReady";
+            }
+          ];
+          latestCreatedRevisionName = "httpg-00199-vbw";
+          latestReadyRevisionName = "httpg-00199-vbw";
+          observedGeneration = 201;
+          traffic = [
+            {
+              latestRevision = true;
+              percent = 100;
+              revisionName = "httpg-00199-vbw";
+            }
+          ];
+          url = "https://httpg-t23nl6w2qq-ew.a.run.app";
+        };
+      };
+      discoveryDocumentUri = "https://run.googleapis.com/$discovery/rest";
+      discoveryName = "Service";
+      location = "europe-west1";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2026-11-12T20:40:35Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "secretmanager.googleapis.com/Secret";
+    name = "//secretmanager.googleapis.com/projects/278563930937/secrets/pg_password";
+    resource = {
+      data = {
+        createTime = "2026-01-13T09:29:46.607762Z";
+        etag = "\"164841a1eead76\"";
+        name = "projects/278563930937/secrets/pg_password";
+        replication = {
+          automatic = { };
+        };
+      };
+      discoveryDocumentUri = "https://secretmanager.googleapis.com/$discovery/rest?version=v1";
+      discoveryName = "Secret";
+      location = "global";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2026-01-31T03:30:49.150455444Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "secretmanager.googleapis.com/Secret";
+    name = "//secretmanager.googleapis.com/projects/278563930937/secrets/secret-1";
+    resource = {
+      data = {
+        createTime = "2024-11-20T15:34:09.17131Z";
+        etag = "\"162759e1811b6e\"";
+        labels = {
+          goog-terraform-provisioned = "true";
+        };
+        name = "projects/278563930937/secrets/secret-1";
+        replication = { };
+      };
+      discoveryDocumentUri = "https://secretmanager.googleapis.com/$discovery/rest?version=v1";
+      discoveryName = "Secret";
+      location = "global";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2025-02-06T23:03:46.280643908Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "secretmanager.googleapis.com/Secret";
+    name = "//secretmanager.googleapis.com/projects/278563930937/secrets/smtp_password";
+    resource = {
+      data = {
+        createTime = "2026-01-13T09:31:19.296202Z";
+        etag = "\"164841a7752f14\"";
+        name = "projects/278563930937/secrets/smtp_password";
+        replication = { };
+      };
+      discoveryDocumentUri = "https://secretmanager.googleapis.com/$discovery/rest?version=v1";
+      discoveryName = "Secret";
+      location = "global";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2026-01-31T03:30:49.150455444Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "secretmanager.googleapis.com/Secret";
+    name = "//secretmanager.googleapis.com/projects/278563930937/secrets/webpush-pem";
+    resource = {
+      data = {
+        createTime = "2025-12-19T09:49:19.044449Z";
+        etag = "\"16464afdc84d1d\"";
+        name = "projects/278563930937/secrets/webpush-pem";
+        replication = { };
+      };
+      discoveryDocumentUri = "https://secretmanager.googleapis.com/$discovery/rest?version=v1";
+      discoveryName = "Secret";
+      location = "global";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2025-12-19T16:40:32.996668101Z";
+  }
+  {
+    ancestors = [ "projects/278563930937" ];
+    assetType = "storage.googleapis.com/Bucket";
+    name = "//storage.googleapis.com/httpg-nginx";
+    resource = {
+      data = {
+        acl = [ ];
+        cors = [ ];
+        defaultObjectAcl = [ ];
+        encryption = { };
+        iamConfiguration = {
+          bucketPolicyOnly = {
+            enabled = false;
+          };
+          publicAccessPrevention = "inherited";
+          uniformBucketLevelAccess = {
+            enabled = false;
+          };
+        };
+        id = "httpg-nginx";
+        ipFilter = {
+          vpcNetworkSources = [ ];
+        };
+        kind = "storage#bucket";
+        lifecycle = {
+          rule = [ ];
+        };
+        location = "EU";
+        locationType = "multi-region";
+        metageneration = 1;
+        name = "httpg-nginx";
+        projectNumber = 278563930937;
+        selfLink = "https://www.googleapis.com/storage/v1/b/httpg-nginx";
+        softDeletePolicy = {
+          effectiveTime = "2026-10-21T14:36:36.000Z";
+          retentionDurationSeconds = 604800;
+        };
+        storageClass = "STANDARD";
+        timeCreated = "2026-10-21T14:36:36.330Z";
+        updated = "2026-10-21T14:36:36.330Z";
+      };
+      discoveryDocumentUri = "https://www.googleapis.com/discovery/v1/apis/storage/v1/rest";
+      discoveryName = "Bucket";
+      location = "eu";
+      parent = "//cloudresourcemanager.googleapis.com/projects/278563930937";
+      version = "v1";
+    };
+    updateTime = "2026-10-21T14:36:36.330923Z";
+  }
+]

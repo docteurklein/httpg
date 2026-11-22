@@ -102,7 +102,43 @@ with (security_invoker) as
             });
         });
     $$::text::xml)::text
-    union all select xmlelement(name h1, 'Le Grand Roc')::text
+    union all select xmlelement(name header,
+        xmlelement(name h1, 'Le Grand Roc'),
+        (select xmlelement(name nav,
+            xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html'
+                )) as href
+            ), 'Bookings'),
+            xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html'
+                )) as href
+            ), 'Occupants'),
+            xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
+                )) as href
+            ), 'Logements'),
+            xmlelement(name a, xmlattributes(
+                url.url('/grandroc/query', jsonb_build_object(
+                    'sql', 'select * from grandroc.head union all select body::text from grandroc.stat'
+                )) as href
+            ), 'Stats'),
+            xmlelement(name a, xmlattributes(
+                url.url('/grandroc/logout', jsonb_build_object(
+                    'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
+                )) as href
+            ), 'Logout')
+        )
+        where current_role = 'grandroc')
+    )::text
+    union all
+    select xmlelement(name div, xmlattributes('flashes' as class),
+        xmlelement(name article, xmlattributes('red card' as class), error)
+    )::text
+    from httpg
+    where error is not null
     union all select xmlelement(name form, xmlattributes(
         'grid' as class,
         'POST' as method,
@@ -129,40 +165,6 @@ with (security_invoker) as
         xmlelement(name input, xmlattributes('submit' as type, 'login' as value))
     )::text
     where current_role <> 'grandroc'
-    union all select xmlelement(name nav,
-        xmlelement(name a, xmlattributes(
-            url.url('/grandroc/query', jsonb_build_object(
-                'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html'
-            )) as href
-        ), 'Bookings'),
-        xmlelement(name a, xmlattributes(
-            url.url('/grandroc/query', jsonb_build_object(
-                'sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html'
-            )) as href
-        ), 'Occupants'),
-        xmlelement(name a, xmlattributes(
-            url.url('/grandroc/query', jsonb_build_object(
-                'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
-            )) as href
-        ), 'Logements'),
-        xmlelement(name a, xmlattributes(
-            url.url('/grandroc/query', jsonb_build_object(
-                'sql', 'select * from grandroc.head union all select body::text from grandroc.stat'
-            )) as href
-        ), 'Stats'),
-        xmlelement(name a, xmlattributes(
-            url.url('/grandroc/logout', jsonb_build_object(
-                'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
-            )) as href
-        ), 'Logout')
-    )::text
-    where current_role = 'grandroc'
-    union all
-    select xmlelement(name div, xmlattributes('flashes' as class),
-        xmlelement(name article, xmlattributes('red card' as class), error)
-    )::text
-    from httpg
-    where error is not null
 ;
 
 -- drop procedure if exists book;

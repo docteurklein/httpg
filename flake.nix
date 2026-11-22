@@ -4,7 +4,12 @@
   inputs = {
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    multiverse.url = "github:fzakaria/nixpkgs-multiverse";
     crane.url = "github:ipetkov/crane";
+    # cargo-dyndrv = {
+    #   url = "github:obsidiansystems/cargo-dyndrv";
+    #   inputs.nixpkgs.follows = "nixpkgs";
+    # };
     nix2container = {
       url = "github:nlewo/nix2container";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -15,8 +20,8 @@
     };
   };
 
-  outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, ... }:
-    flake-parts.lib.mkFlake { inherit inputs; } {
+  outputs = inputs@{ self, nixpkgs, flake-parts, crane, extra-container, multiverse, ... }:
+    flake-parts.lib.mkFlake { inherit inputs; } ({moduleWithSystem, ...}: {
       systems = ["x86_64-linux"];
 
       flake = {
@@ -53,7 +58,8 @@
           );
         };
 
-        nixosModules.postgres = ({ config, pkgs, lib, ... }: {
+        nixosModules.postgres = moduleWithSystem ({pkgs, system, ...}: {config, lib, ...}: {
+
           boot.isNspawnContainer = true;
 
           system.stateVersion = "25.11";
@@ -85,6 +91,44 @@
             };
           };
 
+          systemd.services.pg_upgrade = let
+              cfg = config.services.postgresql;
+              new = pkgs.postgresql_19;
+              old = multiverse.multiverse.${system}.versions.postgresql_19."19rc2";
+            in lib.mkIf (true || new.psqlSchema != old.psqlSchema) { # major version
+            enable = true;
+            requiredBy = [ "postgresql.target" ];
+            before = [ "pg_basebackup.service" "postgresql.service" "postgresql-setup.service" ];
+            serviceConfig = {
+              Type = "oneshot";
+              RemainAfterExit = true;
+              User = "postgres";
+              Group = "postgres";
+            };
+            script = ''
+              set -eux
+
+              export NEWDATA="${cfg.dataDir}"
+              export NEWBIN="${cfg.finalPackage}/bin"
+
+              if test -e "$NEWDATA/PG_VERSION"; then
+                echo 'exists'
+              fi
+
+              export OLDDATA="/var/lib/postgresql/19rc2"
+              export OLDBIN="${old}/bin"
+
+              install -d -m 0700 -o postgres -g postgres "$NEWDATA"
+              cd "$NEWDATA"
+              "$NEWBIN/initdb" -D "$NEWDATA"
+
+              "$NEWBIN/pg_upgrade" \
+                --old-datadir "$OLDDATA" --new-datadir "$NEWDATA" \
+                --old-bindir "$OLDBIN" --new-bindir "$NEWBIN" \
+                --jobs 4
+            '';
+          };
+
           services.postgresql = {
             enable = true;
             # enableJIT = true;
@@ -100,15 +144,13 @@
                 };
               }))
               pg_ivm
-              # pg_hint_plan
-              # plv8
               pgvector
               pgsql-http
               postgis
               pgrouting
               h3-pg
               (plpython3.withPackages (p: []))
-              # self'.packages.pg_jitter
+              pkgs.pg_jitter
               # self'.packages.pg-trickle
             ];
 
@@ -180,11 +222,11 @@
               max_parallel_workers = 6;
               max_parallel_maintenance_workers = 3;
               client_connection_check_interval = "2s";
-              jit = "off";
+              jit = "on";
               jit_above_cost = 200;
               jit_inline_above_cost = 2000;
-              # jit_provider = "pg_jitter";
-              # "pg_jitter.backend" = "sljit";
+              jit_provider = "pg_jitter";
+              "pg_jitter.backend" = "sljit";
               io_method = "io_uring";
 
               # "pg_trickle.cdc_mode" = "auto";
@@ -192,6 +234,10 @@
           };
         });
       };
+
+      imports = [
+        inputs.flake-parts.flakeModules.easyOverlay
+      ];
 
       perSystem = { config, self', inputs', pkgs, lib, system, ... }: let
         n2c = inputs.nix2container.packages.${system};
@@ -214,6 +260,16 @@
           cargoArtifacts = craneLib.buildDepsOnly crate;
         };
       in {
+        overlayAttrs = {
+          inherit (config.packages) httpg-release gcloud pg_jitter;
+        };
+        _module.args.pkgs = import inputs.nixpkgs {
+          inherit system;
+          overlays = [
+            # inputs.cargo-dyndrv.overlays.default
+            self.overlays.default
+          ];
+        };
         packages.httpg-dev = craneLib.buildPackage (crate // {
           CARGO_PROFILE = "dev";
           # inherit cargoArtifacts;
@@ -244,7 +300,7 @@
         #   cargoHash = "sha256-wXyt6zhOGOhNunYag3kLt4nDIfT0m7Z+KDTrNIZvizA=";
         # });
 
-        packages.pg_jitter = pkgs.stdenv.mkDerivation rec {
+        packages.pg_jitter = pkgs.stdenv.mkDerivation {
           pname = "pg_jitter";
           version = "0.3.1";
 
@@ -252,8 +308,8 @@
             (pkgs.fetchFromGitHub {
               owner = "vladich";
               repo = "pg_jitter";
-              rev = "d243ed70010ead3db68a10781147ba48402ca200";
-              sha256 = "sha256-mn06cBtFoYNsYU5U2rPgoawrMM9HSATJN6IjDXQFBqA=";
+              rev = "28f05edfda2c7a91935c185f2ca28aa96bfac3de";
+              sha256 = "sha256-WU3JjWO19LZd0CJ+z0JZIMnwq2FHsiP7/zjWhiJmgwI=";
               name = "pg_jitter";
             })
             (pkgs.fetchFromGitHub {
@@ -306,13 +362,13 @@
               sljit \
               -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
 
-            # ${pkgs.bash}/bin/bash build.sh \
-            #   asmjit \
-            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
+            ${pkgs.bash}/bin/bash build.sh \
+              asmjit \
+              -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
 
-            # ${pkgs.bash}/bin/bash build.sh \
-            #   mir \
-            #   -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
+            ${pkgs.bash}/bin/bash build.sh \
+              mir \
+              -DPG_CONFIG=${pkgs.postgresql_19.pg_config}/bin/pg_config
           '';
 
           installPhase = ''
@@ -321,7 +377,7 @@
           '';
         };
 
-        packages.pgmt = pkgs.rustPlatform.buildRustPackage rec {
+        packages.pgmt = pkgs.rustPlatform.buildRustPackage {
           pname = "pgmt";
           version = "main";
 
@@ -333,14 +389,16 @@
             owner = "gdpotter";
             repo = "pgmt";
             rev = "main";
-            hash = "sha256-X5eyLDBSWWEZen62c9pSA5dtY1sxUenL0y2+3XAfz+0=";
+            hash = "sha256-3rGfRLQuB3oRThp8ztlA4kjcVs+HTlnKo2yCuMt/GFs=";
           };
           cargoHash = "sha256-sEMuUdfmkMOs/uyFEyJHR+KhhYGDBNAptGtdGPToL8k=";
 
           doCheck = false;
+
+          outputs = ["pgmt"];
         };
 
-        packages.pgrust = pkgs.rustPlatform.buildRustPackage rec {
+        packages.pgrust = pkgs.rustPlatform.buildRustPackage {
           pname = "pgrust";
           version = "main";
 
@@ -348,9 +406,13 @@
             owner = "malisper";
             repo = "pgrust";
             rev = "main";
-            hash = "sha256-k49VLG6O8httsAThjhZfcpcPFu+jz+K9b5zitfdxPdY=";
+            hash = "sha256-winI+md0PXgJ84M6o9Y2CxZF8g8P7ss8udsa0FGsoNI=";
           };
           cargoHash = "sha256-rWDd0bwIso3llw3zittFhnXo9gSVgKtDvh58548ItJE=";
+
+          cargoPatches = [
+            ./pgrust.patch
+          ];
 
           nativeBuildInputs = with pkgs; [
             perl
@@ -359,17 +421,18 @@
           buildInputs = with pkgs; [
             openssl.dev
             re2.dev
+            zstd
           ];
 
           doCheck = false;
         };
 
-        packages.default = self'.packages.httpg-release;
+        packages.default = pkgs.httpg-release;
 
         packages.httpg-oci = n2c.nix2container.buildImage {
           name = "docteurklein/httpg";
           config = {
-            entrypoint = ["${self'.packages.httpg-release}/bin/httpg"];
+            entrypoint = ["${pkgs.httpg-release}/bin/httpg"];
             user = "1000";
           };
           copyToRoot = pkgs.buildEnv {
@@ -408,7 +471,7 @@
             mold clang
             biscuit-cli
             pkgs.extra-container
-            self'.packages.gcloud
+            pkgs.gcloud
             osmium-tool
             perf
           ];
@@ -420,7 +483,7 @@
           HTTPG_WEBPUSH_PRIVATE_KEY_FILE = "webpush.pem";
           # HTTPG_SMTP_PASSWORD_FILE = "${builtins.getEnv "PWD"}/smtp-password";
           HTTPG_ANON_ROLE = "anon";
-          HTTPG_INDEX_SQL = "select * from (table cpres.head union all table cpres.findings)";
+          HTTPG_INDEX_SQL = "select * from public.index()";
           HTTPG_LOGIN_QUERY = "select public.login($1)";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
@@ -429,7 +492,8 @@
           HTTPG_PG_WRITE_URL = "postgresql://httpg@10.250.1.2:6432/httpg?application_name=httpg";
           HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg?application_name=httpg";
           PORT = "3000";
-          RUST_LOG = "tokio_postgres=debug,httpg=debug,tower_http=debug";
+          # RUST_LOG = "httpg=debug,hyper_http=debug";
+          RUST_LOG = "httpg=debug,tower_http=debug";
           RUST_BACKTRACE = "0";
         };
 
@@ -457,7 +521,6 @@
           nixpkgs = inputs.nixpkgs;
 
           config = {
-
             containers.httpg = {
               ephemeral = true;
               autoStart = true;
@@ -514,7 +577,7 @@
                       # "HTTPG_SMTP_PASSWORD_FILE='${builtins.getEnv "PWD"}/smtp-password'"
                       "HTTPG_ANON_ROLE=anon"
                       "HTTPG_CACHE_DIR=.cache"
-                      "HTTPG_INDEX_SQL='select * from cpres.head union all select * from cpres.findings'"
+                      "HTTPG_INDEX_SQL='select * from public.index()"
                       "HTTPG_LOGIN_QUERY='select login($1)'"
                       "HTTPG_SMTP_SENDER=florian.klein@free.fr"
                       "HTTPG_SMTP_USER=florian.klein@free.fr"
@@ -579,7 +642,6 @@
               localAddress6 = "fdfd:b3f0:482::1";
 
               config = ({ pkgs, ... }: {
-
                 imports = [
                   self.nixosModules.postgres
                 ];
@@ -604,25 +666,25 @@
                   serviceConfig = {
                     Type = "oneshot";
                     RemainAfterExit = true;
-                    script = ''
-                      set -exu
-                      if test -e /var/lib/postgresql/19/PG_VERSION; then
-                        exit
-                      fi
-                      until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
-                        sleep 2
-                      done
-                      ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
-                      touch /var/lib/postgresql/19/standby.signal
-                      chown -R postgres: /var/lib/postgresql/19
-                    '';
                   };
+                  script = ''
+                    set -exu
+                    if test -e /var/lib/postgresql/19/PG_VERSION; then
+                      exit
+                    fi
+                    until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
+                      sleep 2
+                    done
+                    ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
+                    touch /var/lib/postgresql/19/standby.signal
+                    chown -R postgres: /var/lib/postgresql/19
+                  '';
                 };
               });
             };
           };
         };
       };
-    };
+    });
 }
 

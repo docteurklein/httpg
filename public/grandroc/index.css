@@ -1,8 +1,13 @@
-nav {
+header {
   display: flex;
+  gap: 1rem;
+}
+
+nav {
   justify-content: center;
-  gap: 1em;
-  margin-bottom: 1rem;
+  & > * {
+    padding-right: 1em;
+  }
 }
 
 .chart {

@@ -3,8 +3,8 @@ use std::{collections::BTreeMap, ops::Not};
 
 use cookie::Cookie;
 use axum::{
-    Json, extract::{FromRequest, Multipart, Request}, http::{
-        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, REFERER, ORIGIN}
+    Json, RequestExt, extract::{FromRequest, Multipart, Path, Request}, http::{
+        StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, ORIGIN, REFERER}
     }, response::{IntoResponse, Response}
 };
 use axum::extract::FromRef;
@@ -110,6 +110,7 @@ impl ToSql for Param {
 #[derive(Debug, Default, Deserialize, PartialEq, Clone)]
 pub struct QueryPart {
     pub sql: Option<String>,
+    pub base_path: Option<String>,
     pub params: Option<Vec<serde_json::Value>>,
     pub in_types: Option<Vec<Type>>,
     pub accept: Option<String>,
@@ -126,6 +127,8 @@ pub struct QueryPart {
 pub struct Query {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sql: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub base_path: Option<String>,
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub cookies: BTreeMap<String, String>,
     #[serde(skip)]
@@ -168,9 +171,11 @@ where
 {
     type Rejection = Response;
 
-    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(mut req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let headers = req.headers().to_owned();
         let uri = req.uri().to_owned();
+
+        let base_path = req.extract_parts::<Option<Path<String>>>().await.map_err(|e| HttpgError::from(e).into_response()).map(|p| p.map(|p| p.to_string())).ok().flatten();
 
         let app_state = crate::AppState::from_ref(state);
         let scheme = match app_state.config.tls {
@@ -314,6 +319,7 @@ where
 
         Ok(Self {
             sql,
+            base_path,
             order,
             cookies: BTreeMap::from_iter(
                 headers.get_all("cookie").iter().map(|c| {

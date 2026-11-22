@@ -44,3 +44,6 @@ select format('%s?%s', path, (
     where value is json scalar
 ));
 end;
+
+grant execute on function url.encode to anon;
+grant execute on function url.url to anon;

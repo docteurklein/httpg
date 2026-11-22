@@ -216,7 +216,7 @@ async fn main() -> Result<(), HttpgError> {
 }
 
 async fn handle_error(err: BoxError) -> Response {
-    (StatusCode::INTERNAL_SERVER_ERROR, format!("Internal error: {}", err)).into_response()
+    (StatusCode::BAD_GATEWAY, format!("cache proxy error: {}", err)).into_response()
 }
 
 #[debug_handler]

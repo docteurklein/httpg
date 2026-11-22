@@ -299,7 +299,7 @@ end;
 grant execute on function search to anon;
 
 
-grant select on table ts_stat_view to anon;
+-- grant select on table ts_stat_view to anon;
 
 drop table if exists ts_stat cascade;
 create table if not exists ts_stat (

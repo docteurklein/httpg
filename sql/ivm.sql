@@ -227,6 +227,7 @@ loop
             'add-tables', 'blog.comment,blog.stat,blog.post,cpres.osm_auvergne'
         ) c
     loop
+        -- @TODO: handle truncate
         i = i + 1;
 
         call maintain_gis_network(lsn, change);
@@ -236,13 +237,15 @@ loop
 
         if i > 1000 then
             commit;
-            perform pg_replication_slot_advance(slot, lsn);
+            perform pg_replication_slot_advance(slot, (
+                select greatest(confirmed_flush_lsn, lsn) from pg_replication_slots where slot_name = slot
+            ));
             raise notice 'advanced to %', lsn;
             i = 0;
         end if;
     end loop;
 
-    if lsn is not null then
+    if lsn is not null and change->>'action' = 'C' then
         commit;
         -- perform 1 / random(0, 50); -- chaos testing
         perform pg_replication_slot_advance(slot, lsn);
@@ -273,7 +276,7 @@ create index if not exists network_iv_geog on network_iv using gist (geog);
 -- insert into network_edge_iv
 -- select id, osm_id, geog, startpoint, endpoint, duration, st_length(geog::geometry) from auvergne_network_edge;
 
-drop procedure if exists maintain_gis_network;
+-- drop procedure if exists maintain_gis_network;
 create or replace procedure maintain_gis_network(current_lsn pg_lsn, change jsonb)
 security definer
 begin atomic
@@ -317,7 +320,7 @@ begin atomic
         jsonb_populate_record(null::cpres.osm_auvergne, new) n
         where (change->>'schema', change->>'table') = ('cpres', 'osm_auvergne')
         and change->>'action' in ('I', 'U', 'D')
-        and n.osm_type = 'way'
+        and debug(n.osm_type) = 'way'
         and n.tags::jsonb->>'highway' in ( -- https://wiki.openstreetmap.org/wiki/Key:highway#Highway
             'motorway',
             'motorway_link',
@@ -342,8 +345,6 @@ begin atomic
         from way e1
         join ivm.network_iv e2 on st_intersects(e1.geog, e2.geog) 
         where e1.osm_id <> e2.osm_id
-        -- or e2 is null
-        -- and e1.geog && ST_MakeEnvelope(3.51, 46.01, 3.78, 46.15, 4326)
     ),
     edge (osm_id, geog, startpoint, endpoint, speed, duration, distance) as (
         select
@@ -375,7 +376,12 @@ begin atomic
     )
     merge into ivm.network_iv
     using (
-        table split union select * from edge where not exists (select from split where split.osm_id = edge.osm_id)
+        table split
+        union
+        select * from edge
+        where not exists (
+            select from split where split.osm_id = edge.osm_id
+        )
     ) diff
     on diff.geog = network_iv.geog
     when matched and network_iv.lsn >= debug(current_lsn) then do nothing

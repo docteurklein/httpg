@@ -12,4 +12,4 @@ end;
 
 
 grant usage on schema httpg to anon;
-grant execute on function query to anon;
+grant execute on function query to anon, grandroc, jmeu;

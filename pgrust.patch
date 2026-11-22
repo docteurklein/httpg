@@ -1,0 +1,14 @@
+diff --git a/crates/backend/main/main_main/Cargo.toml b/crates/backend/main/main_main/Cargo.toml
+index b5922614bc4..94bc30f17ed 100644
+--- a/crates/backend/main/main_main/Cargo.toml
++++ b/crates/backend/main/main_main/Cargo.toml
+@@ -98,7 +98,7 @@ seams_init = { path = "../../../_support/seams_init" }
+ mimalloc = "0.1"
+ # D3143 P1: `no_thp` (MI_NO_THP) keeps mimalloc from advising its arenas MADV_HUGEPAGE (the wio P273 idle-session
+ # footprint) and calls no prctl; the global allocator advises large blocks itself (init_small::oom, heap_thp_policy).
+-libmimalloc-sys = { version = "0.1", features = ["extended", "no_thp", "override"] }
++libmimalloc-sys = { version = "0.1", features = ["extended", "no_thp"] }
+ # ALLOC-LADDER (c) / D4321 step 1: pgrust's own arenas for mimalloc and the cache arena's heap
+ allocarena = { path = "../../../_support/allocarena" }
+ # pagepool P2: mcx blocks from the page pool (PGRUST_POOL_MCX=1), its door and probe on the ledger
+

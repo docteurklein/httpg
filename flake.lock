@@ -72,6 +72,21 @@
         "type": "github"
       }
     },
+    "multiverse": {
+      "locked": {
+        "lastModified": 1795155000,
+        "narHash": "sha256-lhrQfQHXsYByvNE1iYB9RGXvqYkK11EJgeXJrFTovLo=",
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "rev": "523d1ee132cff256440cbb9347b9214d40201cc7",
+        "type": "github"
+      },
+      "original": {
+        "owner": "fzakaria",
+        "repo": "nixpkgs-multiverse",
+        "type": "github"
+      }
+    },
     "nix2container": {
       "inputs": {
         "nixpkgs": [
@@ -128,6 +143,7 @@
         "crane": "crane",
         "extra-container": "extra-container",
         "flake-parts": "flake-parts",
+        "multiverse": "multiverse",
         "nix2container": "nix2container",
         "nixpkgs": "nixpkgs"
       }

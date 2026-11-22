@@ -121,29 +121,65 @@ with (security_invoker) as
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
 
-        navigator.serviceWorker.register('/jmeu/sw.js', {type: 'module'});
+        //navigator.serviceWorker.register('/jmeu/sw.js', {type: 'module'});
 
-        navigator.serviceWorker.ready.then((registration) => {
-            if ('sync' in registration) {
-                registration.sync.register("sync-messages").catch(console.log).then(console.log);
-            }
-        });
-        Object.keys(localStorage).forEach(async i => {
-            let form = JSON.parse(i);
-            if (navigator.onLine) {
-                await fetch(form.url, {method: form.method, body: form.body, headers: {'Content-Type': 'application/x-www-form-urlencoded'}}).then((response) => {
-                    console.log(response);
-                    if (response.ok) {
-                        localStorage.removeItem(i);
-                    }
-                });
-            }
-        });
-        Object.keys(localStorage).forEach(i => {
-            let div = document.createElement('div');
-            div.appendChild(document.createTextNode(i));
-            document.body.appendChild(div);
-        });
+        //navigator.serviceWorker.ready.then((registration) => {
+        //    if ('sync' in registration) {
+        //        registration.sync.register("sync-messages").catch(console.log).then(console.log);
+        //    }
+        //});
+
+        let open = window.indexedDB.open('jmeu', 1);
+
+        open.onupgradeneeded = (event) => {
+            let db = event.target.result;
+            db.createObjectStore('form', {autoIncrement: true});
+        };
+        open.onsuccess = (event) => {
+            let db = event.target.result;
+
+            document.onsubmit = event => {
+                if (event.target.method.toUpperCase() !== 'POST') {
+                    return;
+                }
+                console.log(event);
+                event.preventDefault();
+                let item = {
+                    url: event.target.getAttribute('action'),
+                    method: event.target.method,
+                    body: new URLSearchParams(new FormData(event.target, event.submitter)).toString(),
+                };
+                console.log(item);
+                db.transaction(['form'], 'readwrite').objectStore('form').add(item);
+            };
+
+            let items = db.transaction(['form'], 'readonly').objectStore('form').getAllRecords();
+            items.onsuccess = async (event) => {
+                await Promise.all(items.result.map(r => {
+                    let form = r.value;
+                    fetch(form.url, {method: form.method, body: form.body, headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'Accept': 'text/html'
+                    }}).then((response) => {
+                        console.log(response);
+                        if (response.ok) {
+                            db.transaction(['form'], 'readwrite').objectStore('form').delete(r.key);
+                        }
+                    });
+                }));
+
+                let kept = db.transaction(['form'], 'readonly').objectStore('form').getAllRecords();
+
+                kept.onsuccess = (event) => {
+                    event.target.result.forEach(r => {
+                        let div = document.createElement('div');
+                        div.appendChild(document.createTextNode(r.value));
+                        document.body.appendChild(div);
+                    });
+                };
+            };
+        };
+
         document.getElementById('all')?.addEventListener('click', (e) => {
             document.querySelectorAll('.animals input[type=checkbox]').forEach(n => {
                 n.checked = e.target.checked;
@@ -155,21 +191,6 @@ with (security_invoker) as
                     i.setAttribute('form', e.target.id);
                 });
             });
-        });
-        document.addEventListener('submit', event => {
-            //if (navigator.onLine) { return; }
-            if (event.target.method.toUpperCase() !== 'POST') {
-                return;
-            }
-            event.preventDefault();
-            console.log(event);
-            let item = {
-                url: event.target.getAttribute('action'),
-                method: event.target.method,
-                body: new URLSearchParams(new FormData(event.target, event.submitter)).toString(),
-            };
-            console.log(item);
-            localStorage.setItem(JSON.stringify(item), null);
         });
 
     $$::text::xml)::text
@@ -274,7 +295,7 @@ select xmlelement(name details,
             $$ as value)),
             xmlelement(name label, 'Numero', xmlelement(name input, xmlattributes('text' as type, 'params[0]' as name, 'required' as required))),
             xmlelement(name label, 'Lot', xmlelement(name input, xmlattributes('text' as type, 'params[1]' as name, 'required' as required))),
-            xmlelement(name fieldset,
+            xmlelement(name div,
                 xmlelement(name label, 'Mâle', xmlelement(name input, xmlattributes('radio' as type, 'params[2]' as name, 'Mâle' as value, 'required' as required))),
                 xmlelement(name label, 'Femelle', xmlelement(name input, xmlattributes('radio' as type, 'params[2]' as name, 'Femelle' as value)))
             ),
@@ -363,7 +384,7 @@ select xmlelement(name form, xmlattributes(
             where case when nullif(qs->>'lot', '') is not null then qs->>'lot' = lot else true end
             and case when nullif(qs->>'number', '') is not null then qs->>'number' = number else true end
         ), 'Aucun animal')),
-        xmlelement(name fieldset, xmlattributes('' as class),
+        xmlelement(name div,
             xmlelement(name fieldset, xmlattributes('card' as class),
                 xmlelement(name label, 'Ordonnance', xmlelement(name input, xmlattributes('text' as type, 'ordonnance' as name, 'required' as required, 'treat' as form))),
                 xmlelement(name label, 'Médicament', xmlelement(name select, xmlattributes('medication_id' as name, 'required' as required, 'treat' as form),
@@ -518,7 +539,7 @@ select xmlelement(name div, xmlattributes('card animal' as class),
                     $$ as value)),
                     xmlelement(name label, 'Numero', xmlelement(name input, xmlattributes('text' as type, 'params[0]' as name, 'required' as required))),
                     xmlelement(name label, 'Lot', xmlelement(name input, xmlattributes('text' as type, 'params[1]' as name, 'required' as required))),
-                    xmlelement(name fieldset,
+                    xmlelement(name div,
                         xmlelement(name label, 'Mâle', xmlelement(name input, xmlattributes('radio' as type, 'params[3]' as name, 'Mâle' as value, 'required' as required))),
                         xmlelement(name label, 'Femelle', xmlelement(name input, xmlattributes('radio' as type, 'params[3]' as name, 'Femelle' as value)))
                     ),
@@ -568,7 +589,7 @@ with (security_invoker) as
     ),
     edit (sql, action, medication) as (
         select $$
-            update jmeu.medication set name = $1, posology = $2, is_empty = coalesce(httpg_query()->'body'->>'is_empty' = 'on', false)
+            update jmeu.medication set name = $1, posology = $2, is_empty = coalesce(httpg.query()->'body'->>'is_empty' = 'on', false)
             where medication_id = $3::uuid
             returning 303 status,
             jsonb_build_object('Location', url.url('/jmeu/query', jsonb_build_object(
@@ -639,7 +660,7 @@ end;
 grant jmeu to anon;
 grant execute on function login() to anon, jmeu;
 -- grant execute on function check_cookie() to anon, jmeu;
-grant usage on schema jmeu, url to anon, jmeu;
+grant usage on schema jmeu, url, httpg to anon, jmeu;
 grant select on table head to anon, jmeu;
 grant select, insert, update on table animal to jmeu;
 grant select, insert, update on table medication to jmeu;
