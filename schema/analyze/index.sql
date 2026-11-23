@@ -11,6 +11,8 @@ security definer
 as $$
 begin
     return query execute sql;
+exception when others then
+    return next row(jsonb_build_object('error', sqlerrm)::json);
 end;
 $$;
 
@@ -27,18 +29,21 @@ stat_statement (query) as (
     from pg_stat_statements
     where queryid_ = queryid limit 1
 ),
-plan (plan) as materialized (
-    select plans::jsonb->0
+plan (plan, error) as materialized (
+    select plans::jsonb->0, plans->>'error'
     from exec(coalesce(query_, (select query from stat_statement))) _(plans json)
     union all
-    select (query->'qs'->>'plan')::jsonb->0
+    select (query->'qs'->>'plan')::jsonb->0, null
     from httpg
     where nullif(query->'qs'->>'plan', '') is not null
 ),
-node (plan, type, cost, time, loops, planned_rows, actual_rows, row_ratio, filtered, wal_bytes, shared_read_blocks, shared_hit_blocks, temp_written_blocks, path, depth) as (
+node (plan, type, name, parent_id, id, cost, time, loops, planned_rows, actual_rows, row_ratio, filtered, wal_bytes, shared_read_blocks, shared_hit_blocks, temp_written_blocks, path, depth) as (
     select
         plan->'Plan',
         plan->'Plan'->>'Node Type',
+        coalesce(plan->'Plan'->>'Alias', plan->'Plan'->>'Subplan Name', plan->'Plan'->>'CTE Name', plan->'Plan'->>'Index Name'),
+        null,
+        format('%s', row_number() over ()),
         (plan->'Plan'->'Total Cost')::numeric,
         (plan->'Plan'->'Actual Total Time')::numeric,
         (plan->'Plan'->'Actual Loops')::int,
@@ -53,10 +58,14 @@ node (plan, type, cost, time, loops, planned_rows, actual_rows, row_ratio, filte
         '{}'::bigint[],
         0
         from plan
+        where error is null
     union all
     select
         sub,
         sub->>'Node Type',
+        coalesce(sub->>'Alias', sub->>'Subplan Name', sub->>'CTE Name', sub->>'Index Name'),
+        id, 
+        format('%s_%s', id, row_number() over ()),
         (sub->'Total Cost')::numeric,
         (sub->'Actual Total Time')::numeric,
         (sub->'Actual loops')::int,
@@ -86,16 +95,29 @@ body, textarea, pre {
 * {
   box-sizing: border-box;
 }
+
+.error {
+    background-color: indianred;
+    padding: .1rem;
+}
+
 :root {
     interpolate-size: allow-keywords;
+    scroll-padding-top: 4rem;
 }
 table {
-    tbody tr:has(details[open]) {
-        background-color: #e1f3d2;
+    tbody {
+        tr:has(details[open]) {
+            background-color: #e1f3d2;
+        }
+        tr:nth-child(odd) {
+            background-color: #eee;
+        }
+        tr:target {
+          background-color: yellow;
+        }
     }
-    tbody tr:nth-child(odd) {
-        background-color: #eee;
-    }
+
     width: 100%;
     thead {
         & * {
@@ -173,12 +195,17 @@ union all select null, null, xmlelement(name form, xmlattributes(
     xmlelement(name input, xmlattributes('submit' as type))
 )::text
 from httpg
--- left join stat_statement s on true
-union all select null, null, xmlelement(name details,
-    xmlelement(name pre, jsonb_pretty(plan - 'Plan' - 'Generated Plan Advice')),
-    xmlelement(name pre, plan->>'Generated Plan Advice')
+union all select null, null, xmlelement(name div, xmlattributes('error' as class),
+    xmlelement(name pre, error)
 )::text
 from plan
+where error is not null
+union all select null, null, xmlelement(name details,
+    xmlelement(name summary, 'raw'),
+    xmlelement(name textarea, xmlattributes(20 as rows), jsonb_pretty(plan), ''), ''
+)::text
+from plan
+where error is null
 union all
 select null, null, xmlelement(name table, xmlattributes('1' as border),
     xmlelement(name thead,
@@ -248,7 +275,7 @@ select null, null, xmlelement(name table, xmlattributes('1' as border),
             ), 'node', case when query->'qs'->>'sort' = 'node' then '▲' end))
         )
     ),
-    xmlagg(xmlelement(name tr,
+    xmlagg(xmlelement(name tr, xmlattributes(id),
         xmlelement(name td, xmlattributes('num' as class), coalesce(time::text, '')),
         xmlelement(name td, xmlattributes('num' as class), coalesce(cost::text, '')),
         xmlelement(name td, xmlattributes('num' as class), coalesce(loops::text, '')),
@@ -257,10 +284,13 @@ select null, null, xmlelement(name table, xmlattributes('1' as border),
         xmlelement(name td, xmlattributes('num' as class), coalesce(wal_bytes::text, '')),
         xmlelement(name td, xmlattributes('num' as class), format('%s (%s hits)', shared_read_blocks, shared_hit_blocks)),
         xmlelement(name td, xmlattributes('num' as class), coalesce(temp_written_blocks::text, '')),
-        xmlelement(name td, xmlattributes('node' as class), xmlelement(name details,
-            xmlelement(name summary, repeat('--', depth), type),
-            xmlelement(name pre, jsonb_pretty(plan - 'Plans'))
-        ))
+        xmlelement(name td, xmlattributes('node' as class),
+            xmlelement(name details,
+                xmlelement(name summary, repeat('--', depth), format('%s: %s', type, name)),
+                case when parent_id is not null then xmlelement(name a, xmlattributes(format('#%s', parent_id) as href), 'parent') end,
+                xmlelement(name pre, jsonb_pretty(plan - 'Plans'))
+            )
+        )
     ) order by
         (case when coalesce(query->'qs'->>'sort', 'time') = 'time' then time end) desc,
         (case when query->'qs'->>'sort' = 'cost' then cost end) desc,

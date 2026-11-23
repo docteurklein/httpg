@@ -1,3 +1,4 @@
+create extension if not exists pg_stat_statements;
 create extension if not exists hstore schema public;
 create extension if not exists pgcrypto with schema public cascade;
 create extension if not exists vector with schema public cascade;

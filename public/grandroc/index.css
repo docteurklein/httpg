@@ -1,6 +1,7 @@
 header {
-  display: flex;
-  gap: 1rem;
+  h1 {
+    min-width: max-content;
+  }
 }
 
 nav {

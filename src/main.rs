@@ -117,6 +117,7 @@ async fn main() -> Result<(), HttpgError> {
             while let Some(Ok(m)) = stream.next().await {
                 match m {
                     tokio_postgres::AsyncMessage::Notice(n) => {
+                        dbg!(&n);
                         tracing::info!("{n:#?}");
                     },
                     tokio_postgres::AsyncMessage::Notification(n) => {
@@ -160,6 +161,13 @@ async fn main() -> Result<(), HttpgError> {
         .route("/{path}/webpush", get(web_push).post(web_push))
         .route("/login", get(login).post(login))
         .route("/{path}/login", get(login).post(login))
+        .layer(ServiceBuilder::new()
+            .option_layer(httpg_config.cache_dir.map(|cache_dir| {
+                ServiceBuilder::new()
+                    .layer(HandleErrorLayer::new(handle_error))
+                    .layer(ServerCacheLayer::new(CACacheManager::new(cache_dir.into(), true)))
+            }))
+        )
     ;
     if httpg_config.listen {
         app = app
@@ -172,18 +180,14 @@ async fn main() -> Result<(), HttpgError> {
         .fallback_service(ServeDir::new(httpg_config.public_dir))
         .with_state(state.to_owned())
         .layer(ServiceBuilder::new()
-        .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
-        .layer(CompressionLayer::new().zstd(false).br(true))
-        .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::new()
-            .allow_origin(Any)
-            .expose_headers(Any)
+            .layer(DefaultBodyLimit::max(1024 * 1000 * 2))
+            .layer(CompressionLayer::new().zstd(false).br(true))
+            .layer(TraceLayer::new_for_http())
+            .layer(CorsLayer::new()
+                .allow_origin(Any)
+                .expose_headers(Any)
+            )
         )
-        .option_layer(httpg_config.cache_dir.map(|cache_dir| {
-            ServiceBuilder::new()
-                .layer(HandleErrorLayer::new(handle_error))
-                .layer(ServerCacheLayer::new(CACacheManager::new(cache_dir.into(), true)))
-        })))
     ;
 
     let addr = SocketAddr::from((
@@ -301,6 +305,7 @@ fn pre(biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, local: &
 
     let mut s = vec![
         format!("set {local} role to {anon_role}"),
+        format!("set local pg_plan_advice.advice to 'NO_GATHER(\"*RESULT*\")'"),
     ];
 
     s.push(biscuit.to_owned().map(|b| b.0.join(";")).unwrap_or_default());
@@ -548,7 +553,7 @@ async fn listen_query(
     Path(channel): Path<String>,
 ) -> Result<impl IntoResponse, HttpgError> {
 
-    let Listen {tx, client } = listen.ok_or(HttpgError::anyhow("no listen"))?;
+    let Listen {tx, client} = listen.ok_or(HttpgError::anyhow("no listen"))?;
     client.execute(&format!("listen {channel}"), &[]).await?;
 
     Ok(Sse::new(

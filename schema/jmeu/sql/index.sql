@@ -120,14 +120,21 @@ with (security_invoker) as
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/jmeu/index.css' as href))::text
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
+        navigator.serviceWorker.register('/jmeu/sw.js', {type: 'module'});
 
-        //navigator.serviceWorker.register('/jmeu/sw.js', {type: 'module'});
+        document.getElementById('all')?.addEventListener('click', (e) => {
+            document.querySelectorAll('.animals input[type=checkbox]').forEach(n => {
+                n.checked = e.target.checked;
+            });
+        });
+        document.querySelectorAll('form.admin').forEach(n => {
+            n.addEventListener('submit', (e) => {
+                document.querySelectorAll('.animals input[type=checkbox]').forEach(i => {
+                    i.setAttribute('form', e.target.id);
+                });
+            });
+        });
 
-        //navigator.serviceWorker.ready.then((registration) => {
-        //    if ('sync' in registration) {
-        //        registration.sync.register("sync-messages").catch(console.log).then(console.log);
-        //    }
-        //});
 
         let open = window.indexedDB.open('jmeu', 1);
 
@@ -150,7 +157,19 @@ with (security_invoker) as
                     body: new URLSearchParams(new FormData(event.target, event.submitter)).toString(),
                 };
                 console.log(item);
-                db.transaction(['form'], 'readwrite').objectStore('form').add(item);
+                fetch(item.url, {method: item.method, body: item.body, redirect: 'follow', signal: AbortSignal.timeout(5000), headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'Accept': 'text/html'
+                }})
+                .then((response) => response.text())
+                .then((result) => {
+                    let doc = new DOMParser().parseFromString(result, 'text/html');
+                    document.replaceChild(doc.documentElement, document.documentElement);
+                })
+                .catch((e) => {
+                    console.log(e);
+                    db.transaction(['form'], 'readwrite').objectStore('form').add(item);
+                });
             };
 
             let items = db.transaction(['form'], 'readonly').objectStore('form').getAllRecords();
@@ -173,25 +192,12 @@ with (security_invoker) as
                 kept.onsuccess = (event) => {
                     event.target.result.forEach(r => {
                         let div = document.createElement('div');
-                        div.appendChild(document.createTextNode(r.value));
+                        div.appendChild(document.createTextNode(JSON.stringify(r.value)));
                         document.body.appendChild(div);
                     });
                 };
             };
         };
-
-        document.getElementById('all')?.addEventListener('click', (e) => {
-            document.querySelectorAll('.animals input[type=checkbox]').forEach(n => {
-                n.checked = e.target.checked;
-            });
-        });
-        document.querySelectorAll('form.admin').forEach(n => {
-            n.addEventListener('submit', (e) => {
-                document.querySelectorAll('.animals input[type=checkbox]').forEach(i => {
-                    i.setAttribute('form', e.target.id);
-                });
-            });
-        });
 
     $$::text::xml)::text
     union all select xmlelement(name header,
@@ -281,7 +287,7 @@ with httpg (qs, body) as (
     select query->'qs', query->'body'
     from query
 )
-select xmlelement(name details,
+select xmlelement(name details, xmlattributes('card' as class),
     xmlelement(name summary, 'Ajouter animal'),
     xmlelement(name form, xmlattributes(
         'POST' as method,
@@ -481,7 +487,7 @@ select xmlelement(name div,
         xmlelement(name div, name),
         xmlelement(name div, posology),
         xmlelement(name pre, coalesce(comment, ''))
-    )), '')
+    ) order by at desc), '')
 )
 from treat_group
 join medication using (medication_id)
@@ -510,7 +516,7 @@ select xmlelement(name div, xmlattributes('card animal' as class),
         )) as href
     ), 'Mère') end,
     xmlelement(name div, xmlattributes('grid' as class),
-        xmlelement(name details, xmlattributes(true as open),
+        xmlelement(name details, xmlattributes(true as open, 'card' as class),
             xmlelement(name summary, 'Traitements'),
             (
                 select xmlagg(xmlelement(name div, xmlattributes('card' as class),
@@ -524,7 +530,7 @@ select xmlelement(name div, xmlattributes('card animal' as class),
                 where treatment.number = animal.number
             )
         ),
-        xmlelement(name details, xmlattributes(true as open),
+        xmlelement(name details, xmlattributes(true as open, 'card' as class),
             xmlelement(name summary, 'Agneulages'),
             xmlelement(name form, xmlattributes(
                 'POST' as method,

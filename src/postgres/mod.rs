@@ -4,6 +4,7 @@ use std::{fs, str::FromStr, sync::Arc, time::Duration};
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
+use tokio::net::TcpStream;
 use tokio_postgres::{CancelToken, Client, Connection, Socket, tls::TlsStream};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
@@ -32,6 +33,7 @@ impl PostgresConfig {
         self.rest(&mut cfg)
     }
 
+    // pub async fn connect(&self) -> Result<(Client, Connection<TcpStream, tokio_postgres::tls::NoTlsStream>), HttpgError> {
     pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream + use<>>), HttpgError> {
         let cfg = tokio_postgres::Config::from_str(&self.write_url)?;
 
@@ -40,8 +42,9 @@ impl PostgresConfig {
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_no_client_auth()
         ;
-
+        // let socket = tokio::net::TcpStream::connect("10.250.1.2:5432").await.unwrap();
         cfg.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
+        // cfg.connect_raw(socket, tokio_postgres::NoTls).await.map_err(Into::into)
     }
 
     fn rest(&self, cfg: &mut deadpool_postgres::Config) -> Result<Pool, HttpgError> {

@@ -87,7 +87,8 @@ with (security_invoker) as
     )
     select '<!DOCTYPE html>'
     union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/index.css' as href))::text
-    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/index.css' as href))::text
+    union all select xmlelement(name link, xmlattributes('stylesheet' as rel, 'index.css' as href))::text
+    union all select '<base href="/grandroc/">'
     union all select '<meta name="viewport" content="width=device-width">'
     union all select xmlelement(name script, xmlattributes('module' as type), $$
         document.querySelectorAll('.from').forEach(n => {
@@ -103,31 +104,31 @@ with (security_invoker) as
         });
     $$::text::xml)::text
     union all select xmlelement(name header,
-        xmlelement(name h1, 'Le Grand Roc'),
+        xmlelement(name h1, xmlelement(name a, xmlattributes('' as href), 'Le Grand Roc')),
         (select xmlelement(name nav,
             xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html'
                 )) as href
             ), 'Bookings'),
             xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html'
                 )) as href
             ), 'Occupants'),
             xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
                 )) as href
             ), 'Logements'),
             xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.stat'
                 )) as href
             ), 'Stats'),
             xmlelement(name a, xmlattributes(
-                url.url('/grandroc/logout', jsonb_build_object(
-                    'redirect', url('/grandroc/query', jsonb_build_object('sql', 'select * from grandroc.head'))
+                url.url('logout', jsonb_build_object(
+                    'redirect', url('query', jsonb_build_object('sql', 'select * from grandroc.head'))
                 )) as href
             ), 'Logout')
         )
@@ -142,9 +143,9 @@ with (security_invoker) as
     union all select xmlelement(name form, xmlattributes(
         'grid' as class,
         'POST' as method,
-        url('/grandroc/login', jsonb_build_object(
+        url('login', jsonb_build_object(
             'sql', 'select 1',
-            'redirect', url('/grandroc/query', jsonb_build_object(
+            'redirect', url('query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html'
             )),
             'params[0]', 'grandroc'
@@ -236,7 +237,7 @@ begin atomic
         is_late = excluded.is_late,
         period = excluded.period
     returning 303 status,
-    jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+    jsonb_build_object('Location', url.url('query', jsonb_build_object(
         'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
         'when', to_char(from_::date, 'MM-YY')
     ))) header;
@@ -253,7 +254,7 @@ with (security_invoker) as
         select $$
             insert into grandroc.occupant (occupant, tel, email) values ($1, $2, $3)
             returning 303 status,
-            jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html'
             ))) header;
         $$, 'Add', null::occupant
@@ -263,7 +264,7 @@ with (security_invoker) as
             update grandroc.occupant set occupant = $1, tel = $2, email = $3
             where occupant = $4
             returning 303 status,
-            jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.occupant_html'
             ))) header;
         $$, 'Edit', o
@@ -272,7 +273,7 @@ with (security_invoker) as
     )
     select xmlelement(name article, xmlattributes('card' as class), xmlelement(name form, xmlattributes(
             'POST' as method,
-            '/grandroc/query' as action
+            'query' as action
         ),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
@@ -306,7 +307,7 @@ with (security_invoker) as
             insert into grandroc.place (place, taxe_sejour, electricity_cost_unit, dog_price_unit, cgv)
             values ($1, nullif($2, '')::grandroc.amount, nullif($3, '')::grandroc.amount, nullif($4, '')::grandroc.amount, $5)
             returning 303 status,
-            jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
             ))) header;
         $$, 'Add', null::place
@@ -321,7 +322,7 @@ with (security_invoker) as
                 cgv = $5
             where place = $6
             returning 303 status,
-            jsonb_build_object('Location', url.url('/grandroc/query', jsonb_build_object(
+            jsonb_build_object('Location', url.url('query', jsonb_build_object(
                 'sql', 'select * from grandroc.head union all select body::text from grandroc.place_html'
             ))) header;
         $$, 'Edit', p
@@ -330,7 +331,7 @@ with (security_invoker) as
     )
     select xmlelement(name article, xmlattributes('card' as class), xmlelement(name form, xmlattributes(
             'POST' as method,
-            '/grandroc/query' as action
+            'query' as action
         ),
         xmlelement(name input, xmlattributes(
             'hidden' as type,
@@ -395,20 +396,20 @@ calendar (html) as (
                 booking.booking_id as "data-booking"
             ),
                 xmlelement(name a, xmlattributes(
-                    url('/grandroc/query', jsonb_build_object(
+                    url('query', jsonb_build_object(
                         'sql', 'select body::text from grandroc.contract_html where booking_id = $1::uuid',
                         'params[0]', booking.booking_id
                     )) as href
                 ), format('%s: %s', occupant, booking.place)),
                 xmlelement(name a, xmlattributes(
-                    url('/grandroc/query', jsonb_build_object(
+                    url('query', jsonb_build_object(
                         'sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html',
                         'booking_id', booking.booking_id
                     )) as href
                 ), xmlelement(name button, 'Edit')),
                 xmlelement(name form, xmlattributes(
                     'POST' as method,
-                    '/grandroc/query' as action,
+                    'query' as action,
                     'inline' as class
                 ),
                     xmlelement(name input, xmlattributes(
@@ -449,7 +450,7 @@ current_booking (b) as (
 select xmlelement(name form, xmlattributes(
         'grid' as class,
         'POST' as method,
-        '/grandroc/query' as action
+        'query' as action
     ),
     xmlelement(name input, xmlattributes(
         'hidden' as type,
@@ -525,20 +526,20 @@ union all select xmlelement(name form, xmlattributes('#list' as action, 'grid' a
 from httpg
 union all select xmlelement(name hr, xmlattributes('list' as id))
 union all select xmlelement(name div, xmlelement(name a, xmlattributes(
-    url('/grandroc/query', jsonb_build_object(
+    url('query', jsonb_build_object(
         'sql', 'select body::text from grandroc.contract_html where booking_id = $1::uuid',
         'params[0]', booking.booking_id
     )) as href
 ), format('%s: %s du %s au %s', occupant, booking.place, to_char(lower(booking.period), 'DD/MM/YY'), to_char(upper(booking.period) - interval '1 day', 'DD/MM/YY'))),
 xmlelement(name a, xmlattributes(
-    url('/grandroc/query', jsonb_build_object(
+    url('query', jsonb_build_object(
         'sql', 'select body::text from grandroc.head union all select body::text from grandroc.booking_html',
         'booking_id', booking.booking_id
     )) as href
 ), xmlelement(name button, 'Edit')),
 xmlelement(name form, xmlattributes(
     'POST' as method,
-    '/grandroc/query' as action,
+    'query' as action,
     'inline' as class
 ),
     xmlelement(name input, xmlattributes(
@@ -568,14 +569,14 @@ where search is not null
 and occupant ilike format('%%%s%%', search)
 union all select xmlelement(name nav, xmlattributes('calnav' as id),
     xmlelement(name a, xmlattributes(
-        url.url('/grandroc/query', jsonb_build_object(
+        url.url('query', jsonb_build_object(
             'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
             'when', to_char(coalesce(when_, now()::date) - interval '1 month', 'MM-YY')
         )) || '#calnav' as href
     ), 'prev'),
     xmltext(to_char(coalesce(when_, now()::date), 'Mon/YY')),
     xmlelement(name a, xmlattributes(
-        url.url('/grandroc/query', jsonb_build_object(
+        url.url('query', jsonb_build_object(
             'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
             'when', to_char(coalesce(when_, now()::date) + interval '1 month', 'MM-YY')
         )) || '#calnav' as href
@@ -674,7 +675,7 @@ xmlelement(name html, xmlattributes(
     )), 
     xmlelement(name title, 
       xmltext(format('Contrat de location – %s du Grand Roc', place))), 
-    xmlelement(name link, xmlattributes('stylesheet' as rel, '/grandroc/contract.css' as href))),
+    xmlelement(name link, xmlattributes('stylesheet' as rel, 'contract.css' as href))),
   xmlelement(name body, xmlattributes(true as contenteditable),
     xmlelement(name main, xmlattributes(
       'page' as "class"
@@ -698,7 +699,7 @@ xmlelement(name html, xmlattributes(
           xmlelement(name div, xmlattributes(
             'brand' as "class"
           ), 
-            xmlelement(name img, xmlattributes('/grandroc/logo.png' as src, 'logo' as alt, '120' as width))
+            xmlelement(name img, xmlattributes('logo.png' as src, 'logo' as alt, '120' as width))
         )) 
       ), 
       xmlelement(name section, xmlattributes(
@@ -941,7 +942,7 @@ select xmlelement(name div, xmlattributes('chart' as class),
         xmlelement(name caption, xmlelement(name h3, 'Top places')),
         xmlagg(xmlelement(name tr,
             xmlelement(name th, xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
                     'place', place
                 )) as href
@@ -959,7 +960,7 @@ union all select xmlelement(name div, xmlattributes('chart' as class),
         xmlelement(name caption, xmlelement(name h3, 'Top Dates')),
         xmlagg(xmlelement(name tr,
             xmlelement(name th, xmlelement(name a, xmlattributes(
-                url.url('/grandroc/query', jsonb_build_object(
+                url.url('query', jsonb_build_object(
                     'sql', 'select * from grandroc.head union all select body::text from grandroc.booking_html',
                     'when', to_char(date::date, 'MM-YY')
                 )) as href

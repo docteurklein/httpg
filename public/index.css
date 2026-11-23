@@ -97,7 +97,7 @@ nav ul {
 }
 
 .card {
-  box-shadow: 0 0 0.5rem hsl(0 0% 0% / 35%);
+  box-shadow: 0 0 0.5rem hsl(from var(--color-on-surface) h s l / 35%);
   border-radius: 0.5rem;
   padding: 1rem;
   margin: 1rem !important;

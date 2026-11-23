@@ -96,7 +96,7 @@
               new = pkgs.postgresql_19;
               old = multiverse.multiverse.${system}.versions.postgresql_19."19rc2";
             in lib.mkIf (true || new.psqlSchema != old.psqlSchema) { # major version
-            enable = true;
+            enable = false;
             requiredBy = [ "postgresql.target" ];
             before = [ "pg_basebackup.service" "postgresql.service" "postgresql-setup.service" ];
             serviceConfig = {
@@ -115,7 +115,7 @@
                 echo 'exists'
               fi
 
-              export OLDDATA="/var/lib/postgresql/19rc2"
+              export OLDDATA="/var/lib/postgresql/19"
               export OLDBIN="${old}/bin"
 
               install -d -m 0700 -o postgres -g postgres "$NEWDATA"
@@ -189,7 +189,8 @@
               log_destination = nixpkgs.lib.mkForce "stderr";
               track_functions = "all";
               # log_min_messages = "DEBUG1";
-              log_statement = "none";
+              client_min_messages = "WARNING";
+              log_statement = "all";
               "auto_explain.log_min_duration" = -1;
               "auto_explain.log_nested_statements" = true;
               "auto_explain.log_format" = "json";
@@ -521,7 +522,7 @@
           nixpkgs = inputs.nixpkgs;
 
           config = {
-            containers.httpg = {
+            containers.httpg = lib.mkIf false {
               ephemeral = true;
               autoStart = true;
 
