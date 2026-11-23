@@ -189,7 +189,7 @@
               log_destination = nixpkgs.lib.mkForce "stderr";
               track_functions = "all";
               # log_min_messages = "DEBUG1";
-              client_min_messages = "WARNING";
+              client_min_messages = "NOTICE";
               log_statement = "all";
               "auto_explain.log_min_duration" = -1;
               "auto_explain.log_nested_statements" = true;

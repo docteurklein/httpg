@@ -1,6 +1,6 @@
 use axum::{extract::multipart, http::{self, header}, response::{IntoResponse, Response}};
 use biscuit_auth::error;
-use deadpool_postgres::{CreatePoolError, PoolError};
+use deadpool_postgres::{ConfigError, PoolError};
 use http::StatusCode;
 use lettre::{address, transport};
 
@@ -48,8 +48,13 @@ pub enum HttpgError {
         backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]
-    DeadpoolConfig {
-        source: CreatePoolError,
+    BuildPoolError {
+        source: deadpool_postgres::BuildError,
+        backtrace: Option<snafu::Backtrace>,
+    },
+    #[snafu(transparent)]
+    DeadPoolConfigError {
+        source: ConfigError,
         backtrace: Option<snafu::Backtrace>,
     },
     #[snafu(transparent)]

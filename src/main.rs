@@ -26,7 +26,7 @@ use tokio::sync::{broadcast::Sender};
 use tower::{builder::ServiceBuilder};
 use tower_http::{cors::{Any, CorsLayer}, services::ServeDir, trace::TraceLayer, compression::CompressionLayer};
 use web_push::{ContentEncoding, HyperWebPushClient, SubscriptionInfo, VapidSignatureBuilder, WebPushClient, WebPushMessageBuilder};
-use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc, time::Duration};
+use std::{env, fs::{self, File}, net::{SocketAddr, TcpListener}, sync::Arc};
 use std::collections::HashMap;
 use tokio_postgres::{Client, IsolationLevel, Notification, types::Type};
 use deadpool_postgres::Pool;

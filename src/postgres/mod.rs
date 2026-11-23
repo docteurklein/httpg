@@ -1,14 +1,81 @@
 
-use std::{fs, str::FromStr, sync::Arc, time::Duration};
+use std::{fs, future::Future, pin::Pin, str::FromStr, sync::Arc, task::{ready, Context, Poll}, time::Duration};
 
 use conf::Conf;
 use deadpool_postgres::{Pool, Runtime};
 use rustls::{client::danger::{HandshakeSignatureValid, ServerCertVerified}, pki_types::{CertificateDer, ServerName, UnixTime}};
-use tokio::net::TcpStream;
-use tokio_postgres::{CancelToken, Client, Connection, Socket, tls::TlsStream};
+use tokio::{io::{AsyncRead, AsyncWrite}, task::JoinHandle};
+use tokio_postgres::{AsyncMessage, CancelToken, Client, Connection, Socket, tls::{MakeTlsConnect, TlsConnect, TlsStream}};
 use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::{HttpgError};
+
+/// Same driver as tokio-postgres's own `Future for Connection`, but cancels
+/// the in-flight query when the server reports a bad plan.
+struct CancelBadPlanConnection<S, T> {
+    conn: Connection<S, T>,
+    cancel_token: CancelToken,
+}
+
+impl<S, T> Future for CancelBadPlanConnection<S, T>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+    T: AsyncRead + AsyncWrite + Unpin,
+{
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        loop {
+            match ready!(self.conn.poll_message(cx)) {
+                Some(Ok(AsyncMessage::Notice(n))) => {
+                    if n.message() == "supplied plan advice was not enforced" {
+                        // A CancelToken targets this backend connection, so this
+                        // cancels whichever query is in flight on it — the one
+                        // that just emitted the notice. deadpool lends each
+                        // connection to a single borrower at a time.
+                        let token = self.cancel_token.clone();
+                        tokio::spawn(async move {
+                            let _ = token.cancel_query(tokio_postgres::NoTls).await;
+                        });
+                    }
+                }
+                Some(Ok(_)) => {}
+                Some(Err(e)) => {
+                    tracing::warn!(target: "deadpool.postgres", "Connection error: {e}");
+                    return Poll::Ready(());
+                }
+                None => return Poll::Ready(()),
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct CancelBadPlanConnect<T> {
+    tls: T,
+}
+
+impl<T> deadpool_postgres::Connect for CancelBadPlanConnect<T>
+where
+    T: MakeTlsConnect<Socket> + Clone + Sync + Send + 'static,
+    T::Stream: Sync + Send,
+    T::TlsConnect: Sync + Send,
+    <T::TlsConnect as TlsConnect<Socket>>::Future: Send,
+{
+    fn connect(
+        &self,
+        pg_config: &tokio_postgres::Config,
+    ) -> Pin<Box<dyn Future<Output = Result<(Client, JoinHandle<()>), tokio_postgres::Error>> + Send + '_>> {
+        let tls = self.tls.clone();
+        let pg_config = pg_config.clone();
+        Box::pin(async move {
+            let (client, conn) = pg_config.connect(tls).await?;
+            let cancel_token = client.cancel_token();
+            let task = tokio::spawn(CancelBadPlanConnection { conn, cancel_token });
+            Ok((client, task))
+        })
+    }
+}
 
 #[derive(Clone, Debug, Conf)]
 pub struct PostgresConfig {
@@ -33,7 +100,6 @@ impl PostgresConfig {
         self.rest(&mut cfg)
     }
 
-    // pub async fn connect(&self) -> Result<(Client, Connection<TcpStream, tokio_postgres::tls::NoTlsStream>), HttpgError> {
     pub async fn connect(&self) -> Result<(Client, Connection<Socket, impl TlsStream + use<>>), HttpgError> {
         let cfg = tokio_postgres::Config::from_str(&self.write_url)?;
 
@@ -42,9 +108,7 @@ impl PostgresConfig {
             .with_custom_certificate_verifier(Arc::new(NoCertificateVerification {}))
             .with_no_client_auth()
         ;
-        // let socket = tokio::net::TcpStream::connect("10.250.1.2:5432").await.unwrap();
         cfg.connect(MakeRustlsConnect::new(tls_config)).await.map_err(Into::into)
-        // cfg.connect_raw(socket, tokio_postgres::NoTls).await.map_err(Into::into)
     }
 
     fn rest(&self, cfg: &mut deadpool_postgres::Config) -> Result<Pool, HttpgError> {
@@ -57,7 +121,16 @@ impl PostgresConfig {
 
         cfg.connect_timeout = Some(core::time::Duration::from_secs(1));
 
-        let pool = cfg.create_pool(Some(Runtime::Tokio1), tls)?;
+        let pg_config = cfg.get_pg_config()?;
+        let manager = deadpool_postgres::Manager::from_connect(
+            pg_config,
+            CancelBadPlanConnect { tls },
+            cfg.get_manager_config(),
+        );
+        let pool = deadpool_postgres::Pool::builder(manager)
+            .config(cfg.get_pool_config())
+            .runtime(Runtime::Tokio1)
+            .build()?;
 
         let interval = Duration::from_secs(30);
         let max_age = Duration::from_secs(60);
