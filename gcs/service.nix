@@ -24,7 +24,7 @@
             env = [
               {name = "HTTPG_CACHE_DIR"; value = "/httpg-cache";}
               {name = "HTTPG_ANON_ROLE"; value = "anon";}
-              {name = "HTTPG_INDEX_SQL"; value = "select public.index()";}
+              {name = "HTTPG_INDEX_SQL"; value = "select * from public.index()";}
               {name = "HTTPG_LOGIN_QUERY"; value = "select public.login($1)";}
               {name = "HTTPG_SMTP_USER"; value = "sideral.underground@gmail.com";}
               {name = "HTTPG_PG_WRITE_URL"; value = "/secrets/pg_write_url/pg_write_url";}

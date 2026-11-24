@@ -519,7 +519,7 @@ select xmlelement(name form, xmlattributes(
 from current_booking, httpg
 where search is null
 union all select '<hr/>'
-union all select xmlelement(name form, xmlattributes('#list' as action, 'grid' as class),
+union all select xmlelement(name form, xmlattributes('query#list' as action, 'grid' as class),
     xmlelement(name input, xmlattributes('hidden' as type, 'sql' as name, 'select body::text from grandroc.head union all select body::text from grandroc.booking_html' as value)),
     xmlelement(name input, xmlattributes('search' as type, 'search' as name, search as value, 'Search' as placeholder))
 )
