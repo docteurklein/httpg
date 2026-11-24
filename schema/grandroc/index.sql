@@ -680,6 +680,7 @@ xmlelement(name html, xmlattributes(
     xmlelement(name main, xmlattributes(
       'page' as "class"
     ), 
+      xmlelement(name button, xmlattributes('window.print(); return false;' as onclick, 'save-pdf' as class), 'PDF ⎙'),
       xmlelement(name header, xmlattributes(
         'header' as "class"
       ), 

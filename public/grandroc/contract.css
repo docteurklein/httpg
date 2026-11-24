@@ -285,7 +285,15 @@ tbody tr:nth-child(even) {
   color: #777b70;
 }
 
+.save-pdf {
+  position: sticky;
+  top: 0;
+}
+
 @media print {
+  .save-pdf {
+    display: none;
+  }
   body {
     /* background: #ffffff; */
   }
