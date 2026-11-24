@@ -27,8 +27,8 @@
               {name = "HTTPG_INDEX_SQL"; value = "select public.index()";}
               {name = "HTTPG_LOGIN_QUERY"; value = "select public.login($1)";}
               {name = "HTTPG_SMTP_USER"; value = "sideral.underground@gmail.com";}
-              {name = "HTTPG_PG_WRITE_URL"; value = "/secrets/pg_write_url";}
-              {name = "HTTPG_PG_READ_URL"; value = "/secrets/pg_read_url";}
+              {name = "HTTPG_PG_WRITE_URL"; value = "/secrets/pg_write_url/pg_write_url";}
+              {name = "HTTPG_PG_READ_URL"; value = "/secrets/pg_read_url/pg_read_url";}
               {name = "HTTPG_PRIVATE_KEY_FILE"; value = "/secrets/private-key-file";}
               {name = "HTTPG_SMTP_PASSWORD_FILE"; value = "/secrets/smtp_password/smtp_password";}
               {name = "HTTPG_SMTP_RELAY"; value = "smtp://smtp.gmail.com?tls=required";}
