@@ -513,8 +513,8 @@
                  services --region europe-west1 \
               replace -
 
-            ${self.gcs.iam-bindings}
           '');
+            # ${self.gcs.iam-bindings}
         };
 
         packages.container = extra-container.lib.buildContainers {
