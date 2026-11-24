@@ -92,6 +92,7 @@ impl VisitorMut for VisitOrderBy {
 
 impl VisitOrderBy {
     pub(crate) fn order_by(&mut self, select: &sqlparser::ast::Select) -> Option<OrderBy> {
+        let def = serde_json::Map::new();
         let exprs: Vec<OrderByExpr> = self.0.iter()
             .filter(|(rel, _)| {
                 select.from.iter().any(|from| {
@@ -105,7 +106,7 @@ impl VisitOrderBy {
         
             })
             .flat_map(|(rel, cols)| {
-                cols.as_object().unwrap().into_iter().map(move |(col, asc)| {
+                cols.as_object().unwrap_or(&def).into_iter().map(move |(col, asc)| {
                     OrderByExpr {
                         expr: Expr::Identifier(Ident {
                             value: format!("{rel}.{col}"),

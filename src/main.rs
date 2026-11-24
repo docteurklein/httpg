@@ -164,7 +164,9 @@ async fn main() -> Result<(), HttpgError> {
         .layer(ServiceBuilder::new()
             .option_layer(httpg_config.cache_dir.map(|cache_dir| {
                 ServiceBuilder::new()
-                    .layer(HandleErrorLayer::new(handle_error))
+                    .layer(HandleErrorLayer::new(async |err: BoxError| -> Response {
+                        (StatusCode::BAD_GATEWAY, format!("cache proxy error: {}", err)).into_response()
+                    }))
                     .layer(ServerCacheLayer::new(CACacheManager::new(cache_dir.into(), true)))
             }))
         )
@@ -217,10 +219,6 @@ async fn main() -> Result<(), HttpgError> {
         },
     };
     Ok(())
-}
-
-async fn handle_error(err: BoxError) -> Response {
-    (StatusCode::BAD_GATEWAY, format!("cache proxy error: {}", err)).into_response()
 }
 
 #[debug_handler]
@@ -305,7 +303,6 @@ fn pre(biscuit: &Option<extract::biscuit::Biscuit>, anon_role: &String, local: &
 
     let mut s = vec![
         format!("set {local} role to {anon_role}"),
-        format!("set local pg_plan_advice.advice to 'NO_GATHER(\"*RESULT*\")'"),
     ];
 
     s.push(biscuit.to_owned().map(|b| b.0.join(";")).unwrap_or_default());
