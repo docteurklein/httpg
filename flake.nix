@@ -494,7 +494,7 @@
           HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg?application_name=httpg";
           PORT = "3000";
           # RUST_LOG = "httpg=debug,hyper_http=debug";
-          RUST_LOG = "httpg=debug,tower_http=debug";
+          RUST_LOG = "httpg=debug";
           RUST_BACKTRACE = "0";
         };
 
@@ -587,7 +587,7 @@
                       "HTTPG_PG_READ_URL=${builtins.getEnv "PWD"}/pg_write_url"
                       "HTTPG_PG_WRITE_URL=${builtins.getEnv "PWD"}/pg_read_url"
                       "PORT=3000"
-                      "RUST_LOG=tokio_postgres=debug,httpg=debug,tower_http=debug"
+                      "RUST_LOG=httpg=debug"
                       "RUST_BACKTRACE=0"
                     ];
                   };

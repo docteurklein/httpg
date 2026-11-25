@@ -197,13 +197,118 @@ fn add_query_param(url: impl Into<String>, param: impl Into<String>, value: impl
 mod tests {
     use axum::response::IntoResponse;
     use conf::Conf;
-    use postgres_types::Type;
-    use crate::{extract::query::Query, response::{self, CancelStream}};
+    use futures::StreamExt;
+    use http::header::{CACHE_CONTROL, CONTENT_TYPE, LOCATION};
     use http_body_util::BodyExt;
+    use postgres_types::Type;
+    use serde_json::{Map, Value, json};
+
+    use super::{HttpResult, add_query_param};
+    use crate::{HttpgConfig, extract::query::Query, response::{self, CancelStream}};
+
+    fn empty_result(query: Query) -> HttpResult {
+        HttpResult {
+            query,
+            rows: CancelStream::from_vec(vec![], None),
+            lsn: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn empty_cancel_stream_ends_immediately() {
+        let mut rows = CancelStream::from_vec(vec![], None);
+        assert!(rows.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn empty_result_defaults_to_octet_stream() {
+        let response = empty_result(Query::default()).into_response();
+
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(
+            response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+            Some("application/octet-stream")
+        );
+        assert!(response.into_body().collect().await.unwrap().to_bytes().is_empty());
+    }
+
+    #[tokio::test]
+    async fn accept_header_selects_content_type() {
+        for (accept, expected) in [
+            ("text/html", "text/html; charset=utf-8"),
+            ("application/json", "application/json"),
+            ("application/custom", "application/custom"),
+        ] {
+            let response = empty_result(Query {
+                accept: Some(accept.to_string()),
+                ..Default::default()
+            }).into_response();
+
+            assert_eq!(
+                response.headers().get(CONTENT_TYPE).and_then(|v| v.to_str().ok()),
+                Some(expected),
+                "accept: {accept}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn cache_control_is_forwarded() {
+        let response = empty_result(Query {
+            cache_control: Some("max-age=60".to_string()),
+            ..Default::default()
+        }).into_response();
+
+        assert_eq!(
+            response.headers().get(CACHE_CONTROL).and_then(|v| v.to_str().ok()),
+            Some("max-age=60")
+        );
+    }
+
+    #[tokio::test]
+    async fn redirect_takes_precedence_over_body_headers() {
+        let response = empty_result(Query {
+            redirect: Some("/next".to_string()),
+            accept: Some("text/html".to_string()),
+            ..Default::default()
+        }).into_response();
+
+        assert_eq!(response.status(), http::StatusCode::SEE_OTHER);
+        assert_eq!(response.headers().get(LOCATION).and_then(|v| v.to_str().ok()), Some("/next"));
+    }
+
+    fn query_map(url: &str) -> Map<String, Value> {
+        let uri = url.parse::<http::Uri>().unwrap();
+        serde_qs::Config::new().max_depth(0).use_form_encoding(true)
+            .deserialize_str(uri.query().unwrap_or_default())
+            .unwrap()
+    }
+
+    #[test]
+    fn add_query_param_preserves_path_and_existing_params() {
+        let url = add_query_param("https://example.org/page?foo=bar", "wait_for", "0/1").unwrap();
+        let uri = url.parse::<http::Uri>().unwrap();
+        let qs = query_map(&url);
+
+        assert_eq!(uri.path(), "/page");
+        assert_eq!(qs.get("foo"), Some(&json!("bar")));
+        assert_eq!(qs.get("wait_for"), Some(&json!("0/1")));
+    }
+
+    #[test]
+    fn add_query_param_overwrites_existing_value() {
+        let url = add_query_param("https://example.org/page?wait_for=old", "wait_for", "new").unwrap();
+        assert_eq!(query_map(&url).get("wait_for"), Some(&json!("new")));
+    }
+
+    #[test]
+    fn add_query_param_rejects_invalid_url() {
+        assert!(add_query_param("not a url", "wait_for", "0/1").is_err());
+    }
 
     #[tokio::test]
     async fn test_into_response_status() {
-        let cfg = crate::postgres::PostgresConfig::parse();
+        let cfg = HttpgConfig::parse().pg;
         let conn = cfg.read_pool().unwrap().get().await.unwrap();
 
         let query = Query {
@@ -232,6 +337,6 @@ mod tests {
 
         let body = res.into_response().into_body();
 
-        assert_eq!(body.collect().await.unwrap().to_bytes(), "a\n".to_string().as_bytes());
+        assert_eq!(body.collect().await.unwrap().to_bytes().to_vec().as_slice(), b"a");
     }
 } 

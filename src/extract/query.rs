@@ -388,42 +388,43 @@ fn parse_sql(order: &Option<BTreeMap<String, serde_json::Value>>, root_sql: Opti
 #[allow(clippy::unwrap_used)]
 #[allow(clippy::indexing_slicing)]
 mod tests {
-    use std::sync::Arc;
-
-use axum::{body::Body, http::{header::CONTENT_TYPE, Request}};
-
-    use axum::extract::FromRequest;
+    use axum::{
+        body::Body,
+        extract::FromRequest,
+        http::{Request, StatusCode, header::{ACCEPT, ACCEPT_LANGUAGE, CONTENT_TYPE, HOST, ORIGIN, REFERER}},
+    };
     use conf::Conf;
-use tokio_postgres::Notification;
-    use crate::{Listen, extract::query::{Param, Query}};
+use http_body_util::BodyExt;
+    use serde_json::{Value, json};
+
+    use super::{File, Param, Query, Type, parse_sql};
+    use crate::{AppState, HttpgConfig, TlsConfig, error::HttpgError};
+
+    fn test_state() -> AppState {
+        let config = HttpgConfig::parse();
+        AppState {
+            read_pool: config.pg.read_pool().unwrap(),
+            write_pool: config.pg.write_pool().unwrap(),
+            config,
+            listen: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_json_body() {
         let req = Request::post("http://example.com/test")
             .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(r#"{"sql": "", "params": ["b", "c"]}"#))
+            .body(Body::from(r#"{"sql":"select 1","params":["b","c"],"accept":"application/json"}"#))
             .unwrap();
 
-        let httpg_config = crate::HttpgConfig::parse();
+        let q = Query::from_request(req, &test_state()).await.unwrap();
 
-        let read_pool = httpg_config.pg.read_pool().unwrap();
-        let write_pool = httpg_config.pg.write_pool().unwrap();
-
-        let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
-
-        let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
-    
-        let state = crate::AppState {
-            read_pool,
-            write_pool,
-            config: httpg_config.to_owned(),
-            listen: Some(Listen {tx, client: Arc::new(client) }),
-        };
-        let q = Query::from_request(req, &state).await.unwrap();
-
-        assert_eq!(q.sql, Some("".to_string()));
-        assert_eq!(q.params[0], Param::Text("b".into()));
-        assert_eq!(q.params[1], Param::Text("c".into()));
+        assert_eq!(q.sql.as_deref(), Some("select 1"));
+        assert_eq!(q.params, vec![Param::Text("b".into()), Param::Text("c".into())]);
+        assert_eq!(q.accept.as_deref(), Some("application/json"));
+        assert_eq!(q.scheme, "http");
+        assert_eq!(q.body.get("params"), Some(&json!(["b", "c"])));
+        assert_eq!(q.body.get("sql"), None);
     }
 
     #[tokio::test]
@@ -433,26 +434,204 @@ use tokio_postgres::Notification;
             .body(Body::from("sql=select%201&params[]=b&params[]=c"))
             .unwrap();
 
-        let httpg_config = crate::HttpgConfig::parse();
+        let q = Query::from_request(req, &test_state()).await.unwrap();
 
-        let read_pool = httpg_config.pg.read_pool().unwrap();
-        let write_pool = httpg_config.pg.write_pool().unwrap();
-    
-        let (client, mut _conn) = httpg_config.pg.connect().await.unwrap();
+        assert_eq!(q.sql.as_deref(), Some("select 1"));
+        assert_eq!(q.params, vec![Param::Text("b".into()), Param::Text("c".into())]);
+    }
 
-        let (tx, _rx) = tokio::sync::broadcast::channel::<Notification>(16);
-    
-        let state = crate::AppState {
-            read_pool,
-            write_pool,
-            config: httpg_config.to_owned(),
-            listen: Some(Listen {tx, client: Arc::new(client) }),
-        };
+    #[tokio::test]
+    async fn test_query_string_order_and_referer_redirect() {
+        let req = Request::get(
+            "http://example.com/test?sql=select%20id%20from%20things%20as%20t&order%5Bt%5D%5Bid%5D=desc&redirect=referer&foo=bar"
+        )
+        .header(REFERER, "/back")
+        .body(Body::empty())
+        .unwrap();
+
+        let q = Query::from_request(req, &test_state()).await.unwrap();
+
+        assert!(q.sql.unwrap_or_default().contains("ORDER BY t.id DESC"));
+        assert_eq!(q.redirect.as_deref(), Some("/back"));
+        assert_eq!(q.qs.get("foo"), Some(&json!("bar")));
+        assert_eq!(q.qs.get("order"), None);
+    }
+
+    #[tokio::test]
+    async fn test_headers_and_cookies() {
+        let req = Request::get("/test")
+            .header(HOST, "example.org:3000")
+            .header(ORIGIN, "https://example.org")
+            .header(ACCEPT, "text/html")
+            .header(ACCEPT_LANGUAGE, "fr-FR,fr;q=0.9")
+            .header("cookie", "session=abc")
+            .header("cookie", "theme=dark")
+            .body(Body::empty())
+            .unwrap();
+
+        let q = Query::from_request(req, &test_state()).await.unwrap();
+
+        assert_eq!(q.host.as_deref(), Some("example.org:3000"));
+        assert_eq!(q.origin.as_deref(), Some("https://example.org"));
+        assert_eq!(q.accept.as_deref(), Some("text/html"));
+        assert_eq!(q.accept_language.as_deref(), Some("fr-FR,fr;q=0.9"));
+        assert_eq!(q.cookies.get("session").map(String::as_str), Some("abc"));
+        assert_eq!(q.cookies.get("theme").map(String::as_str), Some("dark"));
+    }
+
+    #[tokio::test]
+    async fn test_tls_config_uses_https_scheme() {
+        let mut state = test_state();
+        state.config.tls = Some(TlsConfig {
+            pem_file: "localhost.crt".to_string(),
+            pem_key_file: "localhost.key".to_string(),
+        });
+
+        let req = Request::get("/test").body(Body::empty()).unwrap();
         let q = Query::from_request(req, &state).await.unwrap();
 
-        assert_eq!(q.sql, Some("select 1".to_string()));
-        assert_eq!(q.params[0], Param::Text("b".into()));
-        assert_eq!(q.params[1], Param::Text("c".into()));
+        assert_eq!(q.scheme, "https");
+    }
+
+    #[tokio::test]
+    async fn test_multipart_body_extracts_files() {
+        let body = concat!(
+            "--BOUNDARY\r\n",
+            "Content-Disposition: form-data; name=\"note\"\r\n",
+            "\r\n",
+            "hello\r\n",
+            "--BOUNDARY\r\n",
+            "Content-Disposition: form-data; name=\"upload\"; filename=\"a.txt\"\r\n",
+            "Content-Type: text/plain\r\n",
+            "\r\n",
+            "file content\r\n",
+            "--BOUNDARY--\r\n",
+        );
+        let req = Request::post("/test")
+            .header(CONTENT_TYPE, "multipart/form-data; boundary=BOUNDARY")
+            .body(Body::from(body))
+            .unwrap();
+
+        let q = Query::from_request(req, &test_state()).await.unwrap();
+
+        assert_eq!(q.body.get("note"), Some(&json!("hello")));
+        assert_eq!(q.files, vec![File {
+            content: b"file content".to_vec(),
+            content_type: "text/plain".to_string(),
+            file_name: "a.txt".to_string(),
+        }]);
+        assert_eq!(q.params.last(), Some(&Param::File(q.files[0].clone())));
+    }
+
+    #[tokio::test]
+    async fn test_invalid_text_param_is_rejected() {
+        let req = Request::post("/test")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"params":[42]}"#))
+            .unwrap();
+
+        let response = Query::from_request(req, &test_state()).await.err().unwrap();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(String::from_utf8_lossy(&body).contains("invalid param 0"));
+    }
+
+    #[tokio::test]
+    async fn test_json_body_with_in_types() {
+        let req = Request::post("/test")
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"params":[{"a":1},"raw"],"in_types":["jsonb","bytea"]}"#))
+            .unwrap();
+
+        let q = Query::from_request(req, &test_state()).await.unwrap();
+
+        assert_eq!(
+            q.params,
+            vec![Param::Jsonb(json!({"a": 1})), Param::Bytea(br#""raw""#.to_vec())]
+        );
+    }
+
+    #[test]
+    fn param_serde_uses_lowercase_tags() {
+        let cases = [
+            (json!({"text": "hello"}), Param::Text("hello".to_string())),
+            (json!({"bytea": [1, 2]}), Param::Bytea(vec![1, 2])),
+            (json!({"jsonb": {"a": 1}}), Param::Jsonb(json!({"a": 1}))),
+        ];
+        for (value, param) in cases {
+            assert_eq!(serde_json::from_value::<Param>(value.clone()).unwrap(), param);
+            assert_eq!(serde_json::to_value(&param).unwrap(), value);
+        }
+    }
+
+    #[test]
+    fn param_maps_to_postgres_types() {
+        assert_eq!(Type::from(Param::Text(String::new())), Type::Text);
+        assert_eq!(Type::from(Param::Bytea(Vec::new())), Type::Bytea);
+        assert_eq!(Type::from(Param::Jsonb(Value::Null)), Type::Jsonb);
+        assert_eq!(Type::from(Param::File(File::default())), Type::ByteaArray);
+
+        assert_eq!(postgres_types::Type::from(Param::Text(String::new())), postgres_types::Type::TEXT);
+        assert_eq!(postgres_types::Type::from(Param::Bytea(Vec::new())), postgres_types::Type::BYTEA);
+        assert_eq!(postgres_types::Type::from(Param::Jsonb(Value::Null)), postgres_types::Type::JSONB);
+        assert_eq!(postgres_types::Type::from(Param::File(File::default())), postgres_types::Type::BYTEA_ARRAY);
+    }
+
+    #[test]
+    fn parse_sql_without_order_keeps_original_spelling() {
+        let sql = "select  1";
+        assert_eq!(parse_sql(&None, Some(sql.to_string())).unwrap().as_deref(), Some(sql));
+    }
+
+    #[test]
+    fn parse_sql_without_sql_returns_none() {
+        assert_eq!(parse_sql(&None, None).unwrap(), None);
+    }
+
+    #[test]
+    fn parse_sql_injects_order_by() {
+        let order = serde_json::from_value::<std::collections::BTreeMap<String, Value>>(
+            json!({"t": {"id": "desc"}}),
+        ).unwrap();
+        let sql = parse_sql(&Some(order), Some("select id from things as t".to_string()))
+            .unwrap()
+            .unwrap_or_default();
+
+        assert!(sql.contains("ORDER BY t.id DESC"), "{sql}");
+    }
+
+    #[test]
+    fn parse_sql_refuses_config_functions_and_non_dml() {
+        for sql in ["select current_setting('x')", "create table t (id int)"] {
+            let result = parse_sql(&None, Some(sql.to_string()));
+            assert!(matches!(result, Err(HttpgError::RefusedSql { .. })), "{sql}: {result:?}");
+        }
+    }
+
+    #[test]
+    fn parse_sql_reports_syntax_errors() {
+        let result = parse_sql(&None, Some("select from".to_string()));
+        assert!(matches!(
+            result,
+            Err(HttpgError::RefusedSql { ref reason, .. }) if reason.is_some()
+        ));
+    }
+
+    #[test]
+    fn parse_sql_with_order_keeps_only_the_first_statement() {
+        let order = serde_json::from_value::<std::collections::BTreeMap<String, Value>>(
+            json!({"t": {"id": "asc"}}),
+        ).unwrap();
+        let sql = parse_sql(
+            &Some(order),
+            Some("select id from things as t; select 2".to_string()),
+        )
+        .unwrap()
+        .unwrap_or_default();
+
+        assert!(sql.contains("ORDER BY t.id ASC"), "{sql}");
+        assert!(!sql.contains("SELECT 2"), "{sql}");
     }
 }
 

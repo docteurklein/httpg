@@ -97,7 +97,7 @@ struct AppState {
 async fn main() -> Result<(), HttpgError> {
     tracing_subscriber::registry()
         .with(tracing_subscriber::EnvFilter::new(
-            env::var("RUST_LOG").unwrap_or("httpg=debug".to_string()),
+            env::var("RUST_LOG").unwrap_or("httpg=warning".to_string()),
         ))
         .with(tracing_subscriber::fmt::layer().json().flatten_event(true))
         .init();
@@ -800,4 +800,23 @@ async fn call_query(
             }
         }
     }?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{extract::biscuit::Biscuit, pre};
+
+    #[test]
+    fn pre_sets_the_anonymous_role() {
+        assert_eq!(pre(&None, &"guest".to_string(), "local"), "set local role to guest;");
+    }
+
+    #[test]
+    fn pre_appends_biscuit_statements() {
+        let biscuit = Some(Biscuit(vec!["select 1".to_string(), "select 2".to_string()]));
+        assert_eq!(
+            pre(&biscuit, &"guest".to_string(), "local"),
+            "set local role to guest;select 1;select 2"
+        );
+    }
 }

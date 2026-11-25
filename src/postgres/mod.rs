@@ -10,8 +10,6 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 
 use crate::{HttpgError};
 
-/// Same driver as tokio-postgres's own `Future for Connection`, but cancels
-/// the in-flight query when the server reports a bad plan.
 struct CancelBadPlanConnection<S, T> {
     conn: Connection<S, T>,
     cancel_token: CancelToken,
@@ -29,10 +27,6 @@ where
             match ready!(self.conn.poll_message(cx)) {
                 Some(Ok(AsyncMessage::Notice(n))) => {
                     if n.message() == "supplied plan advice was not enforced" {
-                        // A CancelToken targets this backend connection, so this
-                        // cancels whichever query is in flight on it — the one
-                        // that just emitted the notice. deadpool lends each
-                        // connection to a single borrower at a time.
                         let token = self.cancel_token.clone();
                         tokio::spawn(async move {
                             let _ = token.cancel_query(tokio_postgres::NoTls).await;
