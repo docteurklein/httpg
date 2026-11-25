@@ -62,6 +62,7 @@ create table if not exists booking (
     cleaning_price amount,
     is_pension_complete bool default false,
     price amount not null,
+    price_bath amount,
     is_early bool not null default false,
     is_late bool not null default false,
     at date default now(),
@@ -182,6 +183,7 @@ create or replace procedure book(
     food_price_unit amount,
     cleaning_price amount,
     price amount,
+    price_bath amount,
     from_ date,
     to_ date,
     inout status int default null,
@@ -197,7 +199,7 @@ begin atomic
         on conflict (occupant) do nothing
         returning occupant
     )
-    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, cleaning_price, food_price_unit, is_pension_complete, price, is_early, is_late, period)
+    insert into grandroc.booking (booking_id, place, occupant, nb_adults, nb_children, nb_babies, nb_horses, nb_dogs, nb_emplacements, with_draps, with_serviette, cleaning_price, food_price_unit, is_pension_complete, price, price_bath, is_early, is_late, period)
     select
         coalesce(booking_id, uuidv7()),
         place,
@@ -214,6 +216,7 @@ begin atomic
         food_price_unit,
         body->>'pension' = 'complete',
         price,
+        price_bath,
         coalesce(body->>'is_early' = 'on', false),
         coalesce(body->>'is_late' = 'on', false),
         daterange(from_, to_, '[]')
@@ -233,6 +236,7 @@ begin atomic
         food_price_unit = excluded.food_price_unit,
         is_pension_complete = excluded.is_pension_complete,
         price = excluded.price,
+        price_bath = excluded.price_bath,
         is_early = excluded.is_early,
         is_late = excluded.is_late,
         period = excluded.period
@@ -468,9 +472,10 @@ select xmlelement(name form, xmlattributes(
                 nb_emplacements => coalesce(nullif($9, '')::int, 0),
                 food_price_unit => nullif($10, '')::grandroc.amount,
                 price => nullif($11, '')::grandroc.amount,
-                cleaning_price => nullif($12, '')::grandroc.amount,
-                from_ => $13::date,
-                to_ => $14::date
+                price_bath => nullif($12, '')::grandroc.amount,
+                cleaning_price => nullif($13, '')::grandroc.amount,
+                from_ => $14::date,
+                to_ => $15::date
             )
         $$ as value
     )),
@@ -492,14 +497,15 @@ select xmlelement(name form, xmlattributes(
     xmlelement(name label, 'Occupant', xmlelement(name input, xmlattributes('required' as required, 'occupants' as list, 'params[2]' as name, coalesce(params->>2, (b).occupant) as value))),
     xmlelement(name label, 'Nb adultes', xmlelement(name input, xmlattributes('required' as required, 'number' as type, 'params[3]' as name, coalesce(nullif(params->>3, '')::int, (b).nb_adults) as value))),
     xmlelement(name label, 'Prix forfait', xmlelement(name input, xmlattributes('number' as type, 'params[10]' as name, 'required' as required, 'any' as step, coalesce(nullif(params->>10, '')::amount, (b).price) as value))),
-    xmlelement(name label, 'De', xmlelement(name input, xmlattributes('required' as required, 'from' as class, 'date' as type, 'params[12]' as name, coalesce(nullif(params->>12, '')::date, lower((b).period)) as value))),
-    xmlelement(name label, 'à', xmlelement(name input, xmlattributes('required' as required, 'to' as class, 'date' as type, 'params[13]' as name, coalesce(nullif(params->>13, '')::date, (upper((b).period) - interval '1 day')::date) as value))),
+    xmlelement(name label, 'Prix bain nordique', xmlelement(name input, xmlattributes('number' as type, 'params[11]' as name, 'any' as step, coalesce(nullif(params->>11, '')::amount, (b).price_bath) as value))),
+    xmlelement(name label, 'De', xmlelement(name input, xmlattributes('required' as required, 'from' as class, 'date' as type, 'params[13]' as name, coalesce(nullif(params->>13, '')::date, lower((b).period)) as value))),
+    xmlelement(name label, 'à', xmlelement(name input, xmlattributes('required' as required, 'to' as class, 'date' as type, 'params[14]' as name, coalesce(nullif(params->>14, '')::date, (upper((b).period) - interval '1 day')::date) as value))),
     xmlelement(name label, 'Nb enfants', xmlelement(name input, xmlattributes('number' as type, 'params[4]' as name, coalesce(nullif(params->>4, '')::int, (b).nb_children) as value))),
     xmlelement(name label, 'nb bébés', xmlelement(name input, xmlattributes('number' as type, 'params[5]' as name, coalesce(nullif(params->>5, '')::int, (b).nb_babies) as value))),
     xmlelement(name label, 'Nb chevaux', xmlelement(name input, xmlattributes('number' as type, 'params[6]' as name, coalesce(nullif(params->>6, '')::int, (b).nb_horses) as value))),
     xmlelement(name label, 'Nb chiens', xmlelement(name input, xmlattributes('number' as type, 'params[7]' as name, coalesce(nullif(params->>7, '')::int, (b).nb_dogs) as value))),
     xmlelement(name label, 'Nb emplacements', xmlelement(name input, xmlattributes('number' as type, 'params[8]' as name, coalesce(nullif(params->>8, '')::int, (b).nb_emplacements) as value))),
-    xmlelement(name label, 'Prix Ménage', xmlelement(name input, xmlattributes('number' as type, 'params[11]' as name, 'any' as step, coalesce(nullif(params->>10, '')::amount, (b).cleaning_price) as value))),
+    xmlelement(name label, 'Prix Ménage', xmlelement(name input, xmlattributes('number' as type, 'params[12]' as name, 'any' as step, coalesce(nullif(params->>11, '')::amount, (b).cleaning_price) as value))),
     xmlelement(name label, 'Prix repas', xmlelement(name input, xmlattributes('number' as type, 'params[9]' as name, 'any' as step, coalesce(nullif(params->>9, '')::amount, (b).food_price_unit) as value))),
     xmlelement(name fieldset,
         xmlelement(name label, 'Demi-pension?', xmlelement(name input, xmlattributes('radio' as type, 'pension' as name, 'demi' as value,
@@ -604,6 +610,11 @@ line (booking_id, label, qty, pu, total) as (
             place,
             1,
             price
+        ),
+        row(
+            'Bain nordique'::text,
+            1,
+            price_bath
         ),
         row(
             'Ménage'::text,
