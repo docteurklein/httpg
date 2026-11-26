@@ -184,9 +184,9 @@ impl From<HttpgError> for Response<axum::body::Body> {
 
 impl IntoResponse for HttpgError {
     fn into_response(self) -> Response {
-        tracing::error!("{self:#?}");
+        tracing::debug!("{self:#?}");
         if let Some(b) = snafu::ErrorCompat::backtrace(&self) {
-            tracing::error!("{b}");
+            tracing::debug!("{b}");
         }
         let r = snafu::Report::from_error(self);
 

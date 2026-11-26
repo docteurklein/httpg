@@ -473,7 +473,7 @@
             perf
           ];
           PSQLRC = "./.psqlrc";
-          PGHOST = "10.250.1.2";
+          PGHOST = "10.0.0.2";
           PGUSER = "postgres";
           PGDATABASE = "httpg";
           HTTPG_PRIVATE_KEY_FILE = "private-key-file";
@@ -484,10 +484,10 @@
           HTTPG_LOGIN_QUERY = "select public.login($1)";
           HTTPG_SMTP_SENDER = "florian.klein@free.fr";
           HTTPG_SMTP_USER = "florian.klein@free.fr";
-          HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
+          HTTPG_SMTP_RELAY = "smtp://10.0.0.1:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
-          HTTPG_PG_WRITE_URL = "postgresql://httpg@10.250.1.2:6432/httpg_shadow?application_name=httpg";
-          HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg_shadow?application_name=httpg";
+          HTTPG_PG_WRITE_URL = "postgresql://httpg@10.0.0.2:6432/httpg_shadow?application_name=httpg";
+          HTTPG_PG_READ_URL  = "postgresql://httpg@10.0.0.3:6432/httpg_shadow?application_name=httpg";
           PORT = "3000";
           # RUST_LOG = "httpg=debug,hyper_http=debug";
           RUST_LOG = "httpg=debug";
@@ -531,7 +531,7 @@
 
               privateNetwork = true;
               hostBridge = "br0";
-              localAddress = "10.250.0.2/16";
+              localAddress = "10.0.0.1/8";
 
               bindMounts = {
                 "${builtins.getEnv "PWD"}/private-key-file".isReadOnly = true;
@@ -554,7 +554,6 @@
 
                 networking.firewall.allowedTCPPorts = [ 1025 1080 3000 ];
                 networking.useDHCP = false;
-                networking.enableIPv6 = true;
 
                 services.mailcatcher = {
                   enable = true;
@@ -604,7 +603,7 @@
 
               privateNetwork = true;
               hostBridge = "br0";
-              localAddress = "10.250.1.2/16";
+              localAddress = "10.0.0.2/8";
 
               config = {
                 imports = [
@@ -613,7 +612,6 @@
                 system.stateVersion = "25.11";
 
                 networking.useDHCP = false;
-                networking.enableIPv6 = true;
 
                 boot.isNspawnContainer = true;
 
@@ -640,8 +638,7 @@
 
               privateNetwork = true;
               hostBridge = "br0";
-              localAddress = "10.250.2.2/16";
-              localAddress6 = "fdfd:b3f0:482::1";
+              localAddress = "10.0.0.3/8";
 
               config = ({ pkgs, ... }: {
                 imports = [
@@ -650,7 +647,6 @@
                 system.stateVersion = "25.11";
 
                 networking.useDHCP = false;
-                networking.enableIPv6 = true;
 
                 boot.isNspawnContainer = true;
         
@@ -660,7 +656,7 @@
                   initialScript = null;
                   settings = {
                     listen_addresses = "*";
-                    primary_conninfo = "host=10.250.1.2 port=5432 user=postgres dbname=postgres";
+                    primary_conninfo = "host=10.0.0.2 port=5432 user=postgres dbname=postgres";
                     # recovery_min_apply_delay = "10s";
                     primary_slot_name = "replica1";
                   };
@@ -679,10 +675,10 @@
                     if test -e /var/lib/postgresql/19/PG_VERSION; then
                       exit
                     fi
-                    until ${pkgs.postgresql_19}/bin/pg_isready -h 10.250.1.2 -U postgres --timeout=5; do
+                    until ${pkgs.postgresql_19}/bin/pg_isready -h 10.0.0.2 -U postgres --timeout=5; do
                       sleep 2
                     done
-                    ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.250.1.2 -U postgres -D /var/lib/postgresql/19
+                    ${pkgs.postgresql_19}/bin/pg_basebackup -h 10.0.0.2 -U postgres -D /var/lib/postgresql/19
                     touch /var/lib/postgresql/19/standby.signal
                     chown -R postgres: /var/lib/postgresql/19
                   '';

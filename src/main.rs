@@ -116,10 +116,6 @@ async fn main() -> Result<(), HttpgError> {
         tokio::spawn(async move {
             while let Some(Ok(m)) = stream.next().await {
                 match m {
-                    tokio_postgres::AsyncMessage::Notice(n) => {
-                        dbg!(&n);
-                        tracing::info!("{n:#?}");
-                    },
                     tokio_postgres::AsyncMessage::Notification(n) => {
                         wrapped_tx.send(n).map_err(Box::new)?;
                     }

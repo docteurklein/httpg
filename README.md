@@ -33,8 +33,8 @@ Containers requires a bridge interface `br0` on the host:
 config.networking = {
   bridges.br0 = {};
   interfaces.br0.ipv4.addresses = [{
-    address = "10.250.0.0";
-    prefixLength = 16;
+    address = "10.0.0.0";
+    prefixLength = 8;
   }];
 };
 ```

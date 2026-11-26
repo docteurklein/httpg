@@ -1,4 +1,7 @@
 -- require: url/url.sql
+
+create extension if not exists pg_stat_statements;
+
 drop schema if exists plan cascade;
 create schema "plan";
 
@@ -106,16 +109,6 @@ body, textarea, pre {
     scroll-padding-top: 4rem;
 }
 table {
-    &.pg_stat_statements {
-        tbody {
-            display: block;
-            max-height: 50vh;
-            overflow-y: scroll;
-            td {
-                max-width: 100%;
-            }
-        }
-    }
     tbody {
         tr:has(details[open]) {
             background-color: #e1f3d2;
@@ -181,7 +174,7 @@ union all select null, null, xmlelement(name form, xmlattributes(
     'GET' as method,
     '/query' as action
 ),
-    -- xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
+    xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
     xmlelement(name input, xmlattributes(
         'hidden' as type,
         'sql' as name,
@@ -210,21 +203,6 @@ union all select null, null, xmlelement(name div, xmlattributes('error' as class
 )::text
 from plan
 where error is not null
-union all
-select null, null, xmlelement(name table, xmlattributes('1' as border, 'pg_stat_statements' as class),
-    xmlagg(xmlelement(name tr,
-        xmlelement(name td, xmlelement(name a, xmlattributes(
-            url.url('/query', jsonb_build_object(
-                'sql', $$select * from plan.explain_html(null, nullif($1, '')::bigint)$$,
-                'params[0]', queryid
-            )) as href
-        ), queryid))
-        , xmlelement(name td, query)
-        , xmlelement(name td, max_exec_time)
-        , xmlelement(name td, calls)
-    ) order by max_exec_time desc)
-)::text
-from pg_stat_statements
 union all select null, null, xmlelement(name details,
     xmlelement(name summary, 'raw'),
     xmlelement(name textarea, xmlattributes(20 as rows), jsonb_pretty(plan), ''), ''
@@ -297,7 +275,7 @@ select null, null, xmlelement(name table, xmlattributes('1' as border),
                     'sort', 'node',
                     'sql', query->>'sql'
                 )) as href
-            ), 'node', case when query->'qs'->>'sort' = 'node' then '▲' end))
+            ), 'node', case when coalesce(query->'qs'->>'sort', 'node') = 'node' then '▲' end))
         )
     ),
     xmlagg(xmlelement(name tr, xmlattributes(id),
@@ -331,6 +309,23 @@ select null, null, xmlelement(name table, xmlattributes('1' as border),
 )::text
 from node, httpg
 group by query
+union all select null, null, xmlelement(name hr)::text
+union all
+select null, null, xmlelement(name table, xmlattributes('1' as border, 'pg_stat_statements' as class),
+    xmlagg(xmlelement(name tr,
+        xmlelement(name td, xmlelement(name a, xmlattributes(
+            url.url('/query', jsonb_build_object(
+                'sql', $$select * from plan.explain_html(null, nullif($1, '')::bigint)$$,
+                'params[0]', queryid,
+                'use_primary', null
+            )) as href
+        ), queryid))
+        , xmlelement(name td, query)
+        , xmlelement(name td, max_exec_time)
+        , xmlelement(name td, calls)
+    ) order by max_exec_time desc)
+)::text
+from pg_stat_statements
 ;
 end;
 
