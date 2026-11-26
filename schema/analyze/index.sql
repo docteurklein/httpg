@@ -106,6 +106,16 @@ body, textarea, pre {
     scroll-padding-top: 4rem;
 }
 table {
+    &.pg_stat_statements {
+        tbody {
+            display: block;
+            max-height: 50vh;
+            overflow-y: scroll;
+            td {
+                max-width: 100%;
+            }
+        }
+    }
     tbody {
         tr:has(details[open]) {
             background-color: #e1f3d2;
@@ -171,11 +181,11 @@ union all select null, null, xmlelement(name form, xmlattributes(
     'GET' as method,
     '/query' as action
 ),
-    xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
+    -- xmlelement(name input, xmlattributes('hidden' as type, 'use_primary' as name)),
     xmlelement(name input, xmlattributes(
         'hidden' as type,
         'sql' as name,
-        $$select * from plan.explain_html(nullif($1, ''), nullif($2, '')::bigint)$$ as value
+        $$select * from plan.explain_html(nullif($1, ''))$$ as value
     )),
     xmlelement(name textarea, xmlattributes('params[0]' as name, 7 as rows),
         coalesce(
@@ -183,16 +193,16 @@ union all select null, null, xmlelement(name form, xmlattributes(
             (select query from stat_statement),
             case when queryid_ is null then 'explain (format json, analyze, timing, costs, buffers, io, verbose, plan_advice) ' end
         ), ''
-    ),
-    xmlelement(name label, 'stat_statements', xmlelement(name select, xmlattributes('params[1]' as name),
-        xmlelement(name option, xmlattributes(''as value)),
-        (select xmlagg(xmlelement(name option, xmlattributes(
-            s.queryid as value,
-            case when queryid_ = s.queryid then 'selected' end as selected
-        ), query) order by max_exec_time) from pg_stat_statements s),
-        ''
-    )),
-    xmlelement(name input, xmlattributes('submit' as type))
+    )
+    -- , xmlelement(name label, 'stat_statements', xmlelement(name select, xmlattributes('params[1]' as name),
+    --     xmlelement(name option, xmlattributes(''as value)),
+    --     (select xmlagg(xmlelement(name option, xmlattributes(
+    --         s.queryid as value,
+    --         case when queryid_ = s.queryid then 'selected' end as selected
+    --     ), query) order by max_exec_time) from pg_stat_statements s),
+    --     ''
+    -- )),
+    , xmlelement(name input, xmlattributes('submit' as type))
 )::text
 from httpg
 union all select null, null, xmlelement(name div, xmlattributes('error' as class),
@@ -200,6 +210,21 @@ union all select null, null, xmlelement(name div, xmlattributes('error' as class
 )::text
 from plan
 where error is not null
+union all
+select null, null, xmlelement(name table, xmlattributes('1' as border, 'pg_stat_statements' as class),
+    xmlagg(xmlelement(name tr,
+        xmlelement(name td, xmlelement(name a, xmlattributes(
+            url.url('/query', jsonb_build_object(
+                'sql', $$select * from plan.explain_html(null, nullif($1, '')::bigint)$$,
+                'params[0]', queryid
+            )) as href
+        ), queryid))
+        , xmlelement(name td, query)
+        , xmlelement(name td, max_exec_time)
+        , xmlelement(name td, calls)
+    ) order by max_exec_time desc)
+)::text
+from pg_stat_statements
 union all select null, null, xmlelement(name details,
     xmlelement(name summary, 'raw'),
     xmlelement(name textarea, xmlattributes(20 as rows), jsonb_pretty(plan), ''), ''

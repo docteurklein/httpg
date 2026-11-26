@@ -65,8 +65,6 @@
           system.stateVersion = "25.11";
 
           networking.firewall.allowedTCPPorts = [ 5432 ];
-          networking.useDHCP = false;
-          networking.enableIPv6 = true;
 
           users.users.postgres = {
             name = "postgres";
@@ -82,6 +80,7 @@
             settings = {
               databases = {
                 httpg = "host=127.0.0.1 user=httpg";
+                httpg_shadow = "host=127.0.0.1 user=httpg";
               };
               pgbouncer = {
                 auth_type = "any";
@@ -191,6 +190,7 @@
               # log_min_messages = "DEBUG1";
               client_min_messages = "NOTICE";
               log_statement = "all";
+              "pg_stat_statements.track" = "all";
               "auto_explain.log_min_duration" = -1;
               "auto_explain.log_nested_statements" = true;
               "auto_explain.log_format" = "json";
@@ -490,8 +490,8 @@
           HTTPG_SMTP_USER = "florian.klein@free.fr";
           HTTPG_SMTP_RELAY = "smtp://10.250.0.2:1025?tls=opportunistic";
           HTTPG_PUBLIC_DIR = "public";
-          HTTPG_PG_WRITE_URL = "postgresql://httpg@10.250.1.2:6432/httpg?application_name=httpg";
-          HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg?application_name=httpg";
+          HTTPG_PG_WRITE_URL = "postgresql://httpg@10.250.1.2:6432/httpg_shadow?application_name=httpg";
+          HTTPG_PG_READ_URL  = "postgresql://httpg@10.250.2.2:6432/httpg_shadow?application_name=httpg";
           PORT = "3000";
           # RUST_LOG = "httpg=debug,hyper_http=debug";
           RUST_LOG = "httpg=debug";
@@ -614,6 +614,10 @@
                 imports = [
                   self.nixosModules.postgres
                 ];
+
+                networking.useDHCP = false;
+                networking.enableIPv6 = true;
+
                 boot.isNspawnContainer = true;
 
                 services.pgbouncer.settings.pgbouncer.pool_mode = lib.mkForce "session";
@@ -646,6 +650,10 @@
                 imports = [
                   self.nixosModules.postgres
                 ];
+
+                networking.useDHCP = false;
+                networking.enableIPv6 = true;
+
                 boot.isNspawnContainer = true;
         
                 networking.firewall.allowedTCPPorts = [ 5432 6432 ];

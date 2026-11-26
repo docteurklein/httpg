@@ -595,6 +595,7 @@ from calendar, httpg
 where search is null
 ;
 
+-- drop view if exists contract_html;
 create or replace view contract_html (body, booking_id)
 with (security_invoker) as
 with httpg (error) as (
