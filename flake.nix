@@ -60,8 +60,6 @@
 
         nixosModules.postgres = moduleWithSystem ({pkgs, system, ...}: {config, lib, ...}: {
 
-          boot.isNspawnContainer = true;
-
           networking.firewall.allowedTCPPorts = [ 5432 ];
 
           users.users.postgres = {
@@ -315,7 +313,7 @@
               owner = "asmjit";
               repo = "asmjit";
               rev = "master";
-              sha256 = "sha256-94vk+bFe+Fh0soyB5XNwxUtUkufh4G16cbIEQwRCWak=";
+              sha256 = "sha256-2GgDKayC60qH5a+PE+nlnEMVLxHGVyXLbDM/cjIBiMw=";
               name = "asmjit";
             })
             (pkgs.fetchFromGitHub {
