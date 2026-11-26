@@ -62,8 +62,6 @@
 
           boot.isNspawnContainer = true;
 
-          system.stateVersion = "25.11";
-
           networking.firewall.allowedTCPPorts = [ 5432 ];
 
           users.users.postgres = {
@@ -614,6 +612,7 @@
                 imports = [
                   self.nixosModules.postgres
                 ];
+                system.stateVersion = "25.11";
 
                 networking.useDHCP = false;
                 networking.enableIPv6 = true;
@@ -650,6 +649,7 @@
                 imports = [
                   self.nixosModules.postgres
                 ];
+                system.stateVersion = "25.11";
 
                 networking.useDHCP = false;
                 networking.enableIPv6 = true;
